@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## Unreleased
+## 0.0.0, unreleased
 
-First store release not cut yet. The extension ships inside the Aegis installer
-today; publishing it here gives it an update cadence of its own.
+First store release. The extension ships inside the Aegis installer today;
+publishing it here gives it an update cadence of its own.

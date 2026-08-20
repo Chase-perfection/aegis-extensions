@@ -8,9 +8,13 @@ a `.pem` here, stop.
 
 ## 1. Pick the version
 
-Semver, in `store.json`. Raise the patch for a fix, the minor for a feature, the
-major when a tenant has to do something on upgrade. This number is unrelated to the
-integer in `extension.json`, which only changes when the manifest contract changes.
+Semver, in `store.json`. An extension's first release is `0.0.0`, which says the
+thing is published and not yet promised to be stable. From there raise the patch for
+a fix, the minor for a feature, the major when a tenant has to do something on
+upgrade.
+
+This number is unrelated to the integer in `extension.json`, which only changes when
+the manifest contract changes.
 
 ## 2. Build the zip
 
