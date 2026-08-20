@@ -1,0 +1,15 @@
+{
+  "id": "deploy",
+  "name": "Deploy",
+  "labelKey": "nav_deploy",
+  "descKey": "desc_deploy",
+  "icon": "network",
+  "page": "deploy.html",
+  "manifestVersion": 1,
+  "routePrefixes": ["/api/deploy"],
+  "requiresHostOptIn": true,
+  "channel": "stable",
+  "minAppVersion": "1.0.5",
+  "latest": null,
+  "releases": []
+}

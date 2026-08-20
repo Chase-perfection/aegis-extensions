@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Aegis extension catalogue",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "repo",
+    "extensions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "generatedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "extensions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "version",
+        "manifestVersion",
+        "minAppVersion",
+        "labelKey",
+        "descKey",
+        "icon",
+        "page",
+        "routePrefixes",
+        "requiresHostOptIn",
+        "size",
+        "sha256",
+        "download",
+        "manifest",
+        "signature",
+        "publishedAt",
+        "channel"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "$ref": "#/$defs/semver"
+        },
+        "manifestVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minAppVersion": {
+          "$ref": "#/$defs/semver"
+        },
+        "labelKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "descKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "icon": {
+          "type": "string",
+          "minLength": 1
+        },
+        "page": {
+          "type": "string",
+          "pattern": "^[^/\\]+\\.html$"
+        },
+        "requiresHostOptIn": {
+          "type": "boolean"
+        },
+        "routePrefixes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^/api/[^/].*[^/]$"
+          }
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "download": {
+          "type": "string",
+          "format": "uri"
+        },
+        "manifest": {
+          "type": "string",
+          "format": "uri"
+        },
+        "signature": {
+          "type": "string",
+          "format": "uri"
+        },
+        "publishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "channel": {
+          "enum": [
+            "stable",
+            "preview"
+          ]
+        }
+      }
+    }
+  }
+}

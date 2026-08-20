@@ -1,0 +1,11 @@
+# Release artifacts are built, signed, and uploaded. They never land in git.
+*.zip
+*.manifest.json
+*.manifest.json.sig
+
+# The signing key belongs on the maintainer machine or in CI, never here.
+*.pem
+*.key
+*.pfx
+
+node_modules/
