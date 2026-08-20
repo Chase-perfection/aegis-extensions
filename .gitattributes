@@ -1,0 +1,13 @@
+# A workflow's `run:` block is written to a script on the CI machine, and CRLF
+# inside it fails there with "$'\r': command not found" while looking fine in the
+# editor here. Same rule, and same reason, as the Aegis tree's .gitattributes.
+.github/workflows/*  text eol=lf
+*.mjs                text eol=lf
+*.sh                 text eol=lf
+
+# The manifest bytes are what the signature covers. Git rewriting line endings on
+# a checkout would invalidate a signature computed before the rewrite, so nothing
+# here gets normalized.
+*.manifest.json      -text
+*.sig                -text
+*.zip                binary
