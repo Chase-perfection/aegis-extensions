@@ -9,3 +9,11 @@
 *.pfx
 
 node_modules/
+
+# Socle workspace : present sur disque pour _workspace/tools/scan.py, hors du
+# depot public. Meme schema que 4.5-Aegis.clean.
+/project.json
+/CLAUDE.md
+/PRODUCT.md
+/VERSION
+/.env.example
