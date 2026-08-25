@@ -13,9 +13,9 @@
 
 import { readFileSync, writeFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { packageFileName } from './build-index.mjs';
 
 const [id, version, zipPath] = process.argv.slice(2);
 if (!id || !version || !zipPath) {
@@ -35,9 +35,13 @@ const bytes = readFileSync(zipPath);
 const sha256 = createHash('sha256').update(bytes).digest('hex');
 const size = statSync(zipPath).size;
 
+// `file` pins the manifest to one package name. extensionInstaller compares it
+// against the file it is asked to install and refuses a mismatch, so a manifest
+// without it describes a release no Aegis can install.
 const manifest = {
     id,
     version,
+    file: packageFileName(id, version),
     manifestVersion: store.manifestVersion,
     minAppVersion: store.minAppVersion,
     size,
@@ -48,6 +52,7 @@ const out = join(dirname(zipPath), `${id}-${version}.manifest.json`);
 writeFileSync(out, JSON.stringify(manifest, null, 2) + '\n');
 
 console.log(`manifest: ${out}`);
+console.log(`file:     ${manifest.file}`);
 console.log(`sha256:   ${sha256}`);
 console.log(`size:     ${size}`);
 console.log('');

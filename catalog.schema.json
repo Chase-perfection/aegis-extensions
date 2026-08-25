@@ -11,7 +11,7 @@
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
-      "const": 1
+      "const": 2
     },
     "generatedAt": {
       "type": [
@@ -49,8 +49,10 @@
         "descKey",
         "icon",
         "page",
+        "category",
         "routePrefixes",
         "requiresHostOptIn",
+        "file",
         "size",
         "sha256",
         "download",
@@ -92,10 +94,25 @@
         },
         "page": {
           "type": "string",
-          "pattern": "^[^/\\]+\\.html$"
+          "pattern": "^[^/\\\\]+\\.html$"
+        },
+        "category": {
+          "description": "The store page category rail. Closed list: storeService drops an entry whose category it does not know.",
+          "enum": [
+            "Detection",
+            "Inventory",
+            "Compliance",
+            "Integrations",
+            "Automation"
+          ]
         },
         "requiresHostOptIn": {
           "type": "boolean"
+        },
+        "file": {
+          "description": "The package file name, which must equal the `file` field of the signed manifest. extensionInstaller refuses a mismatch, and refuses any name carrying a path separator.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$"
         },
         "routePrefixes": {
           "type": "array",
@@ -134,6 +151,68 @@
             "stable",
             "preview"
           ]
+        },
+        "publisher": {
+          "description": "Display string only. It is not evidence: `verified` is established on the Aegis machine, never read from here.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "art": {
+          "description": "Card artwork on a roughly 100x100 canvas. One shape per object: a path `d` or a circle `c` of [cx, cy, r].",
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "maxProperties": 1,
+            "properties": {
+              "d": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200,
+                "pattern": "^[Mm][MmZzLlHhVvCcSsQqTtAa0-9,.eE+\\-\\s]*$"
+              },
+              "c": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "number",
+                  "minimum": -200,
+                  "maximum": 300
+                }
+              }
+            }
+          }
+        },
+        "changelog": {
+          "description": "Newest first. Rows without a semver version and non-empty text are dropped by storeService.",
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "text"
+            ],
+            "properties": {
+              "version": {
+                "$ref": "#/$defs/semver"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 400
+              },
+              "publishedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
         }
       }
     }

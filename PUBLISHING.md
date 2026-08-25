@@ -6,6 +6,26 @@ key, and `index.json` is regenerated rather than edited.
 Nothing in this repository ever holds the private key. If you find yourself pasting
 a `.pem` here, stop.
 
+## 0. What the catalogue promises
+
+`index.json` carries `schemaVersion: 2`, and
+`backend/src/services/storeService.js` refuses any other number outright rather
+than reading fields off a shape it does not know. That constant is a contract with
+that file: raising it here without raising it there blanks the store page for every
+install.
+
+Schema 2 asks two things of `extensions/<id>/store.json` that a release does not
+provide:
+
+- `category`, one of `Detection`, `Inventory`, `Compliance`, `Integrations`,
+  `Automation`. The store page has no rail to file the card under without it, so
+  the backend drops an entry naming anything else. `build-index.mjs` fails the
+  build instead of publishing something invisible.
+- `file`, the package name, which `build-index.mjs` derives and
+  `make-manifest.mjs` writes into the signed manifest. `extensionInstaller`
+  compares the two and refuses the install when they disagree, which is why one
+  helper produces both.
+
 ## 1. Pick the version
 
 Semver, in `store.json`. An extension's first release is `0.0.0`, which says the

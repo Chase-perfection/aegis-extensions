@@ -5,8 +5,11 @@
   "descKey": "desc_deploy",
   "icon": "network",
   "page": "deploy.html",
+  "category": "Integrations",
   "manifestVersion": 1,
-  "routePrefixes": ["/api/deploy"],
+  "routePrefixes": [
+    "/api/deploy"
+  ],
   "requiresHostOptIn": true,
   "channel": "stable",
   "minAppVersion": "1.0.5",

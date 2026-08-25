@@ -12,18 +12,22 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assetUrls } from './build-index.mjs';
+import { assetUrls, packageFileName, CATEGORIES, SCHEMA_VERSION } from './build-index.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SEMVER = /^\d+\.\d+\.\d+$/;
 const ID = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const SHA256 = /^[a-f0-9]{64}$/;
+// The name extensionInstaller accepts: no separator, nothing to traverse with.
+const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
 const errors = [];
 const fail = (m) => errors.push(m);
 
 const cat = JSON.parse(readFileSync(join(ROOT, 'index.json'), 'utf8'));
 
-if (cat.schemaVersion !== 1) fail(`schemaVersion must be 1, got ${cat.schemaVersion}`);
+if (cat.schemaVersion !== SCHEMA_VERSION) {
+    fail(`schemaVersion must be ${SCHEMA_VERSION}, got ${cat.schemaVersion}`);
+}
 if (!Array.isArray(cat.extensions)) fail('extensions must be an array');
 if (typeof cat.repo !== 'string' || !cat.repo.includes('/')) fail('repo must be owner/name');
 
@@ -66,6 +70,24 @@ for (const e of cat.extensions || []) {
             if (prefixOwner.has(p)) fail(`routePrefix "${p}" claimed by both "${prefixOwner.get(p)}" and "${e.id}"`);
             else prefixOwner.set(p, e.id);
         }
+    }
+
+    // storeService drops an entry whose category it does not know, so an unknown
+    // word here publishes something no operator can see.
+    if (!CATEGORIES.includes(e.category)) {
+        fail(`${at}: category must be one of ${CATEGORIES.join(', ')}, got ${JSON.stringify(e.category)}`);
+    }
+
+    // The package name, which has to match both the release asset and the `file`
+    // field of the signed manifest. extensionInstaller refuses any disagreement.
+    if (typeof e.file !== 'string' || !FILE_NAME.test(e.file)) {
+        fail(`${at}: file must be a bare package name, got ${JSON.stringify(e.file)}`);
+    } else if (SEMVER.test(e.version || '') && e.file !== packageFileName(e.id, e.version)) {
+        fail(`${at}: file should be ${packageFileName(e.id, e.version)}, got ${e.file}`);
+    }
+
+    if ('publisher' in e && (typeof e.publisher !== 'string' || !e.publisher.trim())) {
+        fail(`${at}: publisher, when present, must be a non-empty string`);
     }
 
     if (typeof e.requiresHostOptIn !== 'boolean') fail(`${at}: requiresHostOptIn must be a boolean`);
