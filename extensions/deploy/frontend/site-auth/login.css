@@ -1,0 +1,193 @@
+/*
+    Tokens and layout for the site login page.
+
+    This file is the page's whole design system. It cannot import base.css: the
+    page is served on the deployed site's port, which is a different origin from
+    the dashboard, and the browser would have no route to it. So the values are
+    literal here, kept deliberately close to base.css and to
+    frontend/pages/login.html so that the two screens read as one product.
+
+    The rule that survives the duplication: every colour, radius, spacing step
+    and font stack is declared once in :root below, and nothing further down
+    this file writes a literal. Repainting means editing the block at the top.
+
+    No web font is requested. The page is served with
+    `default-src 'none'; style-src 'self'`, and a deployed site frequently runs
+    on a network with no route to the internet, so a font that has to be
+    fetched is a font that will not arrive.
+*/
+
+:root {
+    --page: #080808;
+    --card-bg: #101012;
+    --card-border: #1f1f22;
+    --input-bg: #0d0d0d;
+    --input-border: #2a2a2a;
+    --input-border-focus: #3b89ff;
+    --accent: #3b89ff;
+    --accent-hover: #6ca6ff;
+    --on-accent: #061225;
+    --text: #ffffff;
+    --text-body: #cfcfcf;
+    --text-muted: #8f8f8f;
+    --text-faint: #6a6a6a;
+    --error: #ee1d36;
+    --focus-ring: rgba(59, 137, 255, 0.35);
+
+    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Archivo', Roboto, Helvetica, Arial, sans-serif;
+
+    --radius-sm: 8px;
+    --radius-lg: 16px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body {
+    height: 100%;
+}
+
+.auth-body {
+    font-family: var(--font-ui);
+    background: var(--page);
+    color: var(--text-body);
+    -webkit-font-smoothing: antialiased;
+}
+
+.auth-shell {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-10) var(--space-6);
+}
+
+.auth-card {
+    width: 400px;
+    max-width: 100%;
+    padding: var(--space-10);
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-lg);
+}
+
+.auth-site {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: var(--space-2);
+    overflow-wrap: anywhere;
+}
+
+.auth-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: var(--space-2);
+}
+
+.auth-subtitle {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    margin-bottom: var(--space-8);
+}
+
+.auth-field {
+    margin-bottom: var(--space-4);
+}
+
+.auth-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-body);
+    margin-bottom: var(--space-2);
+}
+
+.auth-input {
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--text);
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: var(--radius-sm);
+    outline: none;
+}
+
+.auth-input:focus {
+    border-color: var(--input-border-focus);
+    box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/*
+    Empty means no error. The renderer substitutes an empty string when there is
+    nothing to say, so the element collapses on its own and the markup needs no
+    second placeholder to control its visibility.
+*/
+.auth-error {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--error);
+    margin: var(--space-1) 0 var(--space-4);
+}
+
+.auth-error:empty {
+    display: none;
+}
+
+.auth-submit {
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--on-accent);
+    background: var(--accent);
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.auth-submit:hover {
+    background: var(--accent-hover);
+}
+
+.auth-submit:focus-visible {
+    outline: 2px solid var(--accent-hover);
+    outline-offset: 2px;
+}
+
+.auth-footer {
+    margin-top: var(--space-8);
+    font-size: 12px;
+    text-align: center;
+    color: var(--text-faint);
+}
+
+/*
+    The refusal page (siteAuth.renderError) borrows .auth-shell, .auth-card,
+    .auth-title and .auth-error, so it needs no rules of its own and no colour
+    of its own. It carries no form, hence the spacing correction.
+*/
+.auth-card>.auth-error:last-child {
+    margin-bottom: 0;
+}

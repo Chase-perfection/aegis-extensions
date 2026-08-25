@@ -1,0 +1,282 @@
+name: Release
+
+# The release factory. A tag is the whole instruction: `<id>-v<semver>` builds the
+# package from this repository's own `extensions/<id>/`, signs the manifest,
+# publishes the three assets, then rebuilds the catalogue on main.
+#
+# Nothing is assembled by hand any more. The reason the code moved out of the
+# Aegis tree is that a zip built from the core repository described a different
+# set of bytes than the one the store served; one builder reading one source is
+# what keeps that from coming back.
+#
+# `catalog.yml` stays the reader. It validates the catalogue and fetches every
+# referenced asset on every push, this workflow's push included, so `index.json`
+# has one writer (the `catalogue` job below) and one checker (that workflow).
+
+on:
+  push:
+    tags:
+      - '*-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The tag to publish, <id>-v<semver>'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.tag.outputs.id }}
+      version: ${{ steps.tag.outputs.version }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.1'
+
+      # `<id>-v<semver>`, split on the last `-v`. Refused rather than guessed at: a
+      # tag this cannot read would publish assets under a name `build-index.mjs`
+      # never derives, and the catalogue would point at a release nobody can
+      # download.
+      - name: Read the tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          ID="${TAG%-v*}"
+          VERSION="${TAG##*-v}"
+          if ! printf '%s' "$ID" | grep -Eqx '[a-z0-9]([a-z0-9-]*[a-z0-9])?'; then
+            echo "tag $TAG: \"$ID\" is not an extension id"; exit 1
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "tag $TAG: \"$VERSION\" is not semver"; exit 1
+          fi
+          if [ ! -f "extensions/$ID/store.json" ]; then
+            echo "tag $TAG: extensions/$ID/store.json does not exist"; exit 1
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Before anything is published, not after. A release is three assets an
+      # install has already downloaded by the time anyone reads a failed run.
+      - name: Run the suite
+        run: npm test
+
+      # The zip root holds what `extensions/<id>/` holds: `extension.json` at the
+      # top, then `backend/` and `frontend/`. No wrapping folder, because the
+      # loader reads `extension.json` at the root of the unpacked directory.
+      #
+      # What stays out: both test folders, the catalogue metadata that belongs to
+      # this repository rather than to the package, the card image (served from
+      # `main`, so fixing a crop costs no release), and any AI tooling note. For
+      # `deploy` that is 36 files kept and 36 dropped, which is the shape the
+      # published 0.0.0 package already has.
+      - name: Build the package
+        id: pack
+        run: |
+          set -euo pipefail
+          ID='${{ steps.tag.outputs.id }}'
+          VERSION='${{ steps.tag.outputs.version }}'
+          ZIP="$RUNNER_TEMP/$ID-$VERSION.zip"
+          ( cd "extensions/$ID" && zip -r -q "$ZIP" . \
+              -x 'backend/tests/*' \
+              -x 'frontend/tests/*' \
+              -x 'store.json' \
+              -x 'CHANGELOG.md' \
+              -x 'card.png' \
+              -x 'CLAUDE.md' \
+              -x '*/CLAUDE.md' )
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      # The exclusion list checked against the bytes rather than trusted. A `-x`
+      # pattern that quietly matched nothing would put this extension's tests, and
+      # whatever notes sit beside them, on a customer's audit server.
+      - name: Refuse a package carrying what must not ship
+        run: |
+          set -euo pipefail
+          FORBIDDEN='(^|/)(backend/tests/|frontend/tests/|store\.json$|CHANGELOG\.md$|card\.png$|CLAUDE\.md$)'
+          NAMES=$(unzip -Z1 '${{ steps.pack.outputs.zip }}')
+          if printf '%s\n' "$NAMES" | grep -Eq "$FORBIDDEN"; then
+            echo 'the package carries a file that must not ship:'
+            printf '%s\n' "$NAMES" | grep -E "$FORBIDDEN"
+            exit 1
+          fi
+          if ! printf '%s\n' "$NAMES" | grep -Eqx '(\./)?extension\.json'; then
+            echo 'extension.json is not at the zip root, so the loader will not find it'
+            exit 1
+          fi
+          echo "package contents ($(printf '%s\n' "$NAMES" | grep -c .) entries):"
+          printf '%s\n' "$NAMES"
+
+      # A `\b` written into a regex through a shell heredoc arrives as a literal
+      # 0x08. The pattern then matches nothing, quietly, and a test asserting on
+      # an empty list still passes. Core found one that had been committed for
+      # months. It costs a second to rule out, and the moment it matters is the
+      # moment bytes get signed and handed to every install.
+      #
+      # Text files only: `card.png` is excluded already (it does not ship) and any
+      # future binary would trip this for no reason. LF, CR and tab are the three
+      # control bytes a source file is allowed.
+      - name: Refuse a package carrying a stray control byte
+        run: |
+          set -uo pipefail
+          ID='${{ steps.tag.outputs.id }}'
+          rc=0
+          while IFS= read -r f; do
+            if grep -qP '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]' "$f"; then
+              echo "STRAY CONTROL BYTE  $f"
+              grep -naP '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]' "$f" | head -5
+              rc=1
+            fi
+          done < <(find "extensions/$ID" -type f \
+                     \( -name '*.js' -o -name '*.mjs' -o -name '*.json' -o -name '*.md' \
+                        -o -name '*.html' -o -name '*.css' -o -name '*.ps1' \))
+          if [ $rc -ne 0 ]; then
+            echo 'Most likely a file written through a shell heredoc, which collapses'
+            echo 'an escape one layer too early. Rewrite that line without one.'
+            exit 1
+          fi
+          echo 'no stray control bytes'
+
+      # Writes the final bytes. The signature covers them exactly as written, so
+      # nothing reformats this file afterwards.
+      - name: Write the manifest
+        id: manifest
+        run: |
+          set -euo pipefail
+          ID='${{ steps.tag.outputs.id }}'
+          VERSION='${{ steps.tag.outputs.version }}'
+          node scripts/make-manifest.mjs "$ID" "$VERSION" '${{ steps.pack.outputs.zip }}'
+          echo "path=$RUNNER_TEMP/$ID-$VERSION.manifest.json" >> "$GITHUB_OUTPUT"
+
+      # Detached RSA-SHA256, base64, over the manifest bytes. The same scheme and
+      # the same key `backend/src/lib/releaseKey.js` already verifies for installer
+      # and agent releases, so an install needs no new crypto and there is no
+      # second key to protect.
+      #
+      # The key is a repository secret and never lands in the tree. A human sets
+      # `RELEASE_SIGNING_KEY` once, to the private half of the Aegis release key,
+      # PEM including its BEGIN and END lines. Without it this step refuses:
+      # publishing an unsigned release means publishing one every Aegis rejects at
+      # step 2 of the install, which is worse than publishing nothing.
+      - name: Sign the manifest
+        id: sign
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then
+            echo 'The repository secret RELEASE_SIGNING_KEY is not set.'
+            echo 'Set it to the private half of the Aegis release key, then re-run this workflow.'
+            exit 1
+          fi
+          MANIFEST='${{ steps.manifest.outputs.path }}'
+          KEY="$RUNNER_TEMP/release.pem"
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$KEY"
+          openssl dgst -sha256 -sign "$KEY" -out "$RUNNER_TEMP/sig.bin" "$MANIFEST"
+          # Proves the signature is well formed over these exact bytes. It cannot
+          # prove the key is the one installs trust; only an install can, which is
+          # why a first release gets checked against one before the catalogue
+          # points at it.
+          openssl rsa -in "$KEY" -pubout -out "$RUNNER_TEMP/pub.pem" 2>/dev/null
+          openssl dgst -sha256 -verify "$RUNNER_TEMP/pub.pem" -signature "$RUNNER_TEMP/sig.bin" "$MANIFEST"
+          base64 -w0 "$RUNNER_TEMP/sig.bin" > "$MANIFEST.sig"
+          rm -f "$KEY" "$RUNNER_TEMP/pub.pem" "$RUNNER_TEMP/sig.bin"
+          echo "path=$MANIFEST.sig" >> "$GITHUB_OUTPUT"
+
+      # Three assets, named exactly as `build-index.mjs` derives them. A `preview`
+      # extension publishes as a prerelease, so the two channels stay
+      # distinguishable from the release list alone.
+      - name: Cut the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ID='${{ steps.tag.outputs.id }}'
+          VERSION='${{ steps.tag.outputs.version }}'
+          FIELD='process.stdout.write(String(require("./extensions/" + process.argv[1] + "/store.json")[process.argv[2]] || ""))'
+          NAME=$(node -e "$FIELD" "$ID" name)
+          CHANNEL=$(node -e "$FIELD" "$ID" channel)
+          ARGS=(--title "$NAME $VERSION" --notes-file "extensions/$ID/CHANGELOG.md")
+          if [ "$CHANNEL" = 'preview' ]; then ARGS+=(--prerelease); fi
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            '${{ steps.pack.outputs.zip }}' \
+            '${{ steps.manifest.outputs.path }}' \
+            '${{ steps.sign.outputs.path }}' \
+            "${ARGS[@]}"
+
+  # A separate job, on `main` rather than on the tag: the catalogue is a file on a
+  # branch, and a commit made from a detached tag checkout would land nowhere.
+  catalogue:
+    runs-on: ubuntu-latest
+    needs: publish
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.1'
+
+      # Read back from the release rather than carried over from the build, so
+      # what the catalogue describes is what somebody can actually download. A
+      # manifest that failed to upload stops here instead of leaving `index.json`
+      # pointing at nothing.
+      - name: Point store.json at the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ID='${{ needs.publish.outputs.id }}'
+          VERSION='${{ needs.publish.outputs.version }}'
+          TAG='${{ needs.publish.outputs.tag }}'
+          gh release download "$TAG" -p "$ID-$VERSION.manifest.json" -D "$RUNNER_TEMP"
+          AT=$(gh release view "$TAG" --json publishedAt -q .publishedAt)
+          node - "$ID" "$VERSION" "$RUNNER_TEMP/$ID-$VERSION.manifest.json" "$AT" <<'JS'
+          const fs = require('fs');
+          const [id, version, manifestPath, at] = process.argv.slice(1);
+          const p = `extensions/${id}/store.json`;
+          const store = JSON.parse(fs.readFileSync(p, 'utf8'));
+          const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          // Size and digest from the signed manifest, not recomputed. The
+          // installer compares the zip it downloaded against these exact values,
+          // so a second measurement here could only ever disagree with the one
+          // that counts.
+          store.latest = { version, publishedAt: at, size: m.size, sha256: m.sha256 };
+          store.releases = Array.from(new Set([...(store.releases || []), version]));
+          fs.writeFileSync(p, JSON.stringify(store, null, 2) + '\n');
+          console.log(`${p}: latest is now ${version}`);
+          JS
+
+      # Generated, never hand-edited. The validator refuses an `index.json` that
+      # disagrees with the `store.json` files it came from, which is what catches
+      # somebody editing the output.
+      - name: Rebuild and validate the catalogue
+        run: |
+          set -euo pipefail
+          node scripts/build-index.mjs
+          node scripts/validate-catalog.mjs
+
+      - name: Commit the catalogue
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'the catalogue already describes this release, nothing to commit'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.json 'extensions/${{ needs.publish.outputs.id }}/store.json'
+          git commit -m '${{ needs.publish.outputs.id }} ${{ needs.publish.outputs.version }}'
+          git push

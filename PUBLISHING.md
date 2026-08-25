@@ -1,7 +1,13 @@
 # Publishing an extension release
 
-Six steps. The zip comes from the Aegis tree, the signature comes from the release
-key, and `index.json` is regenerated rather than edited.
+One tag. `.github/workflows/release.yml` builds the package from this repository's
+`extensions/<id>/`, signs the manifest with the key held as a repository secret,
+publishes the three assets, and rebuilds `index.json` on main.
+
+So this document is about deciding what to release, not about assembling it. The
+steps below are what a human does; the sections marked **the workflow** say what
+happens after the tag lands, because a release you cannot follow is a release you
+cannot debug.
 
 Nothing in this repository ever holds the private key. If you find yourself pasting
 a `.pem` here, stop.
@@ -36,91 +42,102 @@ upgrade.
 This number is unrelated to the integer in `extension.json`, which only changes when
 the manifest contract changes.
 
-## 2. Build the zip
+## 2. Write the changelog, then tag
 
-The zip root holds what `extensions/<id>/` holds in the Aegis tree: `extension.json`
-at the top, then `backend/` and `frontend/`. No wrapping folder, since the loader
-reads `extension.json` at the root of the unpacked directory.
-
-From the Aegis tree, on Windows:
-
-```powershell
-Compress-Archive -Path extensions\deploy\* -DestinationPath deploy-1.0.0.zip -Force
-```
-
-Leave out anything that does not ship: `CLAUDE.md`, tests, notes. The same exclusion
-list the clean copy uses applies here.
-
-## 3. Write the manifest
+`extensions/<id>/CHANGELOG.md` becomes the release notes verbatim, so write it
+before tagging rather than editing the release afterwards. Rename its `Unreleased`
+heading to the version you picked in step 1: what is under that heading is what the
+release is.
 
 ```bash
-node scripts/make-manifest.mjs deploy 1.0.0 ../deploy-1.0.0.zip
+git tag deploy-v1.0.0
+git push origin deploy-v1.0.0
 ```
 
-The script prints the digest, the size, and the `latest` block to paste into
-`store.json`. It writes `deploy-1.0.0.manifest.json` next to the zip.
+That is the publish. `<id>-v<version>`, matching the `agent-v<version>` shape on
+`aegis-releases`. The tag is refused if the id names no folder, if the version is
+not semver, or if the suite fails: nothing is uploaded before `npm test` passes,
+because a release is three assets somebody has already downloaded by the time you
+read a red run.
 
-Do not touch that file again. The signature covers its bytes as written.
+That gate has a hole worth knowing before you lean on it. The browser tier under
+`extensions/<id>/frontend/tests/` skips on the runner, which has no Aegis checkout,
+so a green release run says nothing about whether the extension's pages still
+render. Run those locally with `AEGIS_TREE` set before you tag. See
+[README.md](README.md), "The four that need Aegis on disk".
 
-## 4. Sign the manifest
+`workflow_dispatch` takes the same tag as an input, for re-running a release whose
+workflow failed after the tag was pushed.
 
-Sign with the Aegis release key, the one `backend/src/lib/releaseKey.js` already
-carries the public half of. `deploy/Sign-AgentRelease.ps1` in the Aegis tree signs
-agent releases with it and takes the same detached RSA-SHA256 form:
+## 3. What the workflow does with it
 
-```
-deploy-1.0.0.manifest.json.sig
-```
+Worth reading once, so a failure names something you recognise.
 
-Base64, detached, over the manifest bytes. Verify locally before uploading:
+**Builds the package** from `extensions/<id>/`, with `zip -r -x`. The zip root holds
+what that folder holds: `extension.json` at the top, then `backend/` and
+`frontend/`. No wrapping folder, since the loader reads `extension.json` at the root
+of the unpacked directory. Out: `backend/tests/`, `store.json`, `CHANGELOG.md`,
+`card.png` and any `CLAUDE.md`. The first three belong to this repository rather
+than to the package; the card image is served from `main`, so fixing a crop costs no
+release.
 
-```bash
-node -e "
-const {verifyReleaseSignature}=require('<aegis>/backend/src/lib/releaseKey.js');
-const fs=require('fs');
-console.log(verifyReleaseSignature(fs.readFileSync('deploy-1.0.0.manifest.json'), fs.readFileSync('deploy-1.0.0.manifest.json.sig','utf8')));
-"
-```
+**Checks the package against that list** by reading the names back out of the zip.
+An exclusion pattern that quietly matched nothing would put an extension's tests on
+a customer's audit server, so the build fails rather than trusting the pattern.
 
-A `false` here means every Aegis install would refuse the release. Fix it now, not
-after publishing.
+**Writes the manifest** with `scripts/make-manifest.mjs`, which reads
+`manifestVersion` and `minAppVersion` out of `store.json` and computes the size and
+the digest from the zip it just built. Those bytes are final: the signature covers
+them exactly as written, and reindenting the file afterwards invalidates it.
 
-## 5. Cut the release
+**Signs it** with the Aegis release key, the one `backend/src/lib/releaseKey.js`
+already carries the public half of: detached RSA-SHA256, base64. The private half is
+the repository secret `RELEASE_SIGNING_KEY`, which a human sets once, in the
+repository settings, to the PEM including its BEGIN and END lines. Unset, the
+workflow refuses: an unsigned release is one every install rejects at step 2 of
+**Trust model** in [CONTRACT.md](CONTRACT.md), which is worse than no release. The
+signature is verified against the key's own public half before upload, which proves
+it is well formed over those bytes; only a real install proves the key is the one
+the field trusts, so check a first release against one before the catalogue points
+at it.
 
-Tag `<id>-v<version>`, matching the `agent-v<version>` shape on `aegis-releases`.
-Three assets, named exactly as `scripts/build-index.mjs` expects:
+**Cuts the release** with the three assets, named exactly as
+`scripts/build-index.mjs` derives them, and marks it a prerelease when `store.json`
+says `channel: preview`.
 
-```bash
-gh release create deploy-v1.0.0 \
-  deploy-1.0.0.zip \
-  deploy-1.0.0.manifest.json \
-  deploy-1.0.0.manifest.json.sig \
-  --title "Deploy 1.0.0" \
-  --notes-file extensions/deploy/CHANGELOG.md
-```
+**Rebuilds the catalogue** on `main`: it reads the size and digest back out of the
+published manifest, writes the `latest` block and the `releases` entry into
+`extensions/<id>/store.json`, runs `build-index.mjs` and then
+`validate-catalog.mjs`, and commits both files. Read back from the release rather
+than carried over from the build, so what the catalogue describes is what somebody
+can actually download.
 
-Add `--prerelease` for a `preview` channel release.
+That commit is the only writer of `index.json`. `catalog.yml` is the reader: it
+validates the catalogue on every push and fetches every referenced asset, this
+commit's push included. So the release is checked twice by two workflows that
+cannot disagree about who owns the file.
 
-## 6. Update the catalogue
+## 4. If it fails
 
-Paste the `latest` block into `extensions/deploy/store.json`, append the version to
-its `releases` array, then:
+| Where | What it means |
+|---|---|
+| Read the tag | The id names no `extensions/<id>/` folder, or the version is not semver. Delete the tag and push a correct one |
+| Run the suite | The release is not ready. Nothing was uploaded |
+| Refuse a package carrying what must not ship | A `-x` pattern stopped matching, usually because a file moved. Fix the pattern, delete the tag, tag again |
+| Sign the manifest | `RELEASE_SIGNING_KEY` is unset or is not a usable private key. Set it, then re-run from `workflow_dispatch` |
+| Cut the release | A release for that tag already exists. Delete it before re-running |
+| Rebuild and validate the catalogue | The validator disagrees with the generated `index.json`. Its output names the field |
+| Commit the catalogue | Branch protection on `main` refuses a push from Actions. Either allow it, or apply the same three commands locally: `build-index.mjs`, `validate-catalog.mjs`, commit |
 
-```bash
-node scripts/build-index.mjs
-node scripts/validate-catalog.mjs
-git add -A && git commit -m "deploy 1.0.0"
-git push
-```
-
-The validator refuses a hand-edited `index.json`, an asset URL pointing anywhere
-other than this repository's releases, and two extensions claiming one `/api/`
-prefix. CI runs it again on push and checks that the three assets resolve.
+A tag is cheap to redo. Delete it on both sides (`git tag -d`, `git push --delete
+origin <tag>`), delete any release it created, and push it again.
 
 Aegis picks the new version up on its next catalogue poll.
 
 ## Yanking a release
 
 Delete the GitHub release, drop the `latest` block back to the previous version in
-`store.json`, rebuild, push. Installs already on disk stay where they are: the
+`store.json`, run `node scripts/build-index.mjs` and `node
+scripts/validate-catalog.mjs`, then push. By hand, because a yank is a decision and
+there is no tag to hang it on. Installs already on disk stay where they are: the
 catalogue describes what a backend can fetch, not what it runs.

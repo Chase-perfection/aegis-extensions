@@ -1,0 +1,1667 @@
+/*
+ * Deploy page styles.
+ *
+ * Every value is a token: base.css for spacing, type and radii, wf-ink.css for
+ * the surface ramp (see Surfaces below). The extension owns this file and no
+ * rule in it targets a core class, so deleting extensions/deploy/ removes the
+ * page and changes nothing else (ADR 0001 decisions 1 and 2).
+ *
+ * Class prefix is `dep-`. Core uses `ext-` for the store, and a collision there
+ * would have styled the store's cards from an extension's stylesheet.
+ *
+ * State classes are `is-*` for the same reason: `.active` and `.open` are taken
+ * several times over in index.css, and a silent collision here would show as a
+ * pane stuck open rather than as an error.
+ */
+
+/* --- Surfaces ----------------------------------------------------------
+ *
+ * Deploy paints on near-black neutrals, not on the core dashboard's blue
+ * glass. `deploy.html` carries `body.wf-ink-page`, so wf-ink.css supplies the
+ * ramp: #080808 canvas, #0e0e0e surfaces, #0a0a0a insets, #262626 hairlines,
+ * #3b89ff accent. Those are the design's own values, and the same ones the
+ * navbar already scopes to itself, so the shell reads as one surface.
+ *
+ * The aliases below name what each shade is for on this page. Each falls back
+ * to a base.css token, so the page degrades to a neutral dark rather than to
+ * the blue glass if wf-ink.css ever stops loading.
+ *
+ * Only the surfaces change. Blue stays where the design uses it as a signal:
+ * links, the current rail entry, the running stage, a protected site's badge,
+ * and the border a card takes on hover.
+ */
+
+/* --- Shell: platform navbar on top, Deploy's own rail on the left ------- */
+
+#deploy-view {
+    --dep-canvas: var(--wf-canvas, var(--zinc-950));
+    --dep-surface: var(--wf-surface, var(--zinc-900));
+    --dep-sunken: var(--wf-inset, var(--zinc-950));
+    --dep-line: var(--wf-hairline, var(--zinc-800));
+    /* The heavier hairline, for a control that has to be findable at rest.
+       Blue is reserved for hover and for the current entry. */
+    --dep-line-strong: var(--wf-hairline-strong, var(--zinc-700));
+
+    /* The platform navbar's height, fixed at 60px by `.aegis-navbar` in
+       navbar.css. The rail below is sticky inside this element, and this is
+       what stops a 100vh rail from hanging that far past the bottom of the
+       scrollport. There is no token for it; it tracks that one rule. */
+    --dep-nav-h: 60px;
+
+    /* Beats wf-ink's own `.content-area` padding on specificity, which is the
+       point: the rail has to reach the edges. */
+    padding: 0;
+    background: var(--dep-canvas);
+}
+
+/* `hidden` is how this page hides everything: panes, the empty state, a chip
+   with nothing in it, the Cancel button on a finished build. The attribute
+   only carries `display: none` from the browser's own stylesheet, so any rule
+   here that sets a display wins over it and the element stays on screen. That
+   is a silent failure, and it is the one the redesign hit first: an empty
+   state under a full project grid. Scoped to Deploy's own subtree. */
+.dep-shell [hidden] { display: none !important; }
+
+.dep-shell {
+    display: grid;
+    /* 252px, not a rem scale: the handoff draws this rail on a fixed 1440px
+       canvas and the width is one of its stated values. */
+    grid-template-columns: 252px minmax(0, 1fr);
+    align-items: start;
+    min-height: 100%;
+}
+
+/* Sticky, not fixed: `.main-content` is the scroller on this page, and a fixed
+   rail would sit over the navbar instead of under it. */
+.dep-side {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    height: calc(100vh - var(--dep-nav-h));
+    padding: 20px 14px;
+    /* Sunken, not the page white: the rail is a surface the content sits
+       beside, and a white rail on a white page needs the border to do all the
+       work. */
+    background: var(--ag-sunken-alt, var(--dep-canvas));
+    border-right: 1px solid var(--dep-line);
+}
+
+/* A row, not a card. The tenant is context, not a control, so it gets no
+   border and no fill of its own. */
+.dep-side-brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 6px;
+}
+
+.dep-side-mark {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--accent);
+}
+
+.dep-side-tenant {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--ag-font-mono, monospace);
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-main);
+}
+
+/* Grey, not blue: "Extension" says where this page comes from, it does not
+   flag anything. Blue on this page is reserved for a signal. */
+.dep-side-badge {
+    flex: none;
+    margin-left: auto;
+    padding: 2px 5px;
+    border-radius: 3px;
+    background: var(--ag-hairline, var(--dep-sunken));
+    color: var(--ag-body-muted, var(--zinc-400));
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+/* The one action the rail leads with, so it reads as the primary control
+   rather than as a sixth navigation entry. */
+.dep-side-new {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 9px 12px;
+    border-radius: var(--ag-r-input, 7px);
+    background: var(--accent);
+    color: var(--zinc-950);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background var(--transition-fast) var(--ease-out);
+}
+
+.dep-side-new:hover { background: var(--ag-accent-hover, var(--accent-bright)); }
+
+.dep-side-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.dep-side-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--ag-r-input, 7px);
+    color: var(--zinc-400);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: color var(--transition-fast) var(--ease-out),
+                background var(--transition-fast) var(--ease-out);
+}
+
+.dep-side-link svg {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    color: var(--ag-meta, currentColor);
+}
+
+.dep-side-link:hover {
+    color: var(--text-main);
+    background: #f4f4f4;
+}
+
+/* The app-wide mark for "you are here": a neutral fill plus a 2px blue edge on
+   the left. Same rule as the Settings rail and the Extensions rail, so the
+   three read as one navigation system. */
+.dep-side-link.is-current {
+    color: var(--text-main);
+    background: #f1f1f1;
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Amber, because a build in flight is a state to come back to, not an error
+   and not a link. */
+.dep-side-count {
+    margin-left: auto;
+    flex: none;
+    font-family: var(--ag-font-mono, monospace);
+    font-size: 10.5px;
+    color: var(--ag-warning, #a35c00);
+    border: 1px solid var(--ag-warning-border, #f0d9a8);
+    background: var(--ag-warning-wash-alt, #fdf7ec);
+    border-radius: var(--ag-r-pill, 999px);
+    padding: 1px 6px;
+}
+
+.dep-side-rule {
+    height: 1px;
+    background: var(--ag-hairline-alt, var(--dep-line));
+    margin: 10px 8px;
+}
+
+.dep-side-foot {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: auto;
+    padding: 10px;
+    border-top: 1px solid var(--ag-hairline-alt, var(--dep-line));
+    color: var(--zinc-400);
+    font-size: var(--text-xs);
+}
+
+.dep-side-who {
+    min-width: 0;
+}
+
+.dep-side-who-name {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-main);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dep-side-who-role {
+    display: block;
+    font-family: var(--ag-font-mono, monospace);
+    font-size: 10.5px;
+    color: var(--ag-meta, var(--zinc-400));
+}
+
+.dep-side-avatar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--ag-hairline, var(--accent-soft));
+    color: var(--ag-body-muted, var(--accent-bright));
+    font-size: 10.5px;
+    font-weight: 600;
+}
+
+.dep-main {
+    min-width: 0;
+    padding: var(--space-xl);
+}
+
+.dep-pane[hidden] { display: none; }
+
+.dep-block { margin-bottom: var(--space-2xl); }
+
+/* The handoff's secondary-pane title: 30px/36px at weight 400, the same scale
+   aegis-white gives `.ag-title--sm`. It draws it in Nofex; this does not, and
+   that is the theme's own documented call — Nofex has no accented glyphs, so a
+   French title set in it loses them ("Sécurité" paints as "SECURITE"). Archivo
+   is the fallback the handoff itself pre-authorises. */
+.dep-pane-title {
+    margin: 0;
+    font-family: var(--ag-font-display, var(--font-heading));
+    font-size: 30px;
+    line-height: 36px;
+    font-weight: 400;
+    letter-spacing: -0.2px;
+    color: var(--text-main);
+}
+
+.dep-pane-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--ag-font-mono, var(--font-mono));
+    font-size: 11.5px;
+    color: var(--ag-meta, var(--zinc-500));
+    white-space: nowrap;
+}
+
+/* A 1px rule between meta items, not a middot — the separator convention the
+   handoff states for every screen. */
+.dep-meta-sep {
+    width: 1px;
+    height: 11px;
+    background: var(--ag-border-strong, var(--dep-line-strong));
+    flex: none;
+}
+
+.dep-pane-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-md);
+    margin-bottom: var(--space-md);
+}
+
+/* Pushes whatever follows to the right edge of the header row. */
+.dep-pane-head .dep-search { margin-left: auto; }
+
+.dep-label-inline { margin-bottom: 0; }
+
+.dep-body {
+    max-width: 46rem;
+    margin: var(--space-sm) 0 var(--space-lg);
+    color: var(--zinc-400);
+    font-size: var(--text-sm);
+    line-height: 1.6;
+}
+
+.dep-eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-bright);
+}
+
+.dep-subtitle {
+    margin: var(--space-lg) 0 var(--space-sm);
+    font-size: var(--text-h3);
+    color: var(--text-main);
+}
+
+.dep-mono {
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+}
+
+/* --- Empty state ------------------------------------------------------- */
+
+.dep-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--space-2xl) var(--space-md);
+    text-align: center;
+}
+
+.dep-hero-title {
+    max-width: 34rem;
+    margin: var(--space-sm) 0 var(--space-md);
+    font-size: var(--text-display);
+    line-height: 1.2;
+    color: var(--text-main);
+}
+
+.dep-hero-body {
+    max-width: 34rem;
+    margin: 0 0 var(--space-xl);
+    color: var(--zinc-400);
+    font-size: var(--text-body);
+    line-height: 1.65;
+}
+
+.dep-hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-2xl);
+}
+
+/* The three cards are one row in the design. 14rem rather than 15 buys back
+   about 60px of window before they wrap to two, which is the difference
+   between a 1040px viewport and an 1100px one. Below that they wrap, which is
+   what they should do. */
+.dep-features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: var(--space-md);
+    width: 100%;
+    max-width: 52rem;
+    text-align: left;
+}
+
+.dep-feature {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: var(--space-md);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+}
+
+.dep-feature svg {
+    width: 1.15rem;
+    height: 1.15rem;
+    color: var(--accent-bright);
+}
+
+.dep-feature h3 {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-main);
+}
+
+.dep-feature p {
+    margin: 0;
+    color: var(--zinc-400);
+    font-size: var(--text-xs);
+    line-height: 1.55;
+}
+
+/* --- Readiness --------------------------------------------------------- */
+
+.dep-readiness {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin: 0 0 var(--space-xl);
+    max-width: 60rem;
+}
+
+.dep-loading {
+    color: var(--zinc-400);
+    font-size: var(--text-sm);
+}
+
+.dep-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    padding: var(--space-md);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+}
+
+/* The dot carries the state, so the row keeps one border colour and the page
+   does not turn into a traffic light. */
+.dep-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    margin-top: 0.45rem;
+    border-radius: 50%;
+    background: var(--zinc-500);
+}
+
+.dep-ok .dep-dot { background: var(--risk-low); }
+.dep-todo .dep-dot { background: var(--risk-medium); }
+.dep-blocked .dep-dot { background: var(--risk-critical); }
+
+.dep-row-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    min-width: 0;
+}
+
+.dep-row-label {
+    color: var(--text-main);
+    font-size: var(--text-body);
+    font-weight: 600;
+}
+
+.dep-row-detail {
+    color: var(--zinc-400);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+}
+
+/* Wraps rather than scrolls: a webhook URL is the thing a reader retypes into
+   another system, and a truncated one is worse than a tall row. */
+.dep-row-fix {
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    color: var(--accent-bright);
+    background: var(--dep-sunken);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-sm);
+    padding: 0.2rem 0.45rem;
+    align-self: flex-start;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+/* The case that does not apply to most readers, kept quieter than the two
+   commands above it so it cannot be mistaken for a third step. */
+.dep-row-note {
+    color: var(--zinc-500);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+}
+
+/* --- Controls ---------------------------------------------------------- */
+
+.dep-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--zinc-950);
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--ag-r-input, 7px);
+    padding: 8px 14px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background var(--transition-fast) var(--ease-out);
+}
+
+.dep-btn:hover:not(:disabled) { background: var(--accent-hover, var(--accent-bright)); }
+.dep-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* `body.aegis-white a { color: var(--ag-accent) }` is (0,1,1) and beats a bare
+   class, and aegis-white.css loads after this file — so every filled button
+   rendered as an <a> came out blue text on a blue fill, i.e. an invisible
+   label. `<button class="dep-btn">` was unaffected, which is why it showed on
+   some controls and not others. Scoping to the view id settles it for both
+   tags at once. */
+#deploy-view .dep-btn,
+#deploy-view .dep-side-new {
+    color: var(--zinc-950);
+}
+
+/* Same trap, same fix, for the variants that carry their own colour. */
+#deploy-view .dep-btn-ghost { color: var(--text-main); }
+#deploy-view .dep-btn-danger { color: var(--risk-critical); }
+
+/* And for the rail, which is the place it showed worst: every entry is an <a>,
+   so the whole navigation came out accent blue while the current one — at two
+   classes, enough to outrank the link rule — stayed dark. Seven blue labels
+   with one dark one reads as seven links and a heading. */
+#deploy-view .dep-side-link { color: var(--zinc-400); }
+#deploy-view .dep-side-link:hover { color: var(--text-main); }
+#deploy-view .dep-side-link.is-current { color: var(--text-main); }
+#deploy-view .dep-card-link { color: var(--accent); }
+
+/* Secondary next to a primary button, so the two do not compete. */
+.dep-btn-ghost {
+    color: var(--ag-body, var(--text-main));
+    background: var(--ag-surface, transparent);
+    border-color: var(--ag-border-strong, var(--dep-line-strong));
+    font-weight: 500;
+}
+
+/* Border and label move together on hover — a border that turns blue while the
+   label stays grey reads as a focus ring, not as "this is what you are on". */
+.dep-btn-ghost:hover:not(:disabled) {
+    background: var(--ag-surface, var(--dep-sunken));
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.dep-btn-small {
+    padding: 6px 11px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* The button is a link here, because it leaves Aegis for GitHub. */
+.dep-btn-link {
+    display: inline-flex;
+    margin-bottom: var(--space-sm);
+    text-decoration: none;
+}
+
+/* An icon standing in for the label, on a row where the other buttons carry
+   their words. Square, so the bin sits on the grid the text buttons set rather
+   than stretching to a word's width. The accessible name is on aria-label. */
+.dep-btn-icon {
+    padding: 0.3rem;
+    line-height: 0;
+}
+
+.dep-btn svg {
+    flex: none;
+    width: 0.9rem;
+    height: 0.9rem;
+}
+
+/* Destructive, so it reads as destructive on hover and not before: a Remove
+   button that is red at rest pulls the eye away from the site it belongs to. */
+.dep-btn-danger:hover:not(:disabled) {
+    color: var(--risk-critical);
+    border-color: var(--risk-critical);
+    background: transparent;
+}
+
+.dep-note {
+    margin-top: var(--space-sm);
+    color: var(--zinc-300);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+}
+
+.dep-label {
+    display: block;
+    margin-bottom: var(--space-xs);
+    color: var(--zinc-400);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.dep-select,
+.dep-search {
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-main);
+    background: var(--ag-surface, var(--dep-surface));
+    border: 1px solid var(--ag-border-strong, var(--dep-line-strong));
+    border-radius: var(--ag-r-input, 7px);
+    padding: 7px 12px;
+    min-width: 14rem;
+    max-width: 100%;
+    outline: none;
+}
+
+.dep-search:focus { border-color: var(--accent); }
+
+.dep-search::placeholder { color: var(--zinc-500); }
+
+/* Same shell as .dep-select: both are one field in the same form. */
+.dep-input {
+    display: block;
+    font-family: inherit;
+    font-size: var(--text-sm);
+    color: var(--text-main);
+    background: var(--dep-sunken);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-sm);
+    padding: 0.45rem 0.6rem;
+    width: 100%;
+    max-width: 34rem;
+    margin-bottom: var(--space-md);
+}
+
+.dep-input:focus,
+.dep-select:focus,
+.dep-search:focus {
+    outline: none;
+    border-color: var(--accent-bright);
+}
+
+/* Monospace so the line breaks in a pasted key stay visible. A PEM that lost
+   them is refused, and in a proportional font the operator cannot see why. */
+.dep-textarea {
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    resize: vertical;
+}
+
+.dep-manual-steps {
+    color: var(--zinc-400);
+    font-size: var(--text-sm);
+    line-height: 1.6;
+    margin: 0 0 var(--space-md);
+    padding-left: 1.4rem;
+}
+
+.dep-hint {
+    margin: 0 0 var(--space-md);
+    max-width: 46rem;
+    color: var(--zinc-500);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+}
+
+.dep-empty,
+.dep-error {
+    color: var(--zinc-400);
+    font-size: var(--text-sm);
+}
+
+.dep-error {
+    color: var(--risk-critical);
+    margin-bottom: var(--space-md);
+}
+
+/* --- Two-column body: form beside its sidecar, stages beside metadata --- */
+
+.dep-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 20rem;
+    gap: var(--space-xl);
+    align-items: start;
+}
+
+/* The sidecar goes first. A 20rem panel beside a form needs about 68rem to
+   leave the form itself readable, and it is the half a reader can scroll to. */
+@media (max-width: 68rem) {
+    .dep-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The rail holds on much longer, because it is the page's navigation and
+   stacking it pushes every pane below a screenful of links. 240px of rail plus
+   a two-column card grid still fits a 56rem window, which is where a laptop
+   with a side panel open lands. */
+@media (max-width: 56rem) {
+    .dep-shell { grid-template-columns: minmax(0, 1fr); }
+    .dep-side { position: static; height: auto; }
+    .dep-main { padding: var(--space-lg) var(--space-md); }
+}
+
+.dep-plan,
+.dep-meta {
+    padding: var(--space-md);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+}
+
+.dep-plan h3 {
+    margin: 0 0 var(--space-md);
+    font-size: var(--text-sm);
+    color: var(--text-main);
+}
+
+.dep-plan-steps {
+    margin: 0 0 var(--space-md);
+    padding-left: 1.1rem;
+    color: var(--zinc-400);
+    font-size: var(--text-xs);
+    line-height: 1.6;
+}
+
+.dep-plan-steps li { margin-bottom: var(--space-sm); }
+.dep-plan-steps code {
+    font-family: var(--font-mono);
+    color: var(--accent-bright);
+    overflow-wrap: anywhere;
+}
+
+.dep-meta-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: var(--space-sm) 0;
+    border-bottom: 1px solid var(--dep-line);
+    font-size: var(--text-xs);
+}
+
+.dep-meta-row:last-child { border-bottom: 0; }
+.dep-meta-key { color: var(--zinc-500); }
+
+.dep-meta-value {
+    color: var(--text-main);
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+
+/* --- Project cards ----------------------------------------------------- */
+
+/* Three up on the design's canvas, and still three up on a narrower screen
+   because the columns share the row rather than being floored at a width.
+   auto-fill at 17rem gave one lonely card on a wide screen with two projects. */
+.dep-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 22px;
+}
+
+.dep-card {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--ag-surface, var(--dep-surface));
+    border: 1px solid var(--ag-border, var(--dep-line));
+    border-radius: var(--ag-r-card, var(--radius-md));
+    transition: border-color var(--transition-fast) var(--ease-out);
+}
+
+.dep-card:hover { border-color: var(--glass-border-hover); }
+
+/* Stands in for a screenshot Aegis does not take.
+   It used to be a gradient seeded from the project name — hsl(h 55% 22%), two
+   dark stops, drawn for the near-black skin this page used to wear. On white
+   it reads as an olive slab with nothing in it, so it is now the neutral the
+   design draws: a light plate the eye skips until there is a real screenshot
+   to put there. */
+.dep-card-art {
+    position: relative;
+    height: 158px;
+    background: #f4f4f4;
+    border-bottom: 1px solid var(--ag-hairline-alt, var(--dep-line));
+    overflow: hidden;
+}
+
+/* Anchored to the top, not centred: a landing page is composed from the top
+   down, and centring a 1280x800 capture in a 158px band crops away the header
+   and the headline in favour of whatever happens to be halfway down. */
+.dep-card-shot {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top center;
+}
+
+.dep-card-body {
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+}
+
+.dep-card-name {
+    margin: 0;
+    font-family: var(--ag-font-ui, inherit);
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--ag-ink, var(--text-main));
+    overflow-wrap: anywhere;
+}
+
+.dep-card-link,
+.dep-card-repo {
+    margin: 0;
+    font-family: var(--ag-font-mono, var(--font-mono));
+    color: var(--ag-meta, var(--zinc-400));
+    text-decoration: none;
+}
+
+.dep-card-link {
+    display: block;
+    margin-top: 5px;
+    font-size: 12px;
+    color: var(--accent);
+    overflow-wrap: anywhere;
+}
+
+/* One line with an ellipsis: the owner/repo/sha string is an identifier, and
+   wrapping it to three lines pushes every card in the row taller for a value
+   nobody reads to the end. */
+.dep-card-repo {
+    margin-top: 8px;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dep-card-when {
+    margin: 4px 0 0;
+    font-family: var(--ag-font-mono, var(--font-mono));
+    color: var(--ag-meta, var(--zinc-500));
+    font-size: 11px;
+}
+
+.dep-card-error {
+    margin: 0;
+    color: var(--risk-critical);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+}
+
+.dep-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+/* Destructive control sits apart from the two the operator uses daily, so a
+   mis-aimed click lands on nothing rather than on Remove. */
+.dep-card-actions .dep-btn-icon {
+    margin-left: auto;
+    width: 30px;
+    height: 29px;
+    padding: 0;
+    justify-content: center;
+    border-color: #e8d4d6;
+}
+
+.dep-card-actions .dep-btn-icon:hover:not(:disabled) {
+    background: var(--ag-danger-wash, #fdf2f3);
+    border-color: #e8d4d6;
+    color: var(--risk-critical);
+}
+
+/* --- Status pills ------------------------------------------------------ */
+
+.dep-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: 0.2rem var(--space-sm);
+    border: 1px solid var(--dep-line);
+    border-radius: 999px;
+    background: var(--dep-sunken);
+    color: var(--zinc-300);
+    font-size: var(--text-xxs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.dep-pill::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--zinc-500);
+}
+
+.dep-pill.is-live::before { background: var(--risk-low); }
+.dep-pill.is-live { color: var(--risk-low); }
+.dep-pill.is-running::before { background: var(--accent-bright); }
+.dep-pill.is-running { color: var(--accent-bright); }
+.dep-pill.is-failed::before { background: var(--risk-critical); }
+.dep-pill.is-failed { color: var(--risk-critical); }
+.dep-pill.is-down::before { background: var(--risk-critical); }
+.dep-pill.is-down { color: var(--risk-critical); }
+.dep-pill.is-idle::before { background: var(--risk-medium); }
+
+/* Above the screenshot, and opaque: it now sits over a photograph of an
+   arbitrary page rather than over a flat plate, so it cannot borrow contrast
+   from what is behind it. */
+.dep-card-art .dep-pill {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 2;
+    background: var(--ag-surface, #fff);
+}
+
+.dep-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem var(--space-sm);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-sm);
+    background: var(--dep-sunken);
+    color: var(--zinc-300);
+    font-size: var(--text-xs);
+    white-space: nowrap;
+}
+
+/* --- Rows: repositories, deployments, refusal codes -------------------- */
+
+.dep-rows {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+}
+
+.dep-listrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+    text-align: left;
+    text-decoration: none;
+    transition: border-color var(--transition-fast) var(--ease-out);
+}
+
+.dep-listrow:hover { border-color: var(--glass-border-hover); }
+
+.dep-listrow-main {
+    flex: 1 1 16rem;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.dep-listrow-name {
+    color: var(--text-main);
+    font-size: var(--text-body);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.dep-listrow-sub {
+    color: var(--zinc-400);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+/* A whole row that navigates. A button rather than a link where the target is
+   a pane and not a document, so the keyboard reaches it the same way. */
+button.dep-listrow {
+    width: 100%;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+/* --- Build console ----------------------------------------------------- */
+
+.dep-run-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-md);
+    margin-bottom: var(--space-lg);
+}
+
+.dep-crumb {
+    color: var(--zinc-500);
+    font-size: var(--text-xs);
+    text-decoration: none;
+    flex-basis: 100%;
+}
+
+.dep-crumb:hover { color: var(--accent-bright); }
+
+.dep-run-clock {
+    color: var(--zinc-400);
+    font-variant-numeric: tabular-nums;
+}
+
+.dep-detail-url {
+    margin-left: auto;
+    color: var(--accent-bright);
+    text-decoration: none;
+    overflow-wrap: anywhere;
+}
+
+.dep-stages {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.dep-stage {
+    padding: var(--space-md);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+}
+
+.dep-stage.is-pending { opacity: 0.45; }
+.dep-stage.is-running { border-color: var(--glass-border-hover); }
+.dep-stage.is-failed { border-color: var(--risk-critical); }
+
+.dep-stage-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.dep-stage-name {
+    flex: 1;
+    color: var(--text-main);
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
+.dep-stage-time {
+    color: var(--zinc-500);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.dep-stage-detail {
+    margin: var(--space-xs) 0 0 1.15rem;
+    color: var(--zinc-400);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    overflow-wrap: anywhere;
+}
+
+/* The mark that tells the stage states apart without colour alone: a ring
+   while pending, a filled dot while running, a tick when done, a cross
+   when refused. A stage with nothing to do is not drawn at all. Drawn in CSS because it has no meaning to announce; the stage
+   name and the log next to it carry that. */
+.dep-stage-mark {
+    flex: none;
+    width: 0.85rem;
+    height: 0.85rem;
+    border-radius: 50%;
+    border: 2px solid var(--zinc-600);
+}
+
+.dep-stage.is-running .dep-stage-mark {
+    border-color: var(--accent-bright);
+    background: var(--accent-soft);
+}
+
+.dep-stage.is-done .dep-stage-mark {
+    border-color: var(--risk-low);
+    background: var(--risk-low);
+}
+
+.dep-stage.is-failed .dep-stage-mark {
+    border-color: var(--risk-critical);
+    background: var(--risk-critical);
+}
+
+.dep-log {
+    max-height: 22rem;
+    margin: var(--space-md) 0 0;
+    padding: var(--space-md);
+    overflow-y: auto;
+    background: var(--dep-sunken);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    line-height: 1.65;
+}
+
+.dep-log-line {
+    display: flex;
+    gap: var(--space-sm);
+    color: var(--zinc-300);
+    overflow-wrap: anywhere;
+}
+
+.dep-log-at {
+    flex: none;
+    color: var(--zinc-600);
+}
+
+.dep-log-text { white-space: pre-wrap; }
+
+/* --- Refusal codes ----------------------------------------------------- */
+
+.dep-code {
+    flex: none;
+    align-self: flex-start;
+    padding: 0.15rem var(--space-sm);
+    border-radius: var(--radius-sm);
+    background: var(--dep-sunken);
+    border: 1px solid var(--dep-line);
+    color: var(--accent-bright);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+}
+
+/* --- Directory authentication ------------------------------------------ */
+
+/* Two columns of fields where the viewport allows it: this form is fourteen
+   controls long, and one column of them scrolls past the Save button. */
+.dep-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    gap: 0 var(--space-lg);
+    max-width: 60rem;
+}
+
+.dep-field { min-width: 0; }
+.dep-field .dep-input { max-width: 100%; }
+
+/* A checkbox reads as one control with its sentence, so the whole row is the
+   label and the whole row is clickable. */
+.dep-check {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+    color: var(--zinc-300);
+    font-size: var(--text-sm);
+    cursor: pointer;
+}
+
+.dep-check input { accent-color: var(--accent); }
+
+.dep-auth-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin: var(--space-md) 0;
+}
+
+/* --- Advanced settings, folded away ------------------------------------ */
+
+/* Five of the eight directory fields follow from the domain name and are
+   filled by the scan, so showing all eight at once asked the operator to
+   audit a form instead of reading three answers. Folded, not removed: a
+   directory that is not Active Directory still needs every one of them, and
+   the page opens this by itself when a refusal names a field inside. */
+.dep-more {
+    max-width: 60rem;
+    margin: 0 0 var(--space-md);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+}
+
+.dep-more-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    color: var(--zinc-300);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    list-style: none;
+}
+
+.dep-more-head::-webkit-details-marker { display: none; }
+
+/* The disclosure arrow, drawn rather than borrowed from the default marker so
+   it sits on the baseline of the label in every engine. */
+.dep-more-head::before {
+    content: "";
+    width: 0;
+    height: 0;
+    border-left: 5px solid currentColor;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform 120ms ease;
+}
+
+.dep-more[open] > .dep-more-head::before { transform: rotate(90deg); }
+.dep-more-head:hover { color: var(--text-main); }
+
+.dep-more-sub {
+    color: var(--zinc-500);
+    font-size: var(--text-xs);
+}
+
+.dep-more-body {
+    padding: 0 var(--space-md) var(--space-md);
+    border-top: 1px solid var(--dep-line);
+    padding-top: var(--space-md);
+}
+
+/* --- The certificate a controller presented ---------------------------- */
+
+/* Shown only when a handshake failed, because that is the only moment an
+   operator has a decision to make about it. The old behaviour was a paragraph
+   telling them to install an authority in Windows and restart Aegis, about a
+   certificate they could not see; this is the certificate, with the button
+   that trusts it. */
+.dep-cert {
+    max-width: 60rem;
+    padding: var(--space-md);
+    margin: 0 0 var(--space-md);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-left: 2px solid var(--risk-medium);
+    border-radius: var(--radius-md);
+}
+
+/* An authority already trusted is a statement of fact, not a warning. */
+.dep-cert-pinned { border-left-color: var(--risk-low); }
+
+.dep-cert-title {
+    margin: 0 0 var(--space-xs);
+    font-size: var(--text-sm);
+    color: var(--text-main);
+}
+
+.dep-cert-body {
+    margin: 0 0 var(--space-md);
+    color: var(--zinc-300);
+    font-size: var(--text-xs);
+    line-height: 1.6;
+}
+
+/* The fingerprint is the field the whole decision rests on: it is what an
+   operator compares against their own CA, and comparing a subject name would
+   compare something an attacker picks. So it gets the monospace and the room
+   to be read a pair at a time. */
+.dep-cert-print {
+    display: block;
+    padding: var(--space-sm);
+    margin: var(--space-xs) 0 var(--space-md);
+    background: var(--dep-code, rgba(0, 0, 0, 0.25));
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--accent-bright);
+    letter-spacing: 0.04em;
+    overflow-wrap: anywhere;
+}
+
+/* The groups a test login came back with. Chips rather than a sentence: each
+   one is a DN the operator copies into the allowed groups field below. */
+.dep-auth-groups {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-md);
+}
+
+.dep-auth-site {
+    padding: var(--space-md);
+    margin-bottom: var(--space-sm);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+}
+
+.dep-auth-site-name {
+    margin: 0 0 var(--space-sm);
+    font-size: var(--text-h3);
+    color: var(--text-main);
+}
+
+.dep-auth-site-note {
+    margin: var(--space-xs) 0 0;
+    color: var(--zinc-300);
+    font-size: var(--text-xs);
+}
+
+/* The HTTPS half of a site row. A rule rather than a gap or a card inside a
+   card: the two halves are one decision about one site, and boxing the second
+   would read as a separate setting that happens to sit nearby. */
+.dep-auth-site-sub {
+    margin: var(--space-md) 0 var(--space-sm);
+    padding-top: var(--space-sm);
+    border-top: 1px solid var(--dep-line);
+    font-size: var(--text-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--zinc-300);
+}
+
+/* Shown only while a site asks for a password over plain HTTP. */
+.dep-auth-site-warn {
+    margin: var(--space-xs) 0 0;
+    padding: var(--space-sm) var(--space-md);
+    border-left: 2px solid var(--risk-critical);
+    color: var(--zinc-300);
+    font-size: var(--text-xs);
+}
+
+/* The badge on a protected project's card. Accent rather than a risk colour:
+   a site asking for a login is the intended state, not a warning. */
+.dep-card-lock {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    align-self: flex-start;
+    margin: 0;
+    padding: var(--space-xs) var(--space-sm);
+    color: var(--accent-bright);
+    background: var(--accent-soft);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+}
+
+.dep-card-lock svg {
+    width: 1em;
+    height: 1em;
+    flex: none;
+}
+
+/* --- Environment variables --------------------------------------------- */
+
+.dep-env {
+    margin-top: var(--space-xl);
+}
+
+/* Name, value, scope, button on one line. The value gets the width: a name is
+   a word and a value is a token, and the token is the one that gets truncated
+   in a field too narrow to read back. */
+.dep-env-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) auto auto;
+    gap: var(--space-sm);
+    align-items: center;
+    margin-top: var(--space-md);
+}
+
+/* `.dep-input` is a block field in a stacked form, which is where it is used
+   everywhere else. Inside this row it is a cell. */
+.dep-env-form .dep-input,
+.dep-env-form .dep-select {
+    margin-bottom: 0;
+    min-width: 0;
+    max-width: none;
+}
+
+@media (max-width: 52rem) {
+    .dep-env-form {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* --- The project page's tabs -------------------------------------------- */
+
+/* A rail of links, not buttons: each one is an address, and the reader can open
+   the variables of a project in another tab the way they expect to. */
+.dep-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    margin: var(--space-lg) 0 var(--space-xl);
+    border-bottom: 1px solid var(--dep-line);
+}
+
+.dep-tab {
+    padding: var(--space-sm) var(--space-md);
+    color: var(--zinc-400);
+    font-size: var(--text-sm);
+    text-decoration: none;
+    /* The underline sits on the element rather than on a pseudo-element so the
+       current tab and the line under the rail meet exactly. */
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+}
+
+.dep-tab:hover {
+    color: var(--text-main);
+}
+
+.dep-tab.is-current {
+    color: var(--text-main);
+    border-bottom-color: var(--accent-bright);
+}
+
+/* --- The production deployment card ------------------------------------- */
+
+.dep-prod-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+}
+
+.dep-prod-head .dep-subtitle {
+    margin: 0;
+}
+
+.dep-prod {
+    display: grid;
+    grid-template-columns: 18rem minmax(0, 1fr);
+    gap: var(--space-xl);
+    align-items: start;
+    padding: var(--space-lg);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+    background: var(--dep-sunken);
+}
+
+/* The generated art is a placeholder for a screenshot Aegis does not take:
+   taking one means running a headless browser against a repository's page on
+   the audit server. */
+.dep-prod > .dep-card-art {
+    /* The card version is a fixed-height strip; here it is a panel beside the
+       facts, so the height comes from the ratio instead. */
+    height: auto;
+    aspect-ratio: 16 / 10;
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-sm);
+}
+
+.dep-prod-facts {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    min-width: 0;
+}
+
+.dep-prod-fact {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.dep-prod-fact > * {
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 60rem) {
+    .dep-prod {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* --- Usage ------------------------------------------------------------- */
+
+.dep-usage {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: var(--space-md);
+    margin-top: var(--space-lg);
+}
+
+.dep-usage-tile {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-lg);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+    background: var(--dep-sunken);
+}
+
+/* Tabular figures: these numbers sit in a column and are read against each
+   other. */
+.dep-usage-value {
+    font-size: var(--text-h2);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-main);
+}
+
+/* --- One project's block on an install-wide pane ------------------------ */
+
+.dep-block-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-sm);
+}
+
+.dep-block-head .dep-subtitle {
+    margin: 0;
+    text-decoration: none;
+}
+
+/* The one heading that is allowed to be red, and only the heading: the button
+   under it stays neutral until hover, same rule as `.dep-btn-danger`. */
+.dep-danger-title {
+    color: var(--risk-critical);
+}
+
+/* --- Branch fields ------------------------------------------------------- */
+
+/* A field and its button on one line. Not `.dep-env-form`: that grid has four
+   columns because a variable has four parts, and a branch has two. */
+.dep-branch-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+}
+
+.dep-branch-form .dep-input {
+    flex: 1 1 18rem;
+    margin-bottom: 0;
+    min-width: 0;
+    max-width: 28rem;
+}
+
+/* Narrower than a standalone `.dep-select`: this one sits in a repository row
+   between a name that wants the width and a button that must stay reachable. */
+.dep-listrow .dep-branch {
+    flex: 0 1 12rem;
+    min-width: 8rem;
+}
+
+/* --- The data browser ---------------------------------------------------- */
+
+.dep-data-crumbs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-md);
+    font-size: var(--text-xs);
+}
+
+.dep-data-crumb {
+    font-family: inherit;
+    font-size: inherit;
+    color: var(--zinc-400);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.dep-data-crumb:hover { color: var(--text-main); }
+.dep-data-sep { color: var(--zinc-500); }
+.dep-data-here { color: var(--text-main); font-weight: 600; }
+
+/* The table is the one thing on this page that legitimately runs wider than
+   the pane. It scrolls inside its own box so the page itself never does. */
+.dep-data-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+    background: var(--dep-surface);
+}
+
+.dep-data-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: var(--text-xs);
+}
+
+.dep-data-table th,
+.dep-data-table td {
+    padding: 0.4rem 0.7rem;
+    text-align: left;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--dep-line);
+}
+
+/* Tabular figures so a column of numbers lines up on the decimal, which is the
+   only way a column of numbers is readable at a glance. */
+.dep-data-table td {
+    color: var(--text-main);
+    font-variant-numeric: tabular-nums;
+    max-width: 32rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dep-data-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--dep-sunken);
+    color: var(--zinc-400);
+    font-weight: 600;
+}
+
+.dep-data-table thead th.is-sorted { color: var(--text-main); }
+.dep-data-table tbody tr:last-child td { border-bottom: 0; }
+
+.dep-data-sort {
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+.dep-data-dir { margin-left: 0.25rem; }
+
+/* Both are absences of a readable value, and both have to look unlike one: a
+   cell reading `null` in the same ink as the rest is a cell holding the word. */
+.dep-data-null,
+.dep-data-blob,
+.dep-data-cut {
+    color: var(--zinc-500);
+    font-style: italic;
+}
+
+.dep-data-pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-md);
+    margin-top: var(--space-md);
+}
+
+.dep-data-count {
+    color: var(--zinc-400);
+    font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
+}

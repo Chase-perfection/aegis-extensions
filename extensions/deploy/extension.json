@@ -1,0 +1,14 @@
+{
+  "id": "deploy",
+  "name": "Deploy",
+  "version": 1,
+  "release": "0.0.0",
+  "page": "deploy.html",
+  "icon": "network",
+  "labelKey": "nav_deploy",
+  "descKey": "desc_deploy",
+  "routePrefixes": ["/api/deploy"],
+  "backend": "backend/routes.js",
+  "requiresHostOptIn": true,
+  "signature": null
+}

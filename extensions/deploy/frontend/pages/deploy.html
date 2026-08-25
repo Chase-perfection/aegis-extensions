@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis - Deploy</title>
+    <link rel="icon" type="image/png" href="../public/assets/favicon.png">
+    <!-- Core stylesheets resolve to the core frontend tree: extensions share the
+         tenant URL space, so ../src/css/base.css is the same file every page
+         loads. Only deploy.css comes from this extension's own folder. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Archivo:wght@400;500;600;700;800&family=Archivo+Black&family=JetBrains+Mono:wght@400;500&display=swap">
+    <link rel="stylesheet" href="../src/css/base.css">
+    <link rel="stylesheet" href="../src/css/common.css">
+    <link rel="stylesheet" href="../src/css/navbar.css">
+    <link rel="stylesheet" href="../src/css/index.css">
+    <link rel="stylesheet" href="../src/css/deploy.css">
+    <link rel="stylesheet" href="../src/css/aegis-white.css">
+    <script defer src="../src/js/translations.js"></script>
+    <script defer src="../src/js/tenant.js"></script>
+    <script defer src="../src/js/auth.js"></script>
+</head>
+
+<!-- aegis-white is the 4.0 theme, and the skin the whole app now carries.
+     It replaces the wf-ink Ink skin this page opted into: both remap the same
+     tokens in opposite directions, so only one of them can load on a page.
+     Opting in here is what turns off the core dashboard's blue glass, which
+     it does at the token level rather than by this page overriding a core
+     class. -->
+<body class="aegis-white">
+    <div class="app-shell">
+        <!-- The platform navbar stays. Deploy's own rail below it navigates
+             inside the extension, so a reader can leave for Control Center or
+             Audit Results without backing out of Deploy first. -->
+        <nav id="aegis-navbar" class="aegis-navbar"></nav>
+
+        <main class="main-content">
+            <section id="deploy-view" class="content-area active">
+                <div class="dep-shell">
+
+                    <!-- Deploy's own rail. Every entry leads to a pane that
+                         exists: Domains, Variables and Settings appear in the
+                         design mock and behind them there is nothing to show,
+                         so they are not drawn. -->
+                    <aside class="dep-side">
+                        <div class="dep-side-brand">
+                            <span class="dep-side-mark" aria-hidden="true"></span>
+                            <span class="dep-side-tenant" id="deploy-side-tenant"></span>
+                            <span class="dep-side-badge" data-i18n="deploy_side_badge">Extension</span>
+                        </div>
+
+                        <a class="dep-side-new" href="#new" data-i18n="deploy_nav_new">New project</a>
+
+                        <nav class="dep-side-nav" id="deploy-side-nav" aria-label="Deploy">
+                            <a class="dep-side-link" href="#projects" data-pane="projects">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    aria-hidden="true" focusable="false">
+                                    <rect x="3" y="3" width="7" height="7" />
+                                    <rect x="14" y="3" width="7" height="7" />
+                                    <rect x="14" y="14" width="7" height="7" />
+                                    <rect x="3" y="14" width="7" height="7" />
+                                </svg>
+                                <span data-i18n="deploy_nav_projects">Projects</span>
+                            </a>
+                            <a class="dep-side-link" href="#runs" data-pane="runs">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" aria-hidden="true" focusable="false">
+                                    <line x1="8" y1="6" x2="21" y2="6" />
+                                    <line x1="8" y1="12" x2="21" y2="12" />
+                                    <line x1="8" y1="18" x2="21" y2="18" />
+                                    <line x1="3" y1="6" x2="3.01" y2="6" />
+                                    <line x1="3" y1="12" x2="3.01" y2="12" />
+                                    <line x1="3" y1="18" x2="3.01" y2="18" />
+                                </svg>
+                                <span data-i18n="deploy_nav_runs">Deployments</span>
+                                <!-- Painted by paintRunningCount() from the runs the
+                                     poller actually has open, and hidden when there
+                                     are none. A pill that always reads "0 running"
+                                     is a pill nobody looks at. -->
+                                <span class="dep-side-count" id="deploy-runs-count" hidden></span>
+                            </a>
+                            <a class="dep-side-link" href="#env" data-pane="env">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" aria-hidden="true" focusable="false">
+                                    <path d="M4 17l6-5-6-5" />
+                                    <line x1="12" y1="19" x2="20" y2="19" />
+                                </svg>
+                                <span data-i18n="deploy_nav_env">Environment variables</span>
+                            </a>
+                            <a class="dep-side-link" href="#domains" data-pane="domains">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    aria-hidden="true" focusable="false">
+                                    <circle cx="12" cy="12" r="9" />
+                                    <line x1="3" y1="12" x2="21" y2="12" />
+                                    <path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z" />
+                                </svg>
+                                <span data-i18n="deploy_nav_domains">Domains</span>
+                            </a>
+                            <a class="dep-side-link" href="#usage" data-pane="usage">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" aria-hidden="true" focusable="false">
+                                    <circle cx="12" cy="12" r="9" />
+                                    <path d="M12 7v5l4 2" />
+                                </svg>
+                                <span data-i18n="deploy_nav_usage">Usage</span>
+                            </a>
+
+                            <!-- Above the rule: what a project owner opens every day.
+                                 Below it: how this Aegis is wired to GitHub and who it
+                                 lets in — set once, then left alone. -->
+                            <span class="dep-side-rule" aria-hidden="true"></span>
+
+                            <a class="dep-side-link" href="#github" data-pane="github">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+                                    focusable="false">
+                                    <path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21" />
+                                </svg>
+                                <span data-i18n="deploy_nav_github">GitHub integration</span>
+                            </a>
+                            <a class="dep-side-link" href="#auth" data-pane="auth">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    aria-hidden="true" focusable="false">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                </svg>
+                                <span data-i18n="deploy_nav_auth">Authentication</span>
+                            </a>
+                            <a class="dep-side-link" href="#refusals" data-pane="refusals">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" aria-hidden="true" focusable="false">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="12" y1="8" x2="12" y2="13" />
+                                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                                </svg>
+                                <span data-i18n="deploy_nav_refusals">Refusal states</span>
+                            </a>
+                        </nav>
+
+                        <div class="dep-side-foot" id="deploy-side-user"></div>
+                    </aside>
+
+                    <div class="dep-main">
+                        <p id="deploy-error" class="dep-error" hidden></p>
+
+                        <!-- ===== Projects, and the empty state that replaces it ===== -->
+                        <section class="dep-pane" data-pane="projects" hidden>
+                            <div id="deploy-hero" class="dep-hero" hidden>
+                                <span class="dep-eyebrow">Deploy</span>
+                                <h1 class="dep-hero-title" data-i18n="deploy_hero_title">Connect a repository and
+                                    Aegis takes it from there</h1>
+                                <p class="dep-hero-body" data-i18n="deploy_hero_body">Push to the production branch
+                                    and the site follows. Aegis clones the repository, runs the build in an isolated
+                                    sandbox when you declare one, checks that the result is really a site, then serves
+                                    it on a port of its own.</p>
+                                <div class="dep-hero-actions">
+                                    <a class="dep-btn" href="#github" data-i18n="deploy_hero_connect">Connect
+                                        GitHub</a>
+                                    <a class="dep-btn dep-btn-ghost" href="#new"
+                                        data-i18n="deploy_hero_paste">Paste a repository URL</a>
+                                </div>
+                                <div class="dep-features">
+                                    <article class="dep-feature">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                            aria-hidden="true" focusable="false">
+                                            <rect x="3" y="3" width="18" height="18" rx="2" />
+                                            <line x1="9" y1="3" x2="9" y2="21" />
+                                        </svg>
+                                        <h3 data-i18n="deploy_feat_sandbox_title">Isolated sandbox</h3>
+                                        <p data-i18n="deploy_feat_sandbox_body">Install and build run under a
+                                            restricted Windows account capped by a Job Object, never as the backend's
+                                            own SYSTEM user.</p>
+                                    </article>
+                                    <article class="dep-feature">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+                                            focusable="false">
+                                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                                            <path d="m9 12 2 2 4-4" />
+                                        </svg>
+                                        <h3 data-i18n="deploy_feat_check_title">Acceptance test</h3>
+                                        <p data-i18n="deploy_feat_check_body">Nothing goes live without an index.html
+                                            in the served directory. A refusal leaves the previous version serving.</p>
+                                    </article>
+                                    <article class="dep-feature">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+                                            focusable="false">
+                                            <circle cx="12" cy="12" r="10" />
+                                            <polyline points="12 6 12 12 16 14" />
+                                        </svg>
+                                        <h3 data-i18n="deploy_feat_poll_title">Polled every 20 seconds</h3>
+                                        <p data-i18n="deploy_feat_poll_body">Each new commit on the tracked branch
+                                            republishes on its own, with no webhook to configure.</p>
+                                    </article>
+                                </div>
+                            </div>
+
+                            <div id="deploy-projects" class="dep-block" hidden>
+                                <div class="dep-pane-head">
+                                    <h1 class="dep-pane-title" data-i18n="deploy_projects_title">Projects</h1>
+                                    <!-- Painted by renderProjects() from the list it just
+                                         drew, so the count and the grid can never disagree. -->
+                                    <span class="dep-pane-meta" id="deploy-projects-count"></span>
+                                    <input type="search" id="deploy-project-search" class="dep-search"
+                                        autocomplete="off" spellcheck="false"
+                                        placeholder="Search a project">
+                                    <a class="dep-btn" href="#new" data-i18n="deploy_nav_new">New project</a>
+                                </div>
+                                <div id="deploy-project-list" class="dep-grid"></div>
+                                <p id="deploy-project-none" class="dep-empty" hidden
+                                    data-i18n="deploy_projects_none">No project matches that.</p>
+                                <!-- What just happened to one of them. A removal
+                                     takes its card away, so the sentence about it
+                                     cannot live on the card. -->
+                                <p id="deploy-projects-note" class="dep-note" hidden></p>
+                            </div>
+                        </section>
+
+                        <!-- ===== New project: repository picker, then the form ===== -->
+                        <section class="dep-pane" data-pane="new" hidden>
+                            <div id="deploy-repos" class="dep-block" hidden>
+                                <h1 class="dep-pane-title" data-i18n="deploy_repos_title">Repositories</h1>
+                                <p class="dep-body" data-i18n="deploy_repos_body">A public repository needs nothing
+                                    more. A private one needs the App installed on it.</p>
+                                <div class="dep-pane-head">
+                                    <label class="dep-label dep-label-inline" for="deploy-installation"
+                                        data-i18n="deploy_account_label">Account</label>
+                                    <select id="deploy-installation" class="dep-select"></select>
+                                    <input type="search" id="deploy-repo-search" class="dep-search"
+                                        autocomplete="off" spellcheck="false"
+                                        placeholder="Search a repository">
+                                </div>
+                                <div id="deploy-repo-list" class="dep-rows"></div>
+                                <p id="deploy-repo-empty" class="dep-empty" hidden data-i18n="deploy_repos_empty">
+                                    This installation can see no repository yet. Add one from GitHub.</p>
+                            </div>
+
+                            <!-- Deploying is one form rather than a wizard: for a static site
+                                 the only answers Aegis cannot work out itself are which
+                                 repository, which branch, and what to call it. -->
+                            <div id="deploy-new" class="dep-block">
+                                <h1 class="dep-pane-title" data-i18n="deploy_new_title">Deploy a site</h1>
+                                <p class="dep-body" data-i18n="deploy_new_body">Paste a GitHub repository URL. Aegis
+                                    works out the default branch, clones it, and serves it on a port of its own. A
+                                    public repository needs no GitHub App at all. A repository with a finished site at
+                                    its root needs nothing more; one that needs a build step can declare an install and
+                                    build command below, run in an isolated sandbox before the result is served.</p>
+
+                                <div class="dep-split">
+                                    <div class="dep-form">
+                                        <label class="dep-label" for="deploy-new-url"
+                                            data-i18n="deploy_new_url">Repository URL</label>
+                                        <input type="text" id="deploy-new-url" class="dep-input" autocomplete="off"
+                                            spellcheck="false" placeholder="https://github.com/owner/repo">
+                                        <label class="dep-label" for="deploy-new-branch"
+                                            data-i18n="deploy_new_branch">Branch (optional)</label>
+                                        <input type="text" id="deploy-new-branch" class="dep-input"
+                                            autocomplete="off" spellcheck="false" placeholder="default branch"
+                                            list="deploy-branch-options">
+                                        <!-- Filled from GitHub once the URL above names a repository Aegis can
+                                             read. A datalist and not a select: the field has to keep taking a
+                                             typed name, for a repository the App was never given. -->
+                                        <datalist id="deploy-branch-options"></datalist>
+                                        <label class="dep-label" for="deploy-new-name"
+                                            data-i18n="deploy_new_name">Name (optional)</label>
+                                        <input type="text" id="deploy-new-name" class="dep-input" autocomplete="off"
+                                            placeholder="taken from the repository">
+                                        <label class="dep-label" for="deploy-new-root"
+                                            data-i18n="deploy_new_root">Subfolder (optional)</label>
+                                        <input type="text" id="deploy-new-root" class="dep-input" autocomplete="off"
+                                            spellcheck="false" placeholder="docs">
+                                        <label class="dep-label" for="deploy-new-install"
+                                            data-i18n="deploy_new_install">Install command (optional)</label>
+                                        <input type="text" id="deploy-new-install" class="dep-input"
+                                            autocomplete="off" spellcheck="false" placeholder="npm ci">
+                                        <label class="dep-label" for="deploy-new-buildcmd"
+                                            data-i18n="deploy_new_buildcmd">Build command (optional)</label>
+                                        <input type="text" id="deploy-new-buildcmd" class="dep-input"
+                                            autocomplete="off" spellcheck="false" placeholder="npm run build">
+                                        <label class="dep-label" for="deploy-new-outputdir"
+                                            data-i18n="deploy_new_outputdir">Output directory (required if a build
+                                            command is set)</label>
+                                        <input type="text" id="deploy-new-outputdir" class="dep-input"
+                                            autocomplete="off" spellcheck="false" placeholder="dist">
+                                        <div id="deploy-new-runtime-row" hidden>
+                                            <label class="dep-label" for="deploy-new-startcmd"
+                                                data-i18n="deploy_new_startcmd">Start command (optional, a process
+                                                serves this project instead of its files)</label>
+                                            <input type="text" id="deploy-new-startcmd" class="dep-input"
+                                                autocomplete="off" placeholder="npm run start">
+                                        </div>
+                                        <button type="button" id="deploy-new-btn" class="dep-btn"
+                                            data-i18n="deploy_new_cta">Deploy</button>
+                                        <p id="deploy-new-note" class="dep-note" hidden></p>
+                                    </div>
+
+                                    <!-- What the fields above add up to, restated as the
+                                         sequence the backend will run. Aegis inspects no
+                                         repository before a real attempt, so this reads the
+                                         form and nothing else, and it says so. -->
+                                    <aside class="dep-plan">
+                                        <h3 data-i18n="deploy_plan_title">What Aegis will run</h3>
+                                        <ol id="deploy-plan-steps" class="dep-plan-steps"></ol>
+                                        <p class="dep-hint" data-i18n="deploy_plan_note">Read from this form, not
+                                            from the repository. Aegis opens the branch when you click Deploy, and the
+                                            build console below reports what it finds.</p>
+                                    </aside>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- ===== Build console ===== -->
+                        <section class="dep-pane" data-pane="console" hidden>
+                            <div class="dep-run-head">
+                                <a class="dep-crumb" href="#projects" data-i18n="deploy_nav_projects">Projects</a>
+                                <h1 class="dep-pane-title" id="deploy-run-name"></h1>
+                                <span class="dep-chip" id="deploy-run-branch" hidden></span>
+                                <span class="dep-chip dep-mono" id="deploy-run-sha" hidden></span>
+                                <span class="dep-pill" id="deploy-run-status"></span>
+                                <span class="dep-mono dep-run-clock" id="deploy-run-clock"></span>
+                                <button type="button" id="deploy-run-cancel" class="dep-btn dep-btn-ghost"
+                                    hidden data-i18n="deploy_run_cancel">Cancel</button>
+                            </div>
+                            <div class="dep-split">
+                                <div class="dep-stages" id="deploy-run-stages"></div>
+                                <aside class="dep-meta" id="deploy-run-meta"></aside>
+                            </div>
+                            <p id="deploy-run-note" class="dep-note" hidden></p>
+                        </section>
+
+                        <!-- ===== One project: history, rollback, actions ===== -->
+                        <section class="dep-pane" data-pane="project" hidden>
+                            <div class="dep-run-head">
+                                <a class="dep-crumb" href="#projects" data-i18n="deploy_nav_projects">Projects</a>
+                                <h1 class="dep-pane-title" id="deploy-detail-name"></h1>
+                                <span class="dep-pill" id="deploy-detail-status"></span>
+                                <a class="dep-mono dep-detail-url" id="deploy-detail-url" target="_blank"
+                                    rel="noopener noreferrer"></a>
+                            </div>
+                            <div id="deploy-detail-body"></div>
+                        </section>
+
+                        <!-- ===== Every deployment this backend still remembers ===== -->
+                        <section class="dep-pane" data-pane="runs" hidden>
+                            <h1 class="dep-pane-title" data-i18n="deploy_runs_title">Deployments</h1>
+                            <p class="dep-body" data-i18n="deploy_runs_body">Newest first. The sixty most
+                                recent are kept on disk, so a backend restart does not empty this list; the one
+                                still running is the one you can cancel.</p>
+                            <div id="deploy-run-list" class="dep-rows"></div>
+                            <p id="deploy-runs-empty" class="dep-empty" hidden data-i18n="deploy_runs_empty">Nothing
+                                has been deployed since this backend started.</p>
+                        </section>
+
+                        <!-- ===== Host readiness and the GitHub App ===== -->
+                        <section class="dep-pane" data-pane="github" hidden>
+                            <h1 class="dep-pane-title" data-i18n="deploy_host_title">Host preparation</h1>
+                            <p class="dep-body" data-i18n="deploy_host_body">Some of these are settled on the server
+                                rather than in the browser, so the page names the file or the variable instead of
+                                showing you a disabled button.</p>
+
+                            <div id="deploy-readiness" class="dep-readiness" aria-live="polite">
+                                <p class="dep-loading" data-i18n="deploy_loading">Checking this install...</p>
+                            </div>
+
+                            <!-- Registering the App is a GitHub-side action: the operator has
+                                 to confirm it while signed in there. The button submits a
+                                 manifest form, it does not call an Aegis endpoint that does
+                                 the work invisibly. -->
+                            <div id="deploy-connect" class="dep-card-block" hidden>
+                                <h2 data-i18n="deploy_connect_title">Connect GitHub</h2>
+                                <p class="dep-body" data-i18n="deploy_connect_body">Aegis registers its own GitHub App
+                                    on your account. You confirm it on GitHub, choose which repositories it may read,
+                                    and no personal access token is ever stored here.</p>
+                                <button type="button" id="deploy-connect-btn" class="dep-btn"
+                                    data-i18n="deploy_connect_cta">Connect GitHub</button>
+                                <p id="deploy-connect-note" class="dep-note" hidden></p>
+                            </div>
+
+                            <div id="deploy-install" class="dep-card-block" hidden>
+                                <h2 data-i18n="deploy_grant_title">Connect GitHub</h2>
+                                <p class="dep-body" data-i18n="deploy_grant_body">Give Aegis read access to the
+                                    repositories you want to deploy. You choose which ones on GitHub, and you can change
+                                    that later without touching Aegis. Read on contents and metadata is all it asks
+                                    for.</p>
+                                <a id="deploy-install-link" class="dep-btn dep-btn-link" target="_blank"
+                                    rel="noopener noreferrer" data-i18n="deploy_grant_cta">Connect GitHub</a>
+                                <p id="deploy-install-note" class="dep-note" hidden></p>
+                            </div>
+
+                            <!-- The route for an install GitHub cannot reach, which is every
+                                 install on a private network. The operator creates the App
+                                 themselves and pastes what it hands back, so no inbound
+                                 connection is ever needed. -->
+                            <div id="deploy-manual" class="dep-card-block" hidden>
+                                <h2 data-i18n="deploy_manual_title">Register an App by hand</h2>
+                                <p class="dep-body" data-i18n="deploy_manual_body">For a server GitHub cannot reach,
+                                    create the App yourself on github.com with the webhook left unchecked, then paste
+                                    what it gives you. Aegis checks the pair against GitHub before storing it. Cloning
+                                    needs only outbound HTTPS, and pushes are picked up by polling the branch.</p>
+                                <ol class="dep-manual-steps">
+                                    <li data-i18n="deploy_manual_step1">Open github.com, Settings, Developer settings,
+                                        GitHub Apps, New GitHub App.</li>
+                                    <li data-i18n="deploy_manual_step2">Name it, put any homepage URL, and untick
+                                        Active under Webhook so no address is required.</li>
+                                    <li data-i18n="deploy_manual_step3">Under Repository permissions set Contents to
+                                        Read-only and Metadata to Read-only, then create the App.</li>
+                                    <li data-i18n="deploy_manual_step4">On the App page, note the App ID and use
+                                        Generate a private key, which downloads a .pem file.</li>
+                                    <li data-i18n="deploy_manual_step5">Install the App on your account and choose the
+                                        repositories it may read.</li>
+                                </ol>
+                                <label class="dep-label" for="deploy-manual-appid"
+                                    data-i18n="deploy_manual_appid">App ID</label>
+                                <input type="text" id="deploy-manual-appid" class="dep-input" inputmode="numeric"
+                                    autocomplete="off" spellcheck="false" placeholder="123456">
+                                <label class="dep-label" for="deploy-manual-key"
+                                    data-i18n="deploy_manual_key">Private key (.pem contents)</label>
+                                <textarea id="deploy-manual-key" class="dep-input dep-textarea" rows="6"
+                                    autocomplete="off" spellcheck="false"
+                                    placeholder="-----BEGIN RSA PRIVATE KEY-----"></textarea>
+                                <button type="button" id="deploy-manual-btn" class="dep-btn"
+                                    data-i18n="deploy_manual_cta">Save and check</button>
+                                <p id="deploy-manual-note" class="dep-note" hidden></p>
+                            </div>
+                        </section>
+
+                        <!-- ===== Directory authentication ===== -->
+                        <section class="dep-pane" data-pane="auth" hidden>
+                            <div id="deploy-auth" class="dep-block">
+                                <div class="dep-pane-head">
+                                    <h1 class="dep-pane-title" data-i18n="deploy_auth_title">Authentication</h1>
+                                    <span id="deploy-auth-state" class="dep-pill is-idle"
+                                        data-i18n="deploy_auth_state_none">Not configured</span>
+                                </div>
+                                <p class="dep-body" data-i18n="deploy_auth_body">A deployed site answers on its own
+                                    port to anyone who can reach it. Each site below picks how it asks who is knocking:
+                                    nothing at all, or a login against your directory. The directory is configured once
+                                    here and then chosen per site, where each site can also be moved to HTTPS. Aegis
+                                    never stores a user password; it checks each login against the directory.</p>
+
+                                <!-- The three fields an operator actually has to know. Everything
+                                     else follows from the domain name and lives under Advanced. -->
+                                <div class="dep-fields">
+                                    <div class="dep-field">
+                                        <label class="dep-label" for="deploy-auth-url"
+                                            data-i18n="deploy_auth_url">Directory address</label>
+                                        <input type="text" id="deploy-auth-url" class="dep-input" autocomplete="off"
+                                            spellcheck="false" placeholder="ldaps://dc01.corp.local:636">
+                                    </div>
+                                    <div class="dep-field">
+                                        <label class="dep-label" for="deploy-auth-binddn"
+                                            data-i18n="deploy_auth_binddn">Service account</label>
+                                        <input type="text" id="deploy-auth-binddn" class="dep-input"
+                                            autocomplete="off" spellcheck="false"
+                                            placeholder="CORP\svc-aegis">
+                                    </div>
+                                    <div class="dep-field">
+                                        <label class="dep-label" for="deploy-auth-bindpw"
+                                            data-i18n="deploy_auth_bindpw">Service account password</label>
+                                        <input type="password" id="deploy-auth-bindpw" class="dep-input"
+                                            autocomplete="new-password">
+                                    </div>
+                                </div>
+                                <p class="dep-hint" data-i18n="deploy_auth_binddn_hint">Active Directory accepts
+                                    CORP\svc-aegis, svc-aegis@corp.local or the full distinguished name. Any of the
+                                    three works here. Leave it empty for an anonymous bind, which most directories
+                                    refuse.</p>
+
+                                <details id="deploy-auth-advanced" class="dep-more">
+                                    <summary class="dep-more-head">
+                                        <span data-i18n="deploy_auth_advanced">Advanced settings</span>
+                                        <span class="dep-more-sub" data-i18n="deploy_auth_advanced_sub">Search base,
+                                            filter, groups, certificate validation</span>
+                                    </summary>
+                                    <div class="dep-more-body">
+                                        <div class="dep-fields">
+                                            <div class="dep-field">
+                                                <label class="dep-label" for="deploy-auth-basedn"
+                                                    data-i18n="deploy_auth_basedn">Search base</label>
+                                                <input type="text" id="deploy-auth-basedn" class="dep-input"
+                                                    autocomplete="off" spellcheck="false"
+                                                    placeholder="DC=corp,DC=local">
+                                            </div>
+                                            <div class="dep-field">
+                                                <label class="dep-label" for="deploy-auth-filter"
+                                                    data-i18n="deploy_auth_filter">User filter</label>
+                                                <input type="text" id="deploy-auth-filter" class="dep-input"
+                                                    autocomplete="off" spellcheck="false"
+                                                    placeholder="(&amp;(objectClass=user)(sAMAccountName={username}))">
+                                            </div>
+                                            <div class="dep-field">
+                                                <label class="dep-label" for="deploy-auth-dntemplate"
+                                                    data-i18n="deploy_auth_dntemplate">Direct bind template
+                                                    (optional)</label>
+                                                <input type="text" id="deploy-auth-dntemplate" class="dep-input"
+                                                    autocomplete="off" spellcheck="false"
+                                                    placeholder="{username}@corp.local">
+                                            </div>
+                                            <div class="dep-field">
+                                                <label class="dep-label" for="deploy-auth-groupattr"
+                                                    data-i18n="deploy_auth_groupattr">Group attribute</label>
+                                                <input type="text" id="deploy-auth-groupattr" class="dep-input"
+                                                    autocomplete="off" spellcheck="false" placeholder="memberOf">
+                                            </div>
+                                            <div class="dep-field">
+                                                <label class="dep-label" for="deploy-auth-revalidate"
+                                                    data-i18n="deploy_auth_revalidate">Re-check membership every
+                                                    (minutes)</label>
+                                                <input type="number" id="deploy-auth-revalidate" class="dep-input"
+                                                    min="0" max="1440" step="1" autocomplete="off" placeholder="10">
+                                            </div>
+                                        </div>
+
+                                        <label class="dep-check" for="deploy-auth-starttls">
+                                            <input type="checkbox" id="deploy-auth-starttls">
+                                            <span data-i18n="deploy_auth_starttls">Upgrade an ldap:// connection with
+                                                StartTLS</span>
+                                        </label>
+
+                                        <label class="dep-check" for="deploy-auth-nested">
+                                            <input type="checkbox" id="deploy-auth-nested">
+                                            <span data-i18n="deploy_auth_nested">Resolve nested groups and the primary
+                                                group (Active Directory)</span>
+                                        </label>
+                                        <p class="dep-hint" data-i18n="deploy_auth_nested_hint">Off by default. Active
+                                            Directory lists neither the groups a user reaches through another group nor
+                                            their primary group, usually Domain Users, so a parent group typed below
+                                            would refuse everyone. Turning this on asks the domain controller for the
+                                            full list, which can only let more people in. It does nothing on a
+                                            directory that is not Active Directory.</p>
+                                        <p class="dep-hint" data-i18n="deploy_auth_revalidate_hint">A login lasts eight
+                                            hours. Without this, someone removed from an allowed group keeps their
+                                            access for the rest of it. 0 turns the re-check off. If the directory
+                                            cannot be reached the session is kept, so a controller that is briefly down
+                                            does not empty every site.</p>
+
+                                        <label class="dep-check" for="deploy-auth-verify">
+                                            <input type="checkbox" id="deploy-auth-verify" checked>
+                                            <span data-i18n="deploy_auth_verify">Validate the directory
+                                                certificate</span>
+                                        </label>
+                                        <p class="dep-hint" data-i18n="deploy_auth_verify_hint">Leave this on. If the
+                                            controller presents a certificate Aegis does not trust, the page offers to
+                                            trust that authority, which keeps the check and fixes the cause. Turning it
+                                            off accepts any certificate on a connection that carries the password
+                                            above.</p>
+                                    </div>
+                                </details>
+
+                                <div class="dep-auth-actions">
+                                    <button type="button" id="deploy-auth-save" class="dep-btn"
+                                        data-i18n="deploy_auth_save">Save and test</button>
+                                    <button type="button" id="deploy-auth-scan" class="dep-btn dep-btn-ghost"
+                                        data-i18n="deploy_auth_scan">Fill in what Aegis knows</button>
+                                    <button type="button" id="deploy-auth-clear"
+                                        class="dep-btn dep-btn-ghost dep-btn-danger"
+                                        data-i18n="deploy_auth_clear">Forget these settings</button>
+                                </div>
+
+                                <p id="deploy-auth-note" class="dep-note" hidden></p>
+
+                                <!-- Built by the page when a handshake fails, and only then.
+                                     A certificate nobody is being asked about is noise. -->
+                                <div id="deploy-auth-cert" class="dep-cert" hidden></div>
+                                <div id="deploy-auth-pinned" class="dep-cert dep-cert-pinned" hidden></div>
+
+                                <p class="dep-hint" data-i18n="deploy_auth_scan_hint">The address, the search base, the
+                                    filter and the bind template all follow from the domain name, and the last audit
+                                    already named it. Fill in what Aegis knows writes those into the fields left empty
+                                    and touches nothing else, so a value you typed stays. The service account and its
+                                    password cannot be guessed, and nothing is stored until you save.</p>
+
+                                <h3 class="dep-subtitle" data-i18n="deploy_auth_test_title">Test with a real
+                                    account</h3>
+                                <p class="dep-hint" data-i18n="deploy_auth_test_hint">Saving already checks that Aegis
+                                    can reach the directory and bind the service account. This checks one person: it
+                                    lists the groups the directory returns for them, which are the only values a site's
+                                    allowed groups will ever match. The password is used once and stored nowhere.</p>
+
+                                <div class="dep-fields">
+                                    <div class="dep-field">
+                                        <label class="dep-label" for="deploy-auth-testuser"
+                                            data-i18n="deploy_auth_test_user">Test with this account</label>
+                                        <input type="text" id="deploy-auth-testuser" class="dep-input"
+                                            autocomplete="off" spellcheck="false">
+                                    </div>
+                                    <div class="dep-field">
+                                        <label class="dep-label" for="deploy-auth-testpass"
+                                            data-i18n="deploy_auth_test_pass">Password of the test account</label>
+                                        <input type="password" id="deploy-auth-testpass" class="dep-input"
+                                            autocomplete="new-password">
+                                    </div>
+                                </div>
+
+                                <div class="dep-auth-actions">
+                                    <button type="button" id="deploy-auth-test" class="dep-btn dep-btn-ghost"
+                                        data-i18n="deploy_auth_test">Test</button>
+                                </div>
+
+                                <h3 id="deploy-auth-groups-title" class="dep-subtitle" hidden
+                                    data-i18n="deploy_auth_groups_title">Groups returned for that account</h3>
+                                <div id="deploy-auth-groups" class="dep-auth-groups"></div>
+
+                                <h3 class="dep-subtitle" data-i18n="deploy_auth_sites_title">Protected sites</h3>
+                                <div id="deploy-auth-sites"></div>
+                                <p id="deploy-auth-sites-empty" class="dep-empty" hidden
+                                    data-i18n="deploy_auth_sites_empty">No site deployed yet. Deploy one, then come
+                                    back to protect it.</p>
+                            </div>
+                        </section>
+
+                        <!-- ===== Why a deployment gets refused ===== -->
+                        <section class="dep-pane" data-pane="env" hidden>
+                            <h1 class="dep-pane-title" data-i18n="deploy_env_pane_title">Environment variables</h1>
+                            <p class="dep-body" data-i18n="deploy_env_pane_body">One set per project, read by its install and
+                                build commands and by nothing else. Values are encrypted and never read back: a value nobody
+                                remembers is replaced rather than shown.</p>
+                            <div id="deploy-env-pane"></div>
+                        </section>
+
+                        <section class="dep-pane" data-pane="domains" hidden>
+                            <h1 class="dep-pane-title" data-i18n="deploy_domains_pane_title">Domains</h1>
+                            <p class="dep-body" data-i18n="deploy_domains_pane_body">Every site answers on a port of this
+                                server. A site that declared a host name also answers on the shared listener, once a DNS
+                                record or a hosts entry points that name here.</p>
+                            <div id="deploy-domains-pane"></div>
+                        </section>
+
+                        <section class="dep-pane" data-pane="usage" hidden>
+                            <h1 class="dep-pane-title" data-i18n="deploy_usage_pane_title">Usage</h1>
+                            <p class="dep-body" data-i18n="deploy_usage_pane_body">What this install is holding. The two
+                                numbers that run out are the ports and the runtime accounts.</p>
+                            <div id="deploy-usage-pane"></div>
+                        </section>
+
+                        <section class="dep-pane" data-pane="refusals" hidden>
+                            <h1 class="dep-pane-title" data-i18n="deploy_refusals_title">Refusal states</h1>
+                            <p class="dep-body" data-i18n="deploy_refusals_body">A refusal stops at the acceptance
+                                test, so the version already on the port keeps serving. Each code below names what Aegis
+                                found and what to change.</p>
+                            <div id="deploy-refusal-list" class="dep-rows"></div>
+                        </section>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script defer src="../src/js/common.js"></script>
+    <script defer src="../src/js/navbar.js"></script>
+    <script defer src="../src/js/deploy.js"></script>
+</body>
+
+</html>

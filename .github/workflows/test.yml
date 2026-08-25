@@ -1,0 +1,40 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Windows, not ubuntu, because that is where this code runs. An extension is
+    # required into a backend running as a Windows service on the customer's
+    # audit server, and Deploy's sandbox is PowerShell, a Job Object and a local
+    # account. A green suite on Linux would be a green suite on a platform no
+    # install uses.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version the Aegis installer pins. Testing on a newer one would pass
+      # syntax the field cannot run.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.1'
+
+      # No `npm ci`, and no lockfile to need one: this repository has no
+      # dependencies. The test command discovers every extension's suite by
+      # walking the tree, so a new extension is tested the day its folder lands.
+      #
+      # What a green run here does NOT cover: the browser tier under
+      # `extensions/*/frontend/tests/`, which renders an extension's pages inside
+      # the Aegis shell and skips without an Aegis checkout to point AEGIS_TREE
+      # at. This runner has none, and the Aegis repository is private, so it
+      # cannot clone one without a token. Stated rather than hidden: see
+      # README.md, "The four that need Aegis on disk".
+      - name: Run every extension's suite
+        run: npm test

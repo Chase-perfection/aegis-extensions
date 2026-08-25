@@ -87,6 +87,64 @@ Install order, and every step is a refusal point:
 Reformatting the manifest after signing breaks step 2. The signed bytes are the
 uploaded bytes, whitespace included.
 
+## What an extension may import
+
+An extension's backend is `require()`d by `backend/src/lib/extensionLoader.js` into
+the Aegis process. Two consequences follow, and between them they settle every
+question about imports.
+
+**Node resolves the extension's requires from the extension's own folder.** An
+installed extension lives in `C:\ProgramData\Aegis\extensions\<id>\`, so a bare
+specifier is looked for in `<id>\node_modules`, then in `extensions\node_modules`,
+then up through `ProgramData`, and never in `backend\node_modules`. `sqlite3`,
+`puppeteer`, `express` and everything else the backend depends on are therefore out
+of reach. A dependency of its own is out of reach too, unless the package ships the
+`node_modules` folder holding it.
+
+**A relative path out of the extension reaches nothing.** `require('../../../backend/src/lib/x')`
+resolves against `ProgramData`, where there is no Aegis tree. It appears to work
+only in a development checkout, where the extension sits inside the repository, and
+it is a layering violation there as much as it is a broken path in the field. The
+loader is one-way by design (ADR 0001 decision 2: core must never call an
+extension), and an extension reaching back into core is that rule failing in the
+other direction.
+
+So: **an extension imports its own files and Node's standard library, and nothing
+else.** What it cannot build, core hands it.
+
+### What the loader hands over
+
+`register(router, context)` and `registerPublic(router, context)` receive core's
+capabilities as an object. The keys, from `backend/src/server.js`:
+
+| Key | Phase | What it is |
+|---|---|---|
+| `extension` | both | The loader's own record of this extension: `id`, `dir`, `root`, `page`, `icon`, `labelKey`, `descKey`, `routePrefixes`, `version`, `release`, `signature`, `requiresHostOptIn`, `frontendDir`, `backendEntry` |
+| `resolver` | public | Resolves the tenant from the request. Mounted explicitly, because a public route runs above the session wall and still has to know whose install it is answering for |
+| `moduleGate` | public | Refuses the route when the tenant has the module hidden |
+| `requireRole` | private | `requireRole('admin')`, the role check every mutating route uses |
+| `pathsFor` | private | Tenant-scoped filesystem paths, `pathsFor(slug)` |
+| `tenantsRoot` | private | The root every tenant subtree hangs off |
+| `readOnlyDb` | private | A read-only SQLite reader, `describe(file)` and `page(file, opts)`. In core because `sqlite3` does not resolve from an extension |
+| `resolveChrome` | private | The Chromium the host actually has, for a headless capture. In core because `chromePath.js` reads the install locations of Chrome and Edge, and two copies of that list would drift |
+
+The private phase is mounted below the session wall, so a route registered there
+already has a session, a tenant and the module gate behind it.
+
+Reading a key that a given install does not carry is the normal way to meet an
+older core. Refuse the one route that needed it, with a code the page has a
+sentence for, rather than throwing: a capability the loader has not got yet is a
+feature that is unavailable, not an extension that is broken. The loader catches a
+throw from `register` and leaves the whole extension inert, which is a much worse
+answer to a missing thumbnail.
+
+### Asking for a new one
+
+A capability is added to the object in `server.js` and read off the context. That is
+the whole mechanism, and there is deliberately no second one: no host API module, no
+plugin SDK, no dependency injection container. An extension that needs something
+core has not got yet is a one-line change in core and a read here.
+
 ## Publishing a version that nothing can install
 
 `minAppVersion` is the guard against shipping an extension that calls an API the
