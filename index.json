@@ -1,6 +1,31 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-25T11:29:51Z",
+  "generatedAt": "2026-08-25T11:37:22Z",
   "repo": "Chase-perfection/aegis-extensions",
-  "extensions": []
+  "extensions": [
+    {
+      "id": "deploy",
+      "name": "Deploy",
+      "version": "0.0.0",
+      "manifestVersion": 1,
+      "minAppVersion": "1.0.5",
+      "labelKey": "nav_deploy",
+      "descKey": "desc_deploy",
+      "icon": "network",
+      "page": "deploy.html",
+      "category": "Integrations",
+      "routePrefixes": [
+        "/api/deploy"
+      ],
+      "requiresHostOptIn": true,
+      "file": "deploy-0.0.0.zip",
+      "size": 232036,
+      "sha256": "80c053ccf0f7ddc75cb529ad0cc0eb40400bc10fd1945e992065179bdbe565c9",
+      "download": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.0.0/deploy-0.0.0.zip",
+      "manifest": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.0.0/deploy-0.0.0.manifest.json",
+      "signature": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.0.0/deploy-0.0.0.manifest.json.sig",
+      "publishedAt": "2026-08-25T11:34:14Z",
+      "channel": "stable"
+    }
+  ]
 }
