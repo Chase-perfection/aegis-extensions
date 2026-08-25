@@ -1,0 +1,18 @@
+{
+  "id": "parc",
+  "name": "Parc",
+  "labelKey": "nav_parc",
+  "descKey": "desc_parc",
+  "icon": "server",
+  "page": "parc.html",
+  "category": "Inventory",
+  "manifestVersion": 1,
+  "routePrefixes": [
+    "/api/equipment"
+  ],
+  "requiresHostOptIn": false,
+  "channel": "stable",
+  "minAppVersion": "1.0.5",
+  "latest": null,
+  "releases": []
+}

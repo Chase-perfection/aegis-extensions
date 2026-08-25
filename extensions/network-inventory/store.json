@@ -1,0 +1,18 @@
+{
+  "id": "network-inventory",
+  "name": "Network Inventory",
+  "labelKey": "nav_network_inventory",
+  "descKey": "desc_network_inventory",
+  "icon": "network",
+  "page": "network-inventory.html",
+  "category": "Inventory",
+  "manifestVersion": 1,
+  "routePrefixes": [
+    "/api/inventory"
+  ],
+  "requiresHostOptIn": false,
+  "channel": "stable",
+  "minAppVersion": "1.0.5",
+  "latest": null,
+  "releases": []
+}

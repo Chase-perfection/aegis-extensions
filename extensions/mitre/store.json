@@ -1,0 +1,18 @@
+{
+  "id": "mitre",
+  "name": "MITRE ATT&CK",
+  "labelKey": "nav_mitre",
+  "descKey": "desc_mitre",
+  "icon": "target",
+  "page": "mitre.html",
+  "category": "Detection",
+  "manifestVersion": 1,
+  "routePrefixes": [
+    "/api/mitre"
+  ],
+  "requiresHostOptIn": false,
+  "channel": "stable",
+  "minAppVersion": "1.0.5",
+  "latest": null,
+  "releases": []
+}

@@ -37,12 +37,34 @@ CONTRACT.md                    field contract, versioning, trust model
 PUBLISHING.md                  how to cut an extension release
 extensions/<id>/store.json     source metadata for one extension
 extensions/<id>/CHANGELOG.md   operator-facing history
+extensions/deploy/             git clone, sandboxed build, site serving
+extensions/mitre/              ATT&CK coverage and mapping
+extensions/network-inventory/  discovered hosts and services
+extensions/parc/               persistent IT asset registry
 scripts/build-index.mjs        regenerates index.json from the store.json files
 scripts/validate-catalog.mjs   checks the catalogue before it ships
 ```
 
 `index.json` is generated. Edit `extensions/<id>/store.json`, then let CI rebuild
 the catalogue, or run `node scripts/build-index.mjs` yourself.
+
+## Prepared and published are not the same thing
+
+An `extensions/<id>/` folder whose `store.json` carries `"latest": null` is
+prepared, not published. `build-index.mjs` leaves it out of `index.json` on
+purpose: emitting it would show an operator a card whose download and signature
+do not exist.
+
+Three of the four entries here also still live inside Aegis core, in
+`backend/src/config/modules.js`. That file gives an in-tree module the win on an
+id collision, so an extension named `mitre`, `network-inventory` or `parc` is
+discovered and then ignored with `id already registered in core`. Publishing a
+release for one of them therefore takes two steps in order: drop its entry from
+the core `MODULES` literal, then cut the release. Doing it the other way round
+offers an install that cannot load.
+
+`deploy` has no such conflict: core carries no `deploy` entry, and the one that
+appears in the registry at runtime is the extension itself.
 
 ## Adding an extension
 
