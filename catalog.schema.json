@@ -142,6 +142,16 @@
           "type": "string",
           "format": "uri"
         },
+        "image": {
+          "description": "Card image, served to the browser by Aegis rather than fetched from here: the dashboard CSP is img-src 'self' data:, so a cross-origin image would be blocked. Derived by build-index from the file name in store.json.",
+          "type": "string",
+          "format": "uri"
+        },
+        "imageSha256": {
+          "description": "Digest of the card image. Computed by build-index from the file on disk, never hand-written, and checked by Aegis before the bytes reach a browser.",
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
         "publishedAt": {
           "type": "string",
           "format": "date-time"

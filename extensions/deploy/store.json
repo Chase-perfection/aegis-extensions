@@ -6,6 +6,7 @@
   "icon": "network",
   "page": "deploy.html",
   "category": "Integrations",
+  "image": "card.png",
   "manifestVersion": 1,
   "routePrefixes": [
     "/api/deploy"

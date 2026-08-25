@@ -9,10 +9,11 @@
 // The last check rebuilds the catalogue from the store.json files and diffs it
 // against what is committed, which catches a hand-edited index.json.
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assetUrls, packageFileName, CATEGORIES, SCHEMA_VERSION } from './build-index.mjs';
+import { createHash } from 'node:crypto';
+import { assetUrls, imageUrl, packageFileName, CATEGORIES, SCHEMA_VERSION } from './build-index.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SEMVER = /^\d+\.\d+\.\d+$/;
@@ -23,7 +24,17 @@ const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
 const errors = [];
 const fail = (m) => errors.push(m);
 
+const EXT_DIR = join(ROOT, 'extensions');
 const cat = JSON.parse(readFileSync(join(ROOT, 'index.json'), 'utf8'));
+
+/** One extension's store.json, or null when the folder has none. */
+function storeFor(id) {
+    try {
+        return JSON.parse(readFileSync(join(EXT_DIR, String(id), 'store.json'), 'utf8'));
+    } catch (_) {
+        return null;
+    }
+}
 
 if (cat.schemaVersion !== SCHEMA_VERSION) {
     fail(`schemaVersion must be ${SCHEMA_VERSION}, got ${cat.schemaVersion}`);
@@ -90,6 +101,38 @@ for (const e of cat.extensions || []) {
         fail(`${at}: publisher, when present, must be a non-empty string`);
     }
 
+    // The card image travels as a URL plus a digest, and both are derived. An
+    // entry carrying one without the other would give Aegis bytes it cannot
+    // check, or a check with nothing to check.
+    if (('image' in e) !== ('imageSha256' in e)) {
+        fail(`${at}: image and imageSha256 go together, got ${Object.keys(e).filter((k) => k.startsWith('image')).join(' and ') || 'neither'}`);
+    }
+    if ('image' in e) {
+        if (!SHA256.test(e.imageSha256 || '')) {
+            fail(`${at}: imageSha256 must be 64 lowercase hex characters`);
+        }
+        const store = storeFor(e.id);
+        const named = store && store.image;
+        if (!named) {
+            fail(`${at}: index.json carries an image but ${e.id}/store.json names none`);
+        } else {
+            const want = imageUrl(cat.repo, e.id, named);
+            if (e.image !== want) fail(`${at}: image should be ${want}, got ${e.image}`);
+            // The digest against the bytes actually committed. This is the check
+            // that catches a picture replaced without a rebuild, which would have
+            // every Aegis refuse the image it is offered.
+            const onDisk = join(EXT_DIR, e.id, named);
+            if (!existsSync(onDisk)) {
+                fail(`${at}: names image "${named}", absent from extensions/${e.id}/`);
+            } else {
+                const actual = createHash('sha256').update(readFileSync(onDisk)).digest('hex');
+                if (actual !== e.imageSha256) {
+                    fail(`${at}: imageSha256 is ${e.imageSha256} but ${named} hashes to ${actual}. Run scripts/build-index.mjs.`);
+                }
+            }
+        }
+    }
+
     if (typeof e.requiresHostOptIn !== 'boolean') fail(`${at}: requiresHostOptIn must be a boolean`);
     if (!Number.isInteger(e.size) || e.size < 1) fail(`${at}: size must be a positive integer`);
     if (!SHA256.test(e.sha256 || '')) fail(`${at}: sha256 must be 64 lowercase hex characters`);
@@ -104,7 +147,6 @@ for (const e of cat.extensions || []) {
 
 // index.json is generated. If it disagrees with the store.json files, someone
 // edited the output instead of the input.
-const EXT_DIR = join(ROOT, 'extensions');
 const dirs = readdirSync(EXT_DIR).filter((d) => statSync(join(EXT_DIR, d)).isDirectory()).sort();
 const expectedIds = [];
 for (const dir of dirs) {

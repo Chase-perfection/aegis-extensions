@@ -13,7 +13,8 @@
 // catalogue whose `schemaVersion` is not its own rather than guessing at an older
 // shape, so this number is a contract with that file and not a label.
 
-import { readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, statSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,6 +42,21 @@ export const CATEGORIES = ['Detection', 'Inventory', 'Compliance', 'Integrations
  */
 export function packageFileName(id, version) {
     return `${id}-${version}.zip`;
+}
+
+/** A card image is a bare file name, the same rule `page` follows. */
+const IMAGE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.(?:png|webp|jpg|jpeg)$/;
+
+/**
+ * The URL Aegis fetches a card image from.
+ *
+ * The repository, not a release: a picture is not version-specific, and tying it
+ * to a tag would mean cutting a release to fix a crop. `main` is the same ref
+ * `index.json` itself is read from, so an image and the entry naming it move
+ * together.
+ */
+export function imageUrl(repo, id, file) {
+    return `https://raw.githubusercontent.com/${repo}/main/extensions/${id}/${file}`;
 }
 
 export function assetUrls(repo, id, version) {
@@ -76,6 +92,22 @@ function entryFor(store) {
         publishedAt: l.publishedAt,
         channel: store.channel || 'stable'
     };
+
+    // The card image, when the extension ships one. The digest is computed here
+    // from the file on disk rather than pasted into store.json, so it cannot
+    // drift from the bytes it describes: replacing the picture and rebuilding is
+    // one step, and forgetting to update a hand-written hash is not possible.
+    if (store.image) {
+        if (!IMAGE_RE.test(store.image)) {
+            throw new Error(`${store.id}/store.json image "${store.image}" must be a bare png, webp or jpg file name`);
+        }
+        const onDisk = join(EXT_DIR, store.id, store.image);
+        if (!existsSync(onDisk)) {
+            throw new Error(`${store.id}/store.json names image "${store.image}", which is not in extensions/${store.id}/`);
+        }
+        entry.image = imageUrl(REPO, store.id, store.image);
+        entry.imageSha256 = createHash('sha256').update(readFileSync(onDisk)).digest('hex');
+    }
 
     // Optional presentation fields. Absent rather than null when the publisher
     // says nothing: the store page falls back to the nav glyph for a card with no
