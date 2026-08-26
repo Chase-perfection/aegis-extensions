@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## Unreleased
+## 0.0.1
 
 The extension now ships from the extension repository rather than from the Aegis
 tree. Its source, its tests and its release are all in one place, and the package a
