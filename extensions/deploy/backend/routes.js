@@ -34,6 +34,7 @@ const projectStore = require('./projectStore');
 const projectData = require('./projectData');
 const projectSettings = require('./projectSettings');
 const projectEnv = require('./projectEnv');
+const migrations = require('./migrations');
 const { deployNow, promoteNow, releasesFor, isDeploying, startAllRuntimes, useWritableDb } = require('./deployService');
 const runs = require('./runs');
 const runStore = require('./runStore');
@@ -1624,6 +1625,22 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         return readOnlyDb;
     };
 
+    /**
+     * Le module d'ecriture, ou un refus lisible.
+     *
+     * Meme forme et meme raison que `withReader` : un Aegis anterieur a ce
+     * module chargerait cette extension et n'aurait rien a passer. Repondre
+     * "cette version d'Aegis ne sait pas ecrire ici" vaut mieux qu'un
+     * TypeError dans un log que personne ne lit.
+     */
+    const withWriter = (res) => {
+        if (!writableDb || typeof writableDb.updateCell !== 'function') {
+            res.status(501).json({ success: false, error: 'writer_unavailable' });
+            return null;
+        }
+        return writableDb;
+    };
+
     /** The project this request names, or null with the refusal already sent. */
     const projectOr404 = (req, res) => {
         if (!projectStore.PROJECT_ID_RE.test(req.params.id || '')) {
@@ -1682,10 +1699,14 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         return res.json({
             success: true,
             files: projectData.list(req.tenantPaths, project.id),
-            // A static site has no process, so nothing on this server can write
-            // there. The page says that instead of showing an empty folder and
-            // letting the operator wonder which end is broken.
-            writable: project.runtime === 'node',
+            // Ce que la CONSOLE peut faire, qui n'est pas ce que
+            // l'application peut faire. Un site statique n'a pas de processus
+            // pour ecrire ici, mais une base posee la par une version
+            // precedente reste modifiable depuis cette page. Les deux faits
+            // sont distincts et la page dit les deux.
+            writable: projectData.list(req.tenantPaths, project.id)
+                .some((f) => f.isDatabase),
+            processWrites: project.runtime === 'node',
             // Named so the page can tell somebody where to point their
             // application, which is the question the empty state raises.
             variable: 'AEGIS_DATA_DIR'
@@ -1732,7 +1753,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 order: req.query.order ? String(req.query.order) : '',
                 dir: String(req.query.dir || 'asc'),
                 limit: req.query.limit,
-                offset: req.query.offset
+                offset: req.query.offset,
+                withRowid: true
             });
             // Production data, read by a person, on a machine that audits a
             // domain. Who looked at what is worth a line.
@@ -1743,6 +1765,129 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             return dataError(res, e, 'page');
         }
     });
+
+    /**
+     * Modifier une cellule.
+     *
+     * Le rowid vient de la page que la console a lue un instant plus tot. Il
+     * n'est pas devine : `page(withRowid)` ne le rend que pour une table qui en
+     * a un, et la page n'offre l'edition que la ou il est arrive.
+     */
+    router.patch('/api/deploy/projects/:id/data/:file/rows', requireOptIn,
+        requireRole('admin'), async (req, res) => {
+            const writer = withWriter(res);
+            if (!writer) return undefined;
+            const project = projectOr404(req, res);
+            if (!project) return undefined;
+
+            let file;
+            try {
+                file = projectData.resolveFile(req.tenantPaths, project.id, req.params.file);
+            } catch (e) {
+                return dataError(res, e, 'resolveFile');
+            }
+
+            const body = req.body || {};
+            try {
+                const r = await writer.updateCell(file, {
+                    table: String(body.table || ''),
+                    rowid: body.rowid,
+                    column: String(body.column || ''),
+                    value: body.value === undefined ? null : body.value
+                });
+                console.log(`[Deploy] ${req.tenant.slug}: ${project.id} data write ` +
+                    `${req.params.file}/${body.table} rowid=${body.rowid} ` +
+                    `col=${body.column} by ${req.user.email}`);
+                return res.json({ success: true, changes: r.changes });
+            } catch (e) {
+                return dataError(res, e, 'updateCell');
+            }
+        });
+
+    /** Ajouter une ligne. Rend son rowid, que la grille reutilise sans recharger. */
+    router.post('/api/deploy/projects/:id/data/:file/rows', requireOptIn,
+        requireRole('admin'), async (req, res) => {
+            const writer = withWriter(res);
+            if (!writer) return undefined;
+            const project = projectOr404(req, res);
+            if (!project) return undefined;
+
+            let file;
+            try {
+                file = projectData.resolveFile(req.tenantPaths, project.id, req.params.file);
+            } catch (e) {
+                return dataError(res, e, 'resolveFile');
+            }
+
+            const body = req.body || {};
+            try {
+                const r = await writer.insertRow(file, {
+                    table: String(body.table || ''),
+                    values: body.values || {}
+                });
+                console.log(`[Deploy] ${req.tenant.slug}: ${project.id} data insert ` +
+                    `${req.params.file}/${body.table} rowid=${r.rowid} by ${req.user.email}`);
+                return res.json({ success: true, rowid: r.rowid });
+            } catch (e) {
+                return dataError(res, e, 'insertRow');
+            }
+        });
+
+    /** Supprimer une ligne. Une contrainte declaree par l'application la retient. */
+    router.delete('/api/deploy/projects/:id/data/:file/rows', requireOptIn,
+        requireRole('admin'), async (req, res) => {
+            const writer = withWriter(res);
+            if (!writer) return undefined;
+            const project = projectOr404(req, res);
+            if (!project) return undefined;
+
+            let file;
+            try {
+                file = projectData.resolveFile(req.tenantPaths, project.id, req.params.file);
+            } catch (e) {
+                return dataError(res, e, 'resolveFile');
+            }
+
+            const body = req.body || {};
+            try {
+                const r = await writer.deleteRow(file, {
+                    table: String(body.table || ''),
+                    rowid: body.rowid
+                });
+                console.log(`[Deploy] ${req.tenant.slug}: ${project.id} data delete ` +
+                    `${req.params.file}/${body.table} rowid=${body.rowid} by ${req.user.email}`);
+                return res.json({ success: true, changes: r.changes });
+            } catch (e) {
+                return dataError(res, e, 'deleteRow');
+            }
+        });
+
+    /** Ce que le registre de la base porte, pour l'onglet Migrations. */
+    router.get('/api/deploy/projects/:id/data/:file/migrations', requireOptIn,
+        requireRole('admin'), async (req, res) => {
+            const writer = withWriter(res);
+            if (!writer) return undefined;
+            const project = projectOr404(req, res);
+            if (!project) return undefined;
+
+            let file;
+            try {
+                file = projectData.resolveFile(req.tenantPaths, project.id, req.params.file);
+            } catch (e) {
+                return dataError(res, e, 'resolveFile');
+            }
+
+            try {
+                const applied = await writer.appliedMigrations(file);
+                return res.json({
+                    success: true,
+                    applied,
+                    dir: project.migrationsDir || migrations.DEFAULT_DIR
+                });
+            } catch (e) {
+                return dataError(res, e, 'appliedMigrations');
+            }
+        });
 
     // --- Environment variables (tranche 1.1 of plan 0002) ----------------
 

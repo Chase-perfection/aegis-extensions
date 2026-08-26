@@ -138,7 +138,10 @@ function pathsFor(slug) {
 function collect(readOnlyDb) {
     const table = new Map();
     const add = (method) => (routePath, ...chain) => table.set(`${method} ${routePath}`, chain);
-    const router = { get: add('GET'), post: add('POST'), delete: add('DELETE'), put: add('PUT') };
+    const router = {
+        get: add('GET'), post: add('POST'), delete: add('DELETE'), put: add('PUT'),
+        patch: add('PATCH')
+    };
 
     routes.register(router, {
         requireRole: () => (req, res, next) => next(),
@@ -308,19 +311,27 @@ test('a project with no data folder lists nothing rather than failing', () => {
 /* the routes                                                          */
 /* ------------------------------------------------------------------ */
 
-test('the folder route says whether anything on this server can write there', async () => {
+test('the folder route separates what the console can write from what the app can write', async () => {
     plant('data-node');
     plant('data-static', { runtime: 'static', startCmd: null });
+    await seed('data-static', 'app.db');
 
+    // A node project with nothing in its data folder yet: the process could
+    // write there once it starts, the console has no database to edit yet.
     const node = await call('GET /api/deploy/projects/:id/data',
         request({ params: { id: 'data-node' } }));
-    assert.strictEqual(node.body.writable, true);
+    assert.strictEqual(node.body.processWrites, true);
+    assert.strictEqual(node.body.writable, false);
     assert.strictEqual(node.body.variable, 'AEGIS_DATA_DIR');
 
+    // A static project has no process to write there, but a database left by
+    // an earlier version is still editable from this page.
     const stat = await call('GET /api/deploy/projects/:id/data',
         request({ params: { id: 'data-static' } }));
-    assert.strictEqual(stat.body.writable, false,
+    assert.strictEqual(stat.body.processWrites, false,
         'a static project has no process, so nothing here can write');
+    assert.strictEqual(stat.body.writable, true,
+        'a database on disk is editable from the console regardless of runtime');
 });
 
 test('the tables route describes the database it is pointed at', async () => {

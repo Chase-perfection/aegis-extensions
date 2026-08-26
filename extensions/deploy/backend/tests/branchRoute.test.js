@@ -45,7 +45,10 @@ function pathsFor(slug) {
 function collect() {
     const table = new Map();
     const add = (method) => (routePath, ...chain) => table.set(`${method} ${routePath}`, chain);
-    const router = { get: add('GET'), post: add('POST'), delete: add('DELETE'), put: add('PUT') };
+    const router = {
+        get: add('GET'), post: add('POST'), delete: add('DELETE'), put: add('PUT'),
+        patch: add('PATCH')
+    };
 
     routes.register(router, {
         requireRole: () => (req, res, next) => next(),
