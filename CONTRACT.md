@@ -126,6 +126,7 @@ capabilities as an object. The keys, from `backend/src/server.js`:
 | `pathsFor` | private | Tenant-scoped filesystem paths, `pathsFor(slug)` |
 | `tenantsRoot` | private | The root every tenant subtree hangs off |
 | `readOnlyDb` | private | A read-only SQLite reader, `describe(file)` and `page(file, opts)`. In core because `sqlite3` does not resolve from an extension |
+| `writableDb` | private | A guarded SQLite writer: `updateCell`, `insertRow`, `deleteRow`, `execScript`, `appliedMigrations`, `recordMigration`. In core for the same reason as `readOnlyDb`, with a sharper edge: `execScript` runs arbitrary SQL and is meant only for a migration file that came from a repository. Wiring it to a request input opens an injection the core can no longer refuse on the extension's behalf |
 | `resolveChrome` | private | The Chromium the host actually has, for a headless capture. In core because `chromePath.js` reads the install locations of Chrome and Edge, and two copies of that list would drift |
 
 The private phase is mounted below the session wall, so a route registered there
