@@ -2702,6 +2702,7 @@
                         : tr('deploy_data_static',
                             'This project serves files and runs no process, so nothing on this server can write here. A project served by a process is given the folder as $1.')
                             .replace('$1', d.variable || 'AEGIS_DATA_DIR')));
+                    appendDataDir(d.dataDir);
                     return;
                 }
 
@@ -2733,7 +2734,23 @@
                     rows.appendChild(line);
                 });
                 body.appendChild(rows);
+                appendDataDir(d.dataDir);
             }).catch(fail);
+        }
+
+        /**
+         * The absolute path, shown to a tenant admin and nobody else. Without
+         * it nobody can grant a scheduled task's account write access to this
+         * folder, or point one at it: the path carries the tenant slug and
+         * this project's id, and no other page shows either.
+         */
+        function appendDataDir(dataDir) {
+            if (!dataDir) return;
+            var line = el('p', 'dep-note');
+            line.appendChild(document.createTextNode(
+                tr('deploy_data_path', 'Folder on the server:') + ' '));
+            line.appendChild(el('code', 'dep-code', dataDir));
+            body.appendChild(line);
         }
 
         // --- level 2: one file's tables -----------------------------------

@@ -1709,7 +1709,14 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             processWrites: project.runtime === 'node',
             // Named so the page can tell somebody where to point their
             // application, which is the question the empty state raises.
-            variable: 'AEGIS_DATA_DIR'
+            variable: 'AEGIS_DATA_DIR',
+            // Le chemin absolu, montre a un admin du locataire et a personne
+            // d'autre. C'est ce qu'il faut pour poser l'ACL du compte qui
+            // depose les fichiers, et pour pointer une tache planifiee dessus.
+            // `ensureDataDir` et pas `dataDir` : un projet deploye avant que ce
+            // dossier existe n'en a pas, et ouvrir cet onglet est un aussi bon
+            // moment qu'un autre pour le lui donner.
+            dataDir: projectStore.ensureDataDir(req.tenantPaths, project.id)
         });
     });
 

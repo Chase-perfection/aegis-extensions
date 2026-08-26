@@ -43,3 +43,9 @@ test('chaque ecriture est journalisee avec l auteur', () => {
     assert.strictEqual(writes.length, 3,
         'les trois ecritures laissent une ligne nommant qui a modifie quoi');
 });
+
+test('la route data rend le chemin absolu du dossier, pour la tache planifiee', () => {
+    const src = routesSrc();
+    assert.match(src, /dataDir:\s*projectStore\.ensureDataDir\(/,
+        'le chemin absolu est rendu : sans lui, aucune ACL ne peut etre posee');
+});
