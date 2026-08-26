@@ -32,6 +32,7 @@ const github = require('./github');
 const { verifySignature, createDeliveryCache, parsePush, MAX_BODY_BYTES } = require('./webhook');
 const projectStore = require('./projectStore');
 const projectData = require('./projectData');
+const migrations = require('./migrations');
 const projectEnv = require('./projectEnv');
 const { deployNow, promoteNow, releasesFor, isDeploying, startAllRuntimes } = require('./deployService');
 const runs = require('./runs');
@@ -968,6 +969,29 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, reso
             return refuse(400, { error: 'no_start_cmd' });
         }
 
+        // Le nom du fichier de base et le dossier des migrations sont des
+        // reglages du projet parce que c'est l'application qui les choisit :
+        // le premier est le fichier qu'elle ouvre sous AEGIS_DATA_DIR, le
+        // second un chemin dans son depot. Aegis impose seulement qu'ils ne
+        // sortent pas de leur dossier.
+        //
+        // Valide avec les memes fonctions que `projectData.resolveFile`
+        // appliquera plus tard, et pas avec une regle ecrite pour l'occasion :
+        // un nom accepte ici et refuse a l'ouverture serait un projet cree qui
+        // ne peut pas ouvrir sa propre base.
+        const dbFile = body.dbFile ? String(body.dbFile).trim() : migrations.DEFAULT_DB;
+        if (!projectData.FILE_RE.test(dbFile) || !projectData.looksLikeDb(dbFile)) {
+            return refuse(400, { error: 'bad_db_file' });
+        }
+
+        const migrationsDir = body.migrationsDir
+            ? String(body.migrationsDir).trim().replace(/[\\/]+$/, '')
+            : migrations.DEFAULT_DIR;
+        if (!/^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,119}$/.test(migrationsDir) ||
+            migrationsDir.split(/[\\/]/).some((s) => s === '..' || s === '' || s.startsWith('.'))) {
+            return refuse(400, { error: 'bad_migrations_dir' });
+        }
+
         const draft = {
             id,
             name: String(body.name || parsed.repo).slice(0, 80),
@@ -981,6 +1005,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, reso
             runtime: wantsProcess ? 'node' : 'static',
             startCmd: wantsProcess ? startCmd : null,
             port,
+            dbFile,
+            migrationsDir,
             createdAt: Date.now(),
             createdBy: req.user.email
         };

@@ -688,7 +688,9 @@
             installCmd: document.getElementById('deploy-new-install').value.trim(),
             buildCmd: document.getElementById('deploy-new-buildcmd').value.trim(),
             outputDir: document.getElementById('deploy-new-outputdir').value.trim(),
-            startCmd: (document.getElementById('deploy-new-startcmd') || { value: '' }).value.trim()
+            startCmd: (document.getElementById('deploy-new-startcmd') || { value: '' }).value.trim(),
+            dbFile: (document.getElementById('deploy-new-dbfile') || { value: '' }).value.trim(),
+            migrationsDir: (document.getElementById('deploy-new-migrations') || { value: '' }).value.trim()
         };
     }
 
@@ -1005,18 +1007,27 @@
         btn.disabled = true;
         report(tr('deploy_new_working', 'Cloning and publishing. This takes a few seconds.'));
 
+        var body = {
+            repoUrl: values.repoUrl,
+            branch: values.branch || '',
+            name: values.name || '',
+            rootDir: values.rootDir || '',
+            installCmd: values.installCmd || '',
+            buildCmd: values.buildCmd || '',
+            outputDir: values.outputDir || '',
+            startCmd: values.startCmd || ''
+        };
+        // Left out rather than sent empty, so the backend's own default (the
+        // file and folder it already uses when nobody names either) applies.
+        // A field sent as '' would work the same way today, but it would stop
+        // being true the day a project wants to go back to no setting after
+        // having one.
+        if (values.dbFile) body.dbFile = values.dbFile;
+        if (values.migrationsDir) body.migrationsDir = values.migrationsDir;
+
         return deployAction({
             url: '/api/deploy/projects',
-            body: {
-                repoUrl: values.repoUrl,
-                branch: values.branch || '',
-                name: values.name || '',
-                rootDir: values.rootDir || '',
-                installCmd: values.installCmd || '',
-                buildCmd: values.buildCmd || '',
-                outputDir: values.outputDir || '',
-                startCmd: values.startCmd || ''
-            },
+            body: body,
             label: '/api/deploy/projects',
             // needs_install has its own grant-link handling below, so it is
             // kept out of the table lookup this helper does on our behalf.

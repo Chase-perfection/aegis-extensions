@@ -147,6 +147,75 @@ test('the deployments list shows a create that never got a project', async () =>
 
 
 /* ------------------------------------------------------------------ */
+/* dbFile and migrationsDir: settings a project owns because the        */
+/* application, not Aegis, chooses them                                 */
+/* ------------------------------------------------------------------ */
+
+test('a project created with no settings gets the defaults', async () => {
+    const runId = 'defaultsettings01';
+    // No fixture stands in for GitHub here, so the clone below runs for real
+    // and fails for real: the repository does not exist. That still proves
+    // the point, because `deployService` writes the project record on the
+    // failure path too (dbFile and migrationsDir included), on the same
+    // reasoning that keeps failureCount and lastError there -- a project
+    // Aegis could not yet reach is still the project the next attempt has to
+    // find. The branch is given explicitly so at least that lookup stays
+    // offline.
+    const answer = await call('POST /api/deploy/projects', request({
+        runId,
+        repoUrl: 'https://github.com/aegis-test-fixtures-zzz/does-not-exist-zzz',
+        branch: 'main',
+        name: 'defaults-test'
+    }));
+
+    assert.equal(answer.body.success, false, 'the repository really does not exist');
+    const projectId = runs.get('acme', runId).projectId;
+    assert.ok(projectId, 'attach ran before the clone, so the run already names its project');
+
+    const project = projectStore.getProject(pathsFor('acme'), projectId);
+    assert.ok(project, 'the record survives a failed first deployment');
+    assert.equal(project.dbFile, 'app.db');
+    assert.equal(project.migrationsDir, 'migrations');
+});
+
+test('a dbFile that climbs out of the data folder is refused', async () => {
+    const answer = await call('POST /api/deploy/projects', request({
+        runId: 'baddbfileescape01',
+        repoUrl: 'https://github.com/acme/site',
+        branch: 'main',
+        dbFile: '..\\..\\aegis.db'
+    }));
+
+    assert.equal(answer.status, 400);
+    assert.equal(answer.body.error, 'bad_db_file');
+});
+
+test('a dbFile that is not a database name is refused the same way', async () => {
+    const answer = await call('POST /api/deploy/projects', request({
+        runId: 'baddbfilekind001',
+        repoUrl: 'https://github.com/acme/site',
+        branch: 'main',
+        dbFile: 'notes.txt'
+    }));
+
+    assert.equal(answer.status, 400);
+    assert.equal(answer.body.error, 'bad_db_file');
+});
+
+test('a migrationsDir that climbs out of the clone is refused', async () => {
+    const answer = await call('POST /api/deploy/projects', request({
+        runId: 'badmigrationsdir1',
+        repoUrl: 'https://github.com/acme/site',
+        branch: 'main',
+        migrationsDir: '../ailleurs'
+    }));
+
+    assert.equal(answer.status, 400);
+    assert.equal(answer.body.error, 'bad_migrations_dir');
+});
+
+
+/* ------------------------------------------------------------------ */
 /* removing a project: what has to be gone afterwards                  */
 /* ------------------------------------------------------------------ */
 

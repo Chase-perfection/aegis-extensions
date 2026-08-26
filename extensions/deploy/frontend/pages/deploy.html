@@ -292,6 +292,29 @@
                                             <input type="text" id="deploy-new-startcmd" class="dep-input"
                                                 autocomplete="off" placeholder="npm run start">
                                         </div>
+
+                                        <details id="deploy-new-data" class="dep-more">
+                                            <summary class="dep-more-head">
+                                                <span data-i18n="deploy_new_data_summary">Database
+                                                    (optional)</span>
+                                                <span class="dep-more-sub" data-i18n="deploy_new_data_sub">Which
+                                                    file the application opens, which folder holds its
+                                                    migrations</span>
+                                            </summary>
+                                            <div class="dep-more-body">
+                                                <label class="dep-label" for="deploy-new-dbfile"
+                                                    data-i18n="deploy_new_dbfile">Database file, under
+                                                    AEGIS_DATA_DIR</label>
+                                                <input type="text" id="deploy-new-dbfile" class="dep-input"
+                                                    autocomplete="off" spellcheck="false" placeholder="app.db">
+                                                <label class="dep-label" for="deploy-new-migrations"
+                                                    data-i18n="deploy_new_migrations">Migrations folder, in the
+                                                    repository</label>
+                                                <input type="text" id="deploy-new-migrations" class="dep-input"
+                                                    autocomplete="off" spellcheck="false" placeholder="migrations">
+                                            </div>
+                                        </details>
+
                                         <button type="button" id="deploy-new-btn" class="dep-btn"
                                             data-i18n="deploy_new_cta">Deploy</button>
                                         <p id="deploy-new-note" class="dep-note" hidden></p>
