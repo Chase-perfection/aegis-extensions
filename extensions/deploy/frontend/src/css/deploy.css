@@ -1652,6 +1652,45 @@ button.dep-listrow {
     font-style: italic;
 }
 
+/* A cell the grid will PATCH. Keyboard-reachable like the buttons around it,
+   not only clickable: `tabIndex` puts it in the tab order and Enter opens it
+   the same way a click does. */
+.dep-data-editable {
+    cursor: text;
+}
+
+.dep-data-editable:hover { background: var(--dep-sunken); }
+
+.dep-data-editable:focus-visible {
+    outline: 1px solid var(--accent-bright);
+    outline-offset: -1px;
+}
+
+/* A BLOB or truncated text, shown but never sent back: writing it would
+   replace the real value with the label standing in for it. */
+.dep-data-locked {
+    cursor: help;
+}
+
+.dep-data-saving { opacity: 0.6; }
+
+.dep-data-input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    color: var(--text-main);
+    background: var(--dep-sunken);
+    border: 1px solid var(--dep-line-strong, var(--dep-line));
+    border-radius: var(--radius-sm);
+    padding: 0.2rem 0.4rem;
+}
+
+.dep-data-input:focus {
+    outline: none;
+    border-color: var(--accent-bright);
+}
+
 .dep-data-pager {
     display: flex;
     flex-wrap: wrap;

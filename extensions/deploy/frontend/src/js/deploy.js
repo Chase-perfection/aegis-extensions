@@ -2797,10 +2797,47 @@
                     [file, function () { showTables(file); }]
                 ], table));
 
+                // `rowids` is null for exactly the situations where the
+                // backend has already decided editing makes no sense here: a
+                // view, a WITHOUT ROWID table, or a table that already has a
+                // column named _aegis_rowid. The page does not re-derive that
+                // decision, it just shows the reason for it.
+                var rowids = d.rowids || null;
+                if (rowids === null) {
+                    body.appendChild(el('p', 'dep-note',
+                        d.type === 'view'
+                            ? tr('deploy_data_readonly_view',
+                                'A view is read, not written. Change the table it queries instead.')
+                            : tr('deploy_data_readonly_norowid',
+                                'Aegis has no stable identity for a row in this table, so it is shown here but not editable.')));
+                }
+
                 if (!d.rows.length) {
                     body.appendChild(el('p', 'dep-empty',
                         tr('deploy_data_empty_table', 'This table has no rows.')));
                     return;
+                }
+
+                // One PATCH per cell, closed over the rowid and column it
+                // belongs to. Resolves once the server has confirmed the
+                // write; the cell that called it decides what to show while
+                // waiting and if it comes back refused.
+                function saveCell(rowIndex, colName) {
+                    return function (next) {
+                        return window.api(base + '/' + encodeURIComponent(file) + '/rows', {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                table: table, rowid: rowids[rowIndex], column: colName, value: next
+                            })
+                        })
+                            .then(function (r) { return readJson(r, 'PATCH rows'); })
+                            .then(function (dd) {
+                                if (!(dd && dd.success)) {
+                                    throw Object.assign(new Error('refused'), { code: dd && dd.error });
+                                }
+                            });
+                    };
                 }
 
                 var scroll = el('div', 'dep-data-scroll');
@@ -2830,9 +2867,12 @@
                 t.appendChild(el('thead', '')).appendChild(head);
 
                 var tbody = el('tbody', '');
-                d.rows.forEach(function (row) {
+                d.rows.forEach(function (row, rowIndex) {
                     var tr_ = el('tr', '');
-                    row.forEach(function (value) { tr_.appendChild(dataCell(value)); });
+                    row.forEach(function (value, colIndex) {
+                        tr_.appendChild(dataCell(value,
+                            rowids === null ? null : saveCell(rowIndex, d.columns[colIndex])));
+                    });
                     tbody.appendChild(tr_);
                 });
                 t.appendChild(tbody);
@@ -2874,29 +2914,109 @@
      *
      * `null` gets its own token. In a table of data the difference between no
      * value and the empty string is usually the thing being looked for.
+     *
+     * `save`, when given, is what makes the cell editable: a function taking
+     * the text typed in and returning a promise that resolves once the server
+     * has confirmed the write, or rejects on refusal. It is null for every
+     * cell in a table `showRows` already knows has no row identity, and for a
+     * BLOB or truncated-text cell even in a table that does: writing back a
+     * value's own label would replace the real data with that label, so those
+     * stay locked with the reason on hover regardless of `save`.
      */
-    function dataCell(value) {
+    function dataCell(value, save) {
         var td = el('td', '');
+        var isObject = value !== null && typeof value === 'object';
+
         if (value === null) {
             td.appendChild(el('span', 'dep-data-null', 'null'));
+        } else if (isObject && value.aegis === 'blob') {
+            td.appendChild(el('span', 'dep-data-blob',
+                tr('deploy_data_blob', 'binary, $1').replace('$1', bytes(value.bytes))));
+        } else if (isObject && value.aegis === 'text') {
+            td.textContent = value.shown;
+            td.appendChild(el('span', 'dep-data-cut',
+                tr('deploy_data_cut', ' cut, $1 characters in all')
+                    .replace('$1', String(value.length))));
+        } else {
+            td.textContent = String(value);
+        }
+
+        if (!save) return td;
+
+        if (isObject) {
+            td.classList.add('dep-data-locked');
+            td.title = tr('deploy_data_locked',
+                'A binary or truncated value cannot be edited from this page.');
             return td;
         }
-        if (typeof value === 'object') {
-            if (value.aegis === 'blob') {
-                td.appendChild(el('span', 'dep-data-blob',
-                    tr('deploy_data_blob', 'binary, $1').replace('$1', bytes(value.bytes))));
-                return td;
-            }
-            if (value.aegis === 'text') {
-                td.textContent = value.shown;
-                td.appendChild(el('span', 'dep-data-cut',
-                    tr('deploy_data_cut', ' cut, $1 characters in all')
-                        .replace('$1', String(value.length))));
-                return td;
-            }
-        }
-        td.textContent = String(value);
+
+        makeEditableCell(td, value, save);
         return td;
+    }
+
+    /**
+     * Turns an already-rendered cell into one that opens an inline editor on
+     * click or on Enter, and swaps in the new value only once `save` confirms
+     * the write. Showing it sooner would display data a constraint may have
+     * refused a moment later, which is the console's version of a deploy that
+     * says "published" without publishing.
+     *
+     * Escape cancels and restores what was there. Losing focus behaves like
+     * Escape, since a value left half-typed and unconfirmed is not a save.
+     */
+    function makeEditableCell(td, value, save) {
+        td.classList.add('dep-data-editable');
+        td.tabIndex = 0;
+
+        function open() {
+            if (td.querySelector('input')) return;
+            var shown = value === null ? '' : String(value);
+            var input = el('input', 'dep-data-input');
+            input.type = 'text';
+            input.value = shown;
+            td.textContent = '';
+            td.appendChild(input);
+            input.focus();
+            input.select();
+
+            var settled = false;
+            function close(text, isNull) {
+                if (settled) return;
+                settled = true;
+                td.textContent = '';
+                if (isNull) {
+                    td.appendChild(el('span', 'dep-data-null', 'null'));
+                } else {
+                    td.textContent = text;
+                }
+            }
+
+            function cancel() { close(shown, value === null); }
+
+            input.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Escape') { ev.preventDefault(); cancel(); return; }
+                if (ev.key !== 'Enter') return;
+                ev.preventDefault();
+
+                var next = input.value;
+                td.classList.add('dep-data-saving');
+                save(next).then(function () {
+                    td.classList.remove('dep-data-saving');
+                    value = next;
+                    close(next, false);
+                }).catch(function () {
+                    td.classList.remove('dep-data-saving');
+                    cancel();
+                });
+            });
+
+            input.addEventListener('blur', cancel);
+        }
+
+        td.addEventListener('click', open);
+        td.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter') { ev.preventDefault(); open(); }
+        });
     }
 
     /** Previous, where you are, next. Hidden when one page is the whole table. */
