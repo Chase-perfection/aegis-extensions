@@ -15,6 +15,7 @@
 
 'use strict';
 
+const path = require('path');
 const github = require('./github');
 const cloner = require('./cloner');
 const projectStore = require('./projectStore');
@@ -22,9 +23,27 @@ const runs = require('./runs');
 const projectEnv = require('./projectEnv');
 const runtime = require('./runtime');
 const shots = require('./shots');
+const migrations = require('./migrations');
 
 /** `<tenant>/<project>` while a deployment is in flight. */
 const inFlight = new Set();
+
+/**
+ * Le module d'ecriture du coeur, injecte une fois au montage.
+ *
+ * Passe en variable de module et non en argument de `deployNow`, parce que
+ * `deployNow` a cinq appelants (quatre routes et le sweep du poller) et qu'un
+ * sixieme oublierait l'argument sans que rien ne le dise : les migrations
+ * seraient alors silencieusement sautees sur ce chemin-la. Ici l'oubli est
+ * impossible et l'absence est visible.
+ *
+ * Reste `null` sur un Aegis anterieur a `writableDb`. Cette extension doit
+ * pouvoir tourner sur un coeur plus ancien qu'elle, donc l'absence se traite et
+ * ne se suppose pas.
+ */
+let writableDb = null;
+
+function useWritableDb(mod) { writableDb = mod || null; }
 
 /** Refusals that already name what to change. Kept as they are. */
 const NAMED = [
@@ -135,6 +154,45 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run 
         });
 
         if (run) run.sha = sha;
+
+        // Le schema avant le processus. Une version dont le code attend une
+        // colonne qui n'existe pas encore repondrait au health check et
+        // echouerait a la premiere requete d'un utilisateur, ce qui est la
+        // panne la plus chere de la serie : le proxy aurait deja bascule.
+        //
+        // Et apres `cloner.cloneToCurrent`, parce que les `.sql` sont dans le
+        // clone qui vient d'etre publie.
+        const migDir = path.join(
+            projectStore.currentDir(tenantPaths, project.id),
+            project.migrationsDir || migrations.DEFAULT_DIR);
+        const migDb = path.join(
+            projectStore.ensureDataDir(tenantPaths, project.id),
+            project.dbFile || migrations.DEFAULT_DB);
+
+        if (!writableDb) {
+            // Un coeur anterieur a writableDb. On le dit dans le journal du
+            // deploiement plutot que de laisser croire que les migrations sont
+            // passees : un schema non migre se decouvrira sinon a la premiere
+            // requete d'un utilisateur.
+            if (report) report.log('cette version d Aegis ne sait pas jouer de migration');
+        } else try {
+            const m = await migrations.run({
+                dbFile: migDb, dir: migDir, sha, writableDb
+            });
+            if (report && m.applied.length) {
+                report.stage('migrate', 'running', m.applied.join(', '));
+                m.applied.forEach((n) => report.log(`migration appliquee : ${n}`));
+            }
+        } catch (e) {
+            if (report) report.log(`migration refusee : ${e.message}`);
+            cloner.rollback({
+                projectDir: projectStore.projectDir(tenantPaths, project.id),
+                currentDir: projectStore.currentDir(tenantPaths, project.id),
+                currentSha: sha,
+                previousSha: project.lastSha || null
+            });
+            throw e;
+        }
 
         // A project served by a process: the version is on disk, and now it has
         // to answer. `restart` starts it on the slot the running one is not
@@ -386,6 +444,7 @@ function startAllRuntimes({ pathsFor, tenantsRoot }) {
 
 module.exports = {
     deployNow, promoteNow, releasesFor, isDeploying, reasonFor, startAllRuntimes,
+    useWritableDb,
     // Test seam. `inFlight` is what stops a project being deleted while its
     // folders are being renamed, and a test cannot reach that state without a
     // real deployment running. Nothing outside tests/ should touch it.

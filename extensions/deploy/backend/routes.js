@@ -34,7 +34,7 @@ const projectStore = require('./projectStore');
 const projectData = require('./projectData');
 const projectSettings = require('./projectSettings');
 const projectEnv = require('./projectEnv');
-const { deployNow, promoteNow, releasesFor, isDeploying, startAllRuntimes } = require('./deployService');
+const { deployNow, promoteNow, releasesFor, isDeploying, startAllRuntimes, useWritableDb } = require('./deployService');
 const runs = require('./runs');
 const runStore = require('./runStore');
 const { startPoller } = require('./poller');
@@ -477,7 +477,7 @@ function registerPublic(router, { resolver, moduleGate }) {
 }
 
 /** Routes below the session wall. The module gate is already mounted. */
-function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, resolveChrome, puppeteer }) {
+function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writableDb, resolveChrome, puppeteer }) {
     // The browser capabilities, handed straight down. `chromePath` and puppeteer
     // both live in the Aegis tree, which an extension installed under
     // C:\ProgramData\Aegis\extensions\ cannot reach by any path; the loader's
@@ -498,6 +498,10 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, reso
         // asked for is a listener on an audit server.
         startRouter({ pathsFor, tenantsRoot });
         startPoller({ pathsFor, tenantsRoot });
+        // Injecte une fois au montage : `deployNow` lit `writableDb` en variable
+        // de module, pas en argument, pour que ses cinq appelants (quatre routes
+        // et le sweep du poller) ne puissent pas l'oublier. Voir deployService.js.
+        useWritableDb(writableDb);
     }
 
     /**
