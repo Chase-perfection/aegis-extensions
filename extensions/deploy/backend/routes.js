@@ -1655,17 +1655,48 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         return project;
     };
 
-    /** Turns a reader or resolver error into the code the page has a sentence for. */
+    /**
+     * Turns a reader or writer error into the code the page has a sentence for.
+     *
+     * The default matters more than the list. A code missing from here becomes
+     * `db_read_failed`, a 500, logged as an incident. For a NOT NULL constraint
+     * refused on a write that is three false statements at once: it was not a
+     * read, there is no folder involved, and the machine is fine -- the value
+     * the operator just typed is what the schema rejected.
+     *
+     * So: adding a code to `writableDb` means adding it here. A 400 says "what
+     * you asked for will not do", a 500 says "this machine has a problem", and
+     * confusing them sends somebody hunting a fault that does not exist.
+     */
     const dataError = (res, e, where) => {
-        const known = ['bad_file', 'unknown_file', 'not_a_database', 'unknown_table',
-            'bad_order', 'db_busy'];
-        if (known.includes(e.code)) {
-            return res.status(e.code === 'db_busy' ? 503 : 400).json({
-                success: false, error: e.code
-            });
+        // The caller asked for something that will not do. Their side, not ours.
+        const refusals = [
+            // reading
+            'bad_file', 'unknown_file', 'not_a_database', 'unknown_table', 'bad_order',
+            // writing
+            'not_editable', 'bad_column', 'bad_value', 'bad_rowid', 'constraint'
+        ];
+        if (refusals.includes(e.code)) {
+            return res.status(400).json({ success: false, error: e.code });
         }
+        // The row is gone. Somebody may have deleted it between the page being
+        // drawn and the cell being clicked, which is a 404 and not a fault.
+        if (e.code === 'unknown_row') {
+            return res.status(404).json({ success: false, error: e.code });
+        }
+        // The application is writing right now. Retrying makes sense.
+        if (e.code === 'db_busy') {
+            return res.status(503).json({ success: false, error: e.code });
+        }
+
+        // Everything left really is this machine: file permissions, a corrupt
+        // database, a full disk. The word has to say whether we were reading or
+        // writing, or the log sends the next reader down the wrong path.
+        const writing = ['updateCell', 'insertRow', 'deleteRow'].includes(where);
         console.error(`[Deploy] ${where} failed: ${e.message}`);
-        return res.status(500).json({ success: false, error: 'db_read_failed' });
+        return res.status(500).json({
+            success: false, error: writing ? 'db_write_failed' : 'db_read_failed'
+        });
     };
 
     /**

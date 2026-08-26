@@ -49,3 +49,29 @@ test('la route data rend le chemin absolu du dossier, pour la tache planifiee', 
     assert.match(src, /dataDir:\s*projectStore\.ensureDataDir\(/,
         'le chemin absolu est rendu : sans lui, aucune ACL ne peut etre posee');
 });
+
+/**
+ * Le defaut de `dataError` est ce qui compte : un code absent de sa liste
+ * devient un 500 « n a pas pu lire ce dossier ». Pour un refus d ecriture,
+ * c est faux trois fois. Ce test tient la liste a jour avec `writableDb`.
+ */
+test('tout code de refus que writableDb leve est traite, aucun ne tombe en 500', () => {
+    const src = routesSrc();
+    const block = src.slice(src.indexOf('const dataError ='),
+        src.indexOf('const dataError =') + 2000);
+
+    // Les codes que writableDb.js leve a l ecriture, releves a la source.
+    ['not_editable', 'bad_column', 'bad_value', 'bad_rowid', 'constraint', 'unknown_row']
+        .forEach(function (code) {
+            assert.ok(block.includes(`'${code}'`),
+                `${code} tombe dans le 500 generique au lieu d etre un refus`);
+        });
+});
+
+test('un 500 sur une ecriture ne dit pas qu il lisait', () => {
+    const src = routesSrc();
+    assert.match(src, /db_write_failed/,
+        'le defaut doit distinguer lecture et ecriture');
+    assert.match(src, /\['updateCell', 'insertRow', 'deleteRow'\]/,
+        'les trois ecritures doivent etre nommees pour choisir le mot');
+});
