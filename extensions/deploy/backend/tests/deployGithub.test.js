@@ -10,7 +10,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
-const { appJwt, buildManifest, verifyAppCredentials } = require('../github');
+const { appJwt, buildManifest, verifyAppCredentials, manifestAction, UNREACHABLE_HOOK } = require('../github');
 
 // Generated once per run rather than checked in: a private key in the test tree
 // is the kind of file that gets copied somewhere real.
@@ -62,17 +62,51 @@ test('the manifest asks for read on contents and metadata, and nothing else', ()
   assert.strictEqual(m.public, false, 'the App must not be listed publicly');
 });
 
-// Two real registrations wrote this test. `{ url: localhost, active: false }`
-// was refused with "Hook url is not supported because it isn't reachable over
-// the public Internet", and dropping `hook_attributes` was refused with "Hook
-// url cannot be blank" despite the reference calling the object optional. So an
-// install with no public URL cannot register through the manifest flow, and the
-// caller has to hear that from us rather than from GitHub.
-test('a manifest cannot be built without a public webhook URL', () => {
-  assert.throws(() => buildManifest({
-    name: 'Aegis Deploy (acme)', baseUrl: 'http://localhost:3000/t/acme',
-    webhookUrl: null, redirectUrl: 'http://localhost:3000/t/acme/cb'
-  }), /public webhookUrl/);
+// This test used to assert the opposite, and the belief behind it cost the
+// product its one-click path. Two refused registrations had established that
+// `{ url: localhost, active: false }` is rejected with "Hook url is not
+// supported because it isn't reachable over the public Internet" and that
+// dropping `hook_attributes` is rejected with "Hook url cannot be blank"; from
+// those it was concluded that the manifest flow needs THIS host to be publicly
+// reachable, and a LAN install was sent to a five-step manual form instead.
+//
+// The conclusion did not follow. GitHub checks the hook address is public. It
+// does not check that it is yours, and `redirect_url` is followed by the
+// operator's browser, not by GitHub. Measured against github.com on 2026-08-26:
+// a manifest carrying a reserved public hook with `active: false` and a
+// `http://192.168.x.x:3000` redirect was accepted, and the browser came back
+// here carrying the code.
+test('an install GitHub cannot reach still gets a manifest', () => {
+  const m = buildManifest({
+    name: 'Aegis Deploy (acme)', baseUrl: 'http://192.168.1.10:3000/t/acme',
+    webhookUrl: null, redirectUrl: 'http://192.168.1.10:3000/t/acme/cb'
+  });
+  assert.strictEqual(m.hook_attributes.active, false, 'nothing may be delivered to a hook we do not own');
+  assert.strictEqual(m.hook_attributes.url, UNREACHABLE_HOOK);
+  assert.strictEqual(m.redirect_url, 'http://192.168.1.10:3000/t/acme/cb', 'the redirect stays on the LAN');
+});
+
+// RFC 2606 reserves example.com, so this address can never become somebody's.
+// A placeholder on a domain that is merely unregistered today would be a
+// delivery address for repository events waiting for its owner.
+test('the placeholder hook is on a domain nobody can ever register', () => {
+  assert.match(UNREACHABLE_HOOK, /^https:\/\/example\.com\//);
+});
+
+test('manifestAction targets the account that will own the App', () => {
+  assert.strictEqual(manifestAction('', 'S'), 'https://github.com/settings/apps/new?state=S');
+  assert.strictEqual(manifestAction('acme-corp', 'S'),
+    'https://github.com/organizations/acme-corp/settings/apps/new?state=S');
+});
+
+// A `public: false` App installs only on the account that owns it, so this
+// string decides whether an organisation's private repositories are reachable
+// at all. It is refused rather than escaped.
+test('manifestAction refuses anything that is not a GitHub login', () => {
+  for (const bad of ['bad/login', '../x', 'a b', '-lead', 'trail-', '', 'x'.repeat(40)]) {
+    if (bad === '') continue;   // empty means "my own account", tested above
+    assert.strictEqual(manifestAction(bad, 'S'), null, bad);
+  }
 });
 
 test('a reachable install gets an active hook', () => {

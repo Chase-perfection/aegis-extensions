@@ -221,32 +221,81 @@ async function listBranches(app, installationId, repoFullName) {
 }
 
 /**
+ * Where the manifest points its webhook when this host has no public address.
+ *
+ * example.com and not a domain we could own. RFC 2606 reserves it, so nobody can
+ * ever register it: if a future change flipped `active` on by mistake, the push
+ * payloads would go nowhere rather than to whoever had bought the cute
+ * placeholder domain. A webhook URL is a delivery address for repository events,
+ * and the safe placeholder is the one that cannot become somebody's.
+ *
+ * The path is the explanation. An operator reading their App's settings on
+ * github.com sees why the field is filled with an address that answers nothing.
+ */
+const UNREACHABLE_HOOK = 'https://example.com/aegis-deploy/webhook-not-delivered';
+
+/**
  * The manifest posted to github.com/settings/apps/new.
  *
  * Permissions are the minimum the plan's flow needs: read the code to clone it,
  * read metadata to list repositories and branches. No write access to code, no
  * issues, no organisation scopes. `push` is the only event subscribed.
  *
- * `webhookUrl` is mandatory, which two failed registrations taught us. A
- * localhost URL is refused with "Hook url is not supported because it isn't
- * reachable over the public Internet", and that check runs even for
- * `active: false`. Omitting `hook_attributes` is refused with "Hook url cannot
- * be blank", though the reference documents the object as optional. So the
- * manifest flow needs a public HTTPS address, and an install without one cannot
- * register this way at all. Throwing here keeps that fact at the boundary
- * rather than in a GitHub error page the operator has to interpret.
+ * `hook_attributes` is mandatory whatever the reference says: omitting it is
+ * refused with "Hook url cannot be blank". A LAN or localhost URL in it is
+ * refused with "Hook url is not supported because it isn't reachable over the
+ * public Internet", and that check runs even for `active: false`.
+ *
+ * What was assumed from those two refusals, and is wrong, is that the manifest
+ * flow therefore needs this host to be publicly reachable. It does not. GitHub
+ * checks that the hook address is public; it never checks that the address is
+ * yours. A reserved public URL with `active: false` is accepted, and
+ * `redirect_url` is followed by the operator's own browser rather than by
+ * GitHub, so it may stay on the LAN. Measured against github.com on 2026-08-26:
+ * a manifest carrying UNREACHABLE_HOOK and a `http://192.168.x.x:3000` redirect
+ * registered and redirected back. That is what took one-click registration from
+ * "impossible without a public hostname" to the default path.
+ *
+ * So `webhookUrl` is now optional and means "GitHub can reach this host":
+ * present, deliveries are on and a push is seen in a second; absent, the hook is
+ * a placeholder, it is switched off, and `poller.js` sees the push instead.
  */
 function buildManifest({ name, baseUrl, webhookUrl, redirectUrl }) {
-    if (!webhookUrl) throw new Error('buildManifest needs a public webhookUrl');
     return {
         name,
         url: baseUrl,
         redirect_url: redirectUrl,
-        hook_attributes: { url: webhookUrl, active: true },
+        hook_attributes: webhookUrl
+            ? { url: webhookUrl, active: true }
+            : { url: UNREACHABLE_HOOK, active: false },
         public: false,
         default_permissions: { contents: 'read', metadata: 'read' },
         default_events: ['push']
     };
+}
+
+/**
+ * Where the operator's browser must POST the manifest.
+ *
+ * A manifest App is created under whoever's settings page receives it, and an
+ * App with `public: false` can only be installed on the account that owns it.
+ * So an App created on a personal account can never see an organisation's
+ * private repositories -- it cannot be installed there at all. That failure is
+ * silent and permanent: the operator finishes registration, opens the repository
+ * list, and it is empty with nothing to explain why.
+ *
+ * `owner` is the organisation login, or empty for the personal account. Refused
+ * rather than escaped when it is not a GitHub login, because this string becomes
+ * the account an App is created under.
+ */
+const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+
+function manifestAction(owner, state) {
+    const q = '?state=' + encodeURIComponent(state);
+    const login = String(owner || '').trim();
+    if (!login) return 'https://github.com/settings/apps/new' + q;
+    if (!GH_LOGIN_RE.test(login)) return null;
+    return 'https://github.com/organizations/' + encodeURIComponent(login) + '/settings/apps/new' + q;
 }
 
 /**
@@ -373,6 +422,7 @@ module.exports = {
     appJwt, ghFetch, exchangeManifestCode, verifyAppCredentials, branchHead,
     parseRepoUrl, installationForRepo, publicRepoInfo,
     installationToken, forgetInstallationToken,
+    manifestAction, UNREACHABLE_HOOK,
     listInstallations, listRepos, listBranches,
     buildManifest
 };

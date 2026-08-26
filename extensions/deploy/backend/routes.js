@@ -532,36 +532,48 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, reso
      * confirm it while signed in, which is the point. The `state` is stored on
      * the session and checked on the way back, so a link someone else crafted
      * cannot drive the callback.
+     *
+     * This route used to refuse with 412 unless the host had a public HTTPS
+     * address, on the belief that GitHub would not create an App whose webhook
+     * it could not reach. Half right: GitHub requires the hook address to be
+     * public, not to be this host's, and `redirect_url` is followed by the
+     * operator's browser rather than by GitHub. So a LAN-only install can
+     * register in one click after all, and the manual App-creation form below
+     * stops being the only door. See `github.buildManifest` for the measurement.
+     *
+     * `owner` picks the account the App is created under, and it matters most
+     * for exactly the repositories this feature exists to deploy: a `public:
+     * false` App installs only on the account that owns it, so a personal-account
+     * App can never read an organisation's private repositories.
      */
     router.post('/api/deploy/github/app/register-start', requireOptIn, requireRole('admin'), (req, res) => {
         if (machineStore.getGitHubApp()) {
             return res.status(409).json({ success: false, error: 'github_already_connected' });
         }
-        // GitHub will not create an App whose webhook address it cannot reach,
-        // so an install with no public URL fails on GitHub's side with an error
-        // about manifest validity. Refuse here instead, where the reason can
-        // name the setting that fixes it.
-        if (!machineStore.publicBaseUrl()) {
-            return res.status(412).json({
-                success: false,
-                error: 'public_url_required',
-                hint: 'Set AEGIS_PUBLIC_URL to an https URL GitHub can reach, then restart the backend.'
-            });
+        const state = crypto.randomBytes(24).toString('hex');
+        const action = github.manifestAction((req.body && req.body.owner) || '', state);
+        if (!action) {
+            return res.status(400).json({ success: false, error: 'bad_owner' });
         }
+
         const origin = originFor(req);
         const base = `${origin}/t/${req.tenant.slug}`;
-        const state = crypto.randomBytes(24).toString('hex');
         req.session.deployAppState = state;
+
+        // Only when GitHub can actually deliver. Absent, buildManifest fills the
+        // field with a reserved address and switches delivery off, and the poller
+        // is what notices a push.
+        const publicBase = machineStore.publicBaseUrl();
 
         res.json({
             success: true,
             // GitHub reads the manifest from a form POST, so the page submits
             // this action with the manifest as a single field.
-            action: 'https://github.com/settings/apps/new?state=' + encodeURIComponent(state),
+            action,
             manifest: github.buildManifest({
                 name: `Aegis Deploy (${req.tenant.slug})`,
                 baseUrl: base,
-                webhookUrl: `${machineStore.publicBaseUrl()}/t/${req.tenant.slug}/api/deploy/webhook`,
+                webhookUrl: publicBase ? `${publicBase}/t/${req.tenant.slug}/api/deploy/webhook` : null,
                 redirectUrl: `${base}/api/deploy/github/app/register-callback`
             })
         });

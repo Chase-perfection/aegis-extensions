@@ -371,9 +371,18 @@
                                  the work invisibly. -->
                             <div id="deploy-connect" class="dep-card-block" hidden>
                                 <h2 data-i18n="deploy_connect_title">Connect GitHub</h2>
-                                <p class="dep-body" data-i18n="deploy_connect_body">Aegis registers its own GitHub App
-                                    on your account. You confirm it on GitHub, choose which repositories it may read,
+                                <p class="dep-body" data-i18n="deploy_connect_body">Aegis registers its own GitHub App.
+                                    You confirm it on GitHub, choose which repositories it may read,
                                     and no personal access token is ever stored here.</p>
+                                <label class="dep-label" for="deploy-connect-owner"
+                                    data-i18n="deploy_connect_owner_label">Organisation owning the repositories</label>
+                                <input type="text" id="deploy-connect-owner" class="dep-input"
+                                    autocomplete="off" spellcheck="false"
+                                    placeholder="leave empty for your own account">
+                                <p class="dep-sub" data-i18n="deploy_connect_owner_help">An App belongs to the account
+                                    it is created under, and it can only be installed there. Leave this empty when the
+                                    repositories are yours; name the organisation when they belong to one, or its
+                                    private repositories will stay invisible.</p>
                                 <button type="button" id="deploy-connect-btn" class="dep-btn"
                                     data-i18n="deploy_connect_cta">Connect GitHub</button>
                                 <p id="deploy-connect-note" class="dep-note" hidden></p>

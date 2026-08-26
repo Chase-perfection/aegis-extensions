@@ -479,7 +479,12 @@
         btn.disabled = true;
         connectNote('');
         var status = 0;
-        window.api('/api/deploy/github/app/register-start', { method: 'POST' })
+        var ownerField = document.getElementById('deploy-connect-owner');
+        window.api('/api/deploy/github/app/register-start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ owner: ownerField ? ownerField.value.trim() : '' })
+        })
             .then(function (r) { status = r.status; return readJson(r, 'register-start'); })
             .then(function (data) {
                 if (data && data.success) return submitManifest(data.action, data.manifest);
@@ -491,10 +496,12 @@
                     return connectNote(tr('deploy_connect_admin_only',
                         'Only an administrator can connect GitHub.'));
                 }
-                if (status === 412) {
+                // Named rather than left to the generic failure: the operator
+                // typed this one, and it is the only field on the card.
+                if (status === 400 && data && data.error === 'bad_owner') {
                     btn.disabled = false;
-                    return connectNote(tr('deploy_connect_no_public',
-                        'GitHub needs a public HTTPS address for this server before it will create the App. See the readiness list above.'));
+                    return connectNote(tr('deploy_connect_bad_owner',
+                        'That is not a GitHub organisation name. Leave the field empty to use your own account.'));
                 }
                 throw new Error('register-start refused with ' + status);
             })
@@ -4426,15 +4433,21 @@
                 }
                 document.getElementById('deploy-connect').hidden = false;
                 document.getElementById('deploy-manual').hidden = false;
+                var ownerIn = document.getElementById('deploy-connect-owner');
+                if (ownerIn) {
+                    ownerIn.placeholder = tr('deploy_connect_owner_ph',
+                        'leave empty for your own account');
+                }
                 // A public repository deploys with no App, so this install can
                 // still have projects.
                 loadProjects();
-                if (data.detection !== 'webhook') {
-                    var cbtn = document.getElementById('deploy-connect-btn');
-                    if (cbtn) cbtn.disabled = true;
-                    connectNote(tr('deploy_connect_no_public',
-                        'GitHub needs a public HTTPS address for this server before it will register the App. Register it by hand below instead.'));
-                }
+                // The button used to be disabled here whenever GitHub could not
+                // reach this server, on the belief that the manifest flow needed
+                // a public address. It does not: GitHub checks the hook address
+                // is public, never that it is ours, and it is the operator's own
+                // browser that follows the redirect home. One-click registration
+                // is the normal path on a LAN install, and the manual form below
+                // is the fallback rather than the only door.
                 return null;
             })
             .catch(showError);
