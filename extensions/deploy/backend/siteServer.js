@@ -138,6 +138,65 @@ function withoutHopByHop(headers) {
 }
 
 /**
+ * The three headers an application behind a protected site receives, and the
+ * only public interface this proxy has. Named here once, and in `CONTRACT.md`
+ * of aegis-extensions: the day a deployed project reads one of them, the name
+ * stops being ours to change.
+ */
+const IDENTITY_HEADERS = ['X-Aegis-User', 'X-Aegis-Name', 'X-Aegis-Groups'];
+const IDENTITY_LOWER = IDENTITY_HEADERS.map((n) => n.toLowerCase());
+
+/**
+ * Drops every identity header the client sent, whatever case it used.
+ *
+ * Unconditional, and that is the whole point. On a protected site ours are
+ * written a few lines later and would overwrite these anyway; on an open site
+ * nothing overwrites them, and a visitor sending `X-Aegis-User: administrateur`
+ * to a site with no gate would hand the application an identity that no gate
+ * ever checked. Stripping only when we are about to write would protect the
+ * sites that need it least.
+ *
+ * Node lower-cases the header names it parses off the wire, so on a real
+ * request one comparison would do. The loop is for a caller that builds a
+ * header bag by hand, which is what a test does and what a future caller of
+ * this exported function might.
+ */
+function stripIdentity(headers) {
+    for (const name of Object.keys(headers)) {
+        if (IDENTITY_LOWER.includes(name.toLowerCase())) delete headers[name];
+    }
+}
+
+/**
+ * One identity value, in a form a header can actually carry.
+ *
+ * Percent-encoded UTF-8 rather than the raw string, for a reason that is not
+ * cosmetic: a display name or a group name comes from the directory, so in this
+ * country it carries accents, and Node refuses a header value holding a
+ * character above U+00FF by throwing. Sent raw, one person whose name is
+ * spelled outside latin-1 would get a failed request on every page they open,
+ * and the log would blame the proxy.
+ *
+ * Two smaller questions fall to the same stroke. A CR or an LF cannot survive
+ * the encoding, so no directory value can inject a header of its own. And a
+ * group named `Direction, Finance` encodes its comma, so the comma-separated
+ * list cannot be read as two groups.
+ *
+ * A plain sAMAccountName passes through unchanged, which is the common case and
+ * the one an operator reads in a log.
+ */
+function encodeIdentity(value) {
+    try {
+        return encodeURIComponent(String(value === undefined || value === null ? '' : value));
+    } catch (e) {
+        // A lone surrogate is the only input that reaches here. Nothing sane
+        // produces one, and dropping the value beats throwing inside a request
+        // the visitor has no way to retry differently.
+        return '';
+    }
+}
+
+/**
  * Hands one request to the application process behind this site.
  *
  * Every method, not just GET and HEAD: the point of a runtime is the form post
@@ -156,6 +215,28 @@ function proxyTo(req, res, port, ctx) {
     headers['X-Forwarded-For'] = req.socket.remoteAddress || '';
     headers['X-Forwarded-Proto'] = req.socket.encrypted ? 'https' : 'http';
     headers['X-Forwarded-Host'] = req.headers.host || '';
+
+    // Overwritten, never appended -- see stripIdentity for why this runs even
+    // when nothing is about to be written.
+    stripIdentity(headers);
+    let identity = null;
+    try {
+        identity = siteAuth.identityFor(req, ctx);
+    } catch (e) {
+        // The guard already decided this request may pass, so failing to name
+        // the visitor must not turn a page that loads into an error. Absent is
+        // the safe answer: the client's own headers are gone by now, so the
+        // application sees an anonymous request rather than a forged one.
+        console.warn(`[Deploy] ${ctx.slug}/${ctx.project.id}: identity unavailable for this request: ${e.message}`);
+    }
+    if (identity) {
+        headers['X-Aegis-User'] = encodeIdentity(identity.username);
+        headers['X-Aegis-Name'] = encodeIdentity(identity.user);
+        // Joined in the order the session carries them, which is the order the
+        // directory answered. A project matching on the first group would
+        // otherwise depend on a Map iteration nobody promised.
+        headers['X-Aegis-Groups'] = identity.groups.map(encodeIdentity).join(',');
+    }
 
     const upstream = http.request({
         host: '127.0.0.1', port, path: req.url, method: req.method, headers,
@@ -734,5 +815,6 @@ module.exports = {
     resolveFile, tlsOptionsFor,
     startRouter, routerPort, routerIsTls, invalidateHostIndex,
     touchSite, lastTouch, proxyTo, withoutHopByHop,
+    IDENTITY_HEADERS, stripIdentity, encodeIdentity,
     normaliseHostname, hostOf, buildHostIndex, HOSTNAME_RE,
     DEFAULT_PORT_BASE, PORT_RANGE, portBase, isServing };

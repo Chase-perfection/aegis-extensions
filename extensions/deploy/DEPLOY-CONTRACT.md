@@ -803,6 +803,55 @@ The application reads `PORT` and `HOST` from its environment, plus `NODE_ENV`
 and every variable the project declared. Its output goes to the deployment
 console while it starts, which is where a crash on boot explains itself.
 
+### Who the request is from
+
+A site behind the directory (`## How a site asks who is knocking`) already knows
+who is reading it. The proxy passes that on, so an application with roles of its
+own does not have to put a second login in front of one that has already run.
+
+| Header | Holds |
+|---|---|
+| `X-Aegis-User` | the account name that was typed at the form, and that the directory answered for |
+| `X-Aegis-Name` | the display name the directory returned, or the account name when it returned none |
+| `X-Aegis-Groups` | the groups of that account, comma separated, in the order the directory answered |
+
+Four properties, each of which an application is entitled to rely on.
+
+**They arrive only on a protected site.** A project whose access method is
+`none` receives none of the three. Not an empty one: absent. A site with no gate
+authenticated nobody, and a header an application could read as an anonymous
+user would be worse than no header at all.
+
+**They cannot be forged.** Whatever a client sends under these names is removed
+before the request is forwarded, on every site, protected or not. So an
+application may treat `X-Aegis-User` as the answer of the gate and nothing else.
+
+**They are percent-encoded UTF-8.** Decode before use --
+`decodeURIComponent` in Node, `urllib.parse.unquote` in Python. A plain account
+name contains nothing to encode and arrives unchanged, which is the common case;
+a display name with an accent, or one written in an alphabet a header cannot
+carry raw, arrives whole instead of failing the request. It also means no value
+out of the directory can inject a header of its own.
+
+**A comma inside a group name is encoded, the separators are not.** So splitting
+`X-Aegis-Groups` on `,` and decoding each piece gives back exactly the groups the
+directory answered, including a group called `Direction, Finance`.
+
+```js
+const user = req.headers['x-aegis-user'];           // absent on an open site
+const groups = (req.headers['x-aegis-groups'] || '')
+    .split(',').filter(Boolean).map(decodeURIComponent);
+```
+
+Group membership is re-checked on a timer and not on every request, so these
+values can lag a directory change by up to the revalidation interval. An
+application making an authorisation decision that must be immediate has to ask
+the directory itself.
+
+These three names are the proxy's public interface. Changing one breaks every
+deployed application reading it, so they are fixed here rather than in the code
+that writes them.
+
 ### What it does not do
 
 No WebSocket upgrade: the proxy forwards requests, not socket upgrades. No

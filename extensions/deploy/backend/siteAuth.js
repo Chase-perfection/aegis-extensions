@@ -783,6 +783,46 @@ function gate(req, res, { slug, tenantPaths, project }) {
 }
 
 /**
+ * Who the guard let through, for the one caller that has to tell somebody else.
+ *
+ * `gate` answers a boolean -- handled, or not -- because that is all the server
+ * needs in order to decide whether to keep going. The reverse proxy needs more:
+ * an application behind a protected site is served to a person this file has
+ * already identified, and until now it had no way to learn who that was. A
+ * deployed project with roles of its own had to put a second login in front of
+ * one that had already run.
+ *
+ * A function, and not a field written onto the request context. `siteServer`
+ * builds one context per LISTENER and hands the same object to every request
+ * (`startSiteFor`), so an identity stored there would be the previous visitor's
+ * on the next request -- the worst failure this whole file exists to prevent.
+ * Reading the cookie a second time costs a map lookup and cannot be wrong in
+ * that direction.
+ *
+ * Null has exactly one meaning: nobody was authenticated for this request. The
+ * site is open, or its record names a method this build refuses, or the session
+ * expired between the guard and this call. The caller must then send no
+ * identity at all rather than an empty one, because an application reading an
+ * empty header as a user is the failure that null is here to avoid.
+ */
+function identityFor(req, { slug, tenantPaths, project }) {
+    const projectId = project && project.id;
+    if (!projectId) return null;
+    if (methodFor(slug, tenantPaths, projectId) === authMethods.NONE) return null;
+
+    const session = sessionFor(readCookie(req, SESSION_COOKIE), slug, projectId);
+    if (!session) return null;
+
+    return {
+        username: session.username || '',
+        // The directory does not always answer with a display name. Falling back
+        // to the account name keeps the header meaning "a person", never empty.
+        user: session.user || session.username || '',
+        groups: Array.isArray(session.groups) ? session.groups : []
+    };
+}
+
+/**
  * The form submission. Always resolves true: whatever happens, this request is
  * answered here and no file is served.
  */
@@ -947,7 +987,7 @@ function dropSessions(slug, projectId) {
 }
 
 module.exports = {
-    gate, isProtected, invalidate, dropSessions, dropFailures,
+    gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
     PREFIX, LOGIN_PATH, SESSION_COOKIE, LOCK_THRESHOLD, LOCK_MS,
     // Test seams. Not part of the contract's public surface; nothing outside
     // tests/siteAuth.test.js should reach for them.
