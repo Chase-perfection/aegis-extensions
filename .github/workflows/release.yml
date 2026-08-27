@@ -66,6 +66,30 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      # The field the tag cannot see. `extension.json` carries `release`, and
+      # `extensionInstaller` compares it with the signed manifest: an install
+      # refuses `release_mismatch` when the two disagree. Nothing above reads it,
+      # so without this step a stale field publishes three signed assets that
+      # every install downloads and then rejects at the last check. It went
+      # unnoticed through 0.0.0 by coincidence -- the field already said 0.0.0.
+      #
+      # Checked before the suite rather than after: it costs a file read, and the
+      # failure it prevents is the expensive kind.
+      - name: Refuse a tag the manifest does not agree with
+        run: |
+          set -euo pipefail
+          ID='${{ steps.tag.outputs.id }}'
+          VERSION='${{ steps.tag.outputs.version }}'
+          DECLARED=$(node -e 'const fs = require("fs");
+            try { process.stdout.write(String(JSON.parse(fs.readFileSync("extensions/" + process.argv[1] + "/extension.json", "utf8")).release || "")); }
+            catch (e) { process.stdout.write(""); }' "$ID")
+          if [ "$DECLARED" != "$VERSION" ]; then
+            echo "tag says $VERSION, extensions/$ID/extension.json says \"$DECLARED\" (empty means the file is missing or will not parse)."
+            echo 'Set "release" in extension.json to the version you are tagging, commit it, and tag again.'
+            exit 1
+          fi
+          echo "extension.json declares $DECLARED, which matches the tag"
+
       # Before anything is published, not after. A release is three assets an
       # install has already downloaded by the time anyone reads a failed run.
       - name: Run the suite

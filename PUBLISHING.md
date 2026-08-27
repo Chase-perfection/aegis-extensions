@@ -39,8 +39,12 @@ thing is published and not yet promised to be stable. From there raise the patch
 a fix, the minor for a feature, the major when a tenant has to do something on
 upgrade.
 
-This number is unrelated to the integer in `extension.json`, which only changes when
-the manifest contract changes.
+This number is unrelated to the integer `version` in `extension.json`, which only
+changes when the manifest contract changes. It is **not** unrelated to `release` in
+that same file: set it to the version you picked, in the same commit. An install
+compares it with the signed manifest and refuses `release_mismatch` when they
+disagree, so a stale field publishes assets that every install downloads and then
+rejects. The workflow refuses the tag rather than letting you find out that way.
 
 ## 2. Write the changelog, then tag
 
