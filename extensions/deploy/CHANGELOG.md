@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## 0.0.1
+## 0.1.0
 
 The extension now ships from the extension repository rather than from the Aegis
 tree. Its source, its tests and its release are all in one place, and the package a
@@ -22,6 +22,30 @@ its own had to ask for a second login in front of the first. Open sites receive
 none of the three, and the values are percent-encoded so that a name the
 directory spells with an accent cannot fail the request. `DEPLOY-CONTRACT.md`,
 section `Who the request is from`, is where the names are fixed.
+
+Projects get a database of their own. A project can name a SQLite file inside
+its `data/` folder and a migrations directory beside it; Deploy plays the
+migrations between the code and the process, in name order, and records what it
+played in a registry table so a rerun does not replay them. The Data tab reads
+the tables back, and a cell can be edited in place. A write that is refused now
+says which of the reasons it was, instead of failing silently: a static project
+has no process to write with, and a read-only reader cannot be talked into one.
+
+The page says where the data folder is, because an operator restoring a backup
+had no way to find it from the interface.
+
+Project settings validate offline. Saving a repository URL no longer calls
+GitHub, so a settings change on a machine that cannot reach it stops failing for
+a reason that has nothing to do with what was typed.
+
+A GitHub App can be registered on an install with no public host, which is what
+every LAN deployment is.
+
+`Create-BuildAccounts.ps1 -WithPython` grants each sandbox account read and
+execute on a machine-wide Python, so a project whose install or start command is
+Python can be deployed. Opt-in, never write, and it refuses outright when the
+only Python on the host is a per-user install: an ACL on that path succeeds and
+unblocks nothing, which is the worst of both answers.
 
 ## 0.0.0
 
