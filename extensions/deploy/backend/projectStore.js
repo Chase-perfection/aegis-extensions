@@ -184,6 +184,20 @@ function deleteProject(tenantPaths, id) {
  * what the folder's existence records. `tenantsRoot` comes from core.
  */
 function tenantsWithProjects(tenantsRootDir, pathsFor) {
+    return allTenants(tenantsRootDir, pathsFor)
+        .filter(({ tenantPaths }) => fs.existsSync(storeFile(tenantPaths)));
+}
+
+/**
+ * Every tenant on this host, whether or not it has ever used Deploy.
+ *
+ * `tenantsWithProjects` answers "who is the poller working for"; this answers
+ * "how many tenants share this machine", which is a different question and the
+ * one the GitHub App migration turns on. A tenant that never opened Deploy still
+ * counts there: it is a tenant that could open it tomorrow and must not inherit
+ * somebody else's credential when it does.
+ */
+function allTenants(tenantsRootDir, pathsFor) {
     let slugs;
     try {
         slugs = fs.readdirSync(tenantsRootDir, { withFileTypes: true })
@@ -200,7 +214,7 @@ function tenantsWithProjects(tenantsRootDir, pathsFor) {
         } catch (_) {
             continue;
         }
-        if (fs.existsSync(storeFile(tenantPaths))) out.push({ slug, tenantPaths });
+        out.push({ slug, tenantPaths });
     }
     return out;
 }
@@ -209,5 +223,5 @@ module.exports = {
     PROJECT_ID_RE, HISTORY_LIMIT,
     deployRoot, projectDir, currentDir, dataDir, ensureDataDir,
     listProjects: readAll, getProject, saveProject, deleteProject, idFor,
-    addHistory, skipTicks, tenantsWithProjects
+    addHistory, skipTicks, tenantsWithProjects, allTenants
 };

@@ -29,10 +29,21 @@ test('les migrations tournent apres le code et avant le processus', () => {
         'le nouveau processus doit trouver le schema deja migre');
 });
 
+/**
+ * Le dossier de migrations part du clone et pas de `data/`.
+ *
+ * Lu sur la source parce que c'est une confusion de chemin et pas un
+ * comportement : les deux dossiers existent, les deux sont accessibles, et se
+ * tromper donnerait un projet qui ne joue jamais rien sans que rien n'echoue.
+ * Le comportement autour, lui, est teste pour de vrai dans
+ * `deployMigrationsGate.test.js`.
+ */
 test('le dossier de migrations est lu dans le clone, pas dans data', () => {
     const src = fs.readFileSync(
         path.join(__dirname, '..', 'deployService.js'), 'utf8');
 
-    assert.match(src, /currentDir\([^)]*\)[^;]*project\.migrationsDir/s,
+    assert.match(src, /const migDir = path\.join\(\s*projectStore\.currentDir\(/,
         'le chemin des migrations part de currentDir');
+    assert.match(src, /migrations\.list\(migDir\)/,
+        'les migrations presentes sont lues dans ce dossier');
 });

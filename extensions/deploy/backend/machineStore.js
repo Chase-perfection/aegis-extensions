@@ -1,12 +1,24 @@
 /**
- * Machine-level state for the deploy extension: the GitHub App registration,
- * the public webhook URL, and the opt-in flag that lets this extension do
- * anything at all.
+ * Host state for the deploy extension: the GitHub App registrations, the public
+ * webhook URL, and the opt-in flag that lets this extension do anything at all.
  *
- * None of this is tenant state. ADR 0001 decision 7 splits installation (per
- * machine) from visibility (per tenant), and a GitHub App is registered once
- * per Aegis install because its callback URL is fixed to one hostname. Putting
- * it in a tenant database would mean N registrations for one callback.
+ * Two different scopes live in one file, and the difference matters.
+ *
+ * The opt-in and the public URL are per machine, as ADR 0001 decision 7 splits
+ * installation from visibility. **A GitHub App registration is per tenant.** It
+ * used to be one per machine, on the reasoning that an App's callback URL is
+ * fixed to one hostname and every tenant on a host shares that hostname. True,
+ * and irrelevant: the callback is a URL, the App is a credential. One App shared
+ * across tenants means tenant B's admin calls `GET /app/installations` and is
+ * handed tenant A's GitHub organisation, its repository list, and a token that
+ * clones its private code. The callback stays one URL per host because
+ * `/t/<slug>/api/deploy/...` already carries the slug in its path.
+ *
+ * What stays machine-level is the *file*, not the scope. `tenants/<slug>/` is
+ * tenant data, and it is inside the project tree on a dev install and inside a
+ * backup on every install; the workspace rule is that no secret sits there. So
+ * the registrations are keyed by slug inside a store that lives outside the
+ * tree, under the same key as everything else here.
  *
  * The App private key can clone any repository the App is installed on, so it
  * is encrypted at rest with AES-256-GCM under a key file that never leaves the
@@ -167,9 +179,32 @@ function detectionPath() {
     return publicBaseUrl() ? 'webhook' : 'poll';
 }
 
-/** The App registration with secrets decrypted, or null when unregistered. */
-function getGitHubApp() {
-    const raw = readRaw().githubApp;
+/**
+ * A tenant slug, validated before it is used as a key in the store.
+ *
+ * Core resolves and asserts the slug long before a route calls in here, so this
+ * is defence in depth rather than the only check. It is worth having anyway:
+ * this module is a library, an unvalidated key in a JSON object is how
+ * `__proto__` becomes a registration, and the cost is one regex.
+ */
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+function appKey(slug) {
+    const s = String(slug || '');
+    return SLUG_RE.test(s) ? s : null;
+}
+
+/**
+ * The App registration for one tenant, secrets decrypted, or null.
+ *
+ * Null for an unknown slug as well as for an unregistered one. Every caller
+ * already treats null as "GitHub is not connected", which is the truthful
+ * answer for a slug that cannot own a registration.
+ */
+function getGitHubApp(slug) {
+    const key = appKey(slug);
+    if (!key) return null;
+    const raw = (readRaw().githubApps || {})[key];
     if (!raw || !raw.appId) return null;
     return {
         appId: raw.appId,
@@ -183,10 +218,25 @@ function getGitHubApp() {
     };
 }
 
-/** Stores the result of the App manifest exchange. Secrets in, ciphertext out. */
-function saveGitHubApp({ appId, slug, clientId, clientSecret, privateKey, webhookSecret, htmlUrl }) {
+/**
+ * Stores the result of the App manifest exchange. Secrets in, ciphertext out.
+ *
+ * `tenantSlug` says whose registration this is; `slug` inside the payload is
+ * GitHub's own slug for the App and is a different thing entirely. They are
+ * separate arguments rather than one object for exactly that reason: two fields
+ * named `slug` in one bag is a bug waiting for a tired reader.
+ *
+ * Throws on a slug the store will not key. A registration silently dropped here
+ * would read back as "GitHub is not connected" one screen later, with a private
+ * key already spent and no way to tell why.
+ */
+function saveGitHubApp(tenantSlug, { appId, slug, clientId, clientSecret, privateKey, webhookSecret, htmlUrl }) {
+    const key = appKey(tenantSlug);
+    if (!key) throw new Error(`refusing to store a GitHub App under ${JSON.stringify(String(tenantSlug))}`);
+
     const all = readRaw();
-    all.githubApp = {
+    if (!all.githubApps) all.githubApps = {};
+    all.githubApps[key] = {
         appId,
         slug: slug || null,
         clientId: clientId || null,
@@ -197,12 +247,76 @@ function saveGitHubApp({ appId, slug, clientId, clientSecret, privateKey, webhoo
         webhookSecretEnc: webhookSecret ? encrypt(webhookSecret) : null
     };
     writeRaw(all);
-    return getGitHubApp();
+    return getGitHubApp(key);
 }
 
-/** Safe to send to a browser: no secret, only whether one exists. */
-function publicStatus() {
-    const app = getGitHubApp();
+/**
+ * Forgets one tenant's registration. The App itself stays on GitHub, where the
+ * operator deletes it; this only stops Aegis holding a key it will not use.
+ */
+function clearGitHubApp(tenantSlug) {
+    const key = appKey(tenantSlug);
+    if (!key) return false;
+    const all = readRaw();
+    if (!all.githubApps || !all.githubApps[key]) return false;
+    delete all.githubApps[key];
+    writeRaw(all);
+    return true;
+}
+
+/**
+ * Moves a pre-per-tenant registration to the tenant that owns it.
+ *
+ * The old store held one `githubApp` at the top level with nothing recording
+ * who registered it. On the single-tenant host, which is what an Aegis install
+ * normally is, there is exactly one candidate and the answer is not a guess. On
+ * a host with several, there is no way to tell, and handing it to the wrong one
+ * is the leak this whole change exists to close.
+ *
+ * So the ambiguous case is parked rather than deleted: the key stays in the
+ * file under `githubAppUnattributed`, unreadable by any route, and the operator
+ * is told to register again. Losing a key they can regenerate on GitHub beats
+ * giving tenant B a token for tenant A's repositories.
+ *
+ * Idempotent: it runs at every boot and does nothing once the legacy key is gone.
+ */
+function migrateLegacyGitHubApp(slugs) {
+    const all = readRaw();
+    const legacy = all.githubApp;
+    if (!legacy || !legacy.appId) return null;
+
+    const candidates = (Array.isArray(slugs) ? slugs : []).filter((s) => appKey(s));
+    delete all.githubApp;
+
+    if (candidates.length === 1) {
+        const only = candidates[0];
+        if (!all.githubApps) all.githubApps = {};
+        // Moved as ciphertext. Re-encrypting would decrypt a key into a variable
+        // for no reason: the record is already sealed under this machine's key.
+        if (!all.githubApps[only]) all.githubApps[only] = legacy;
+        writeRaw(all);
+        console.log(`[Deploy] GitHub App registration moved to tenant "${only}" (it is now per tenant, not per machine)`);
+        return only;
+    }
+
+    all.githubAppUnattributed = legacy;
+    writeRaw(all);
+    console.warn('[Deploy] a GitHub App was registered before registrations became per tenant, and this host has '
+        + `${candidates.length} tenants, so there is no way to tell whose it is. It has been set aside in `
+        + `${storeFile()} under "githubAppUnattributed" and no tenant can use it. Each tenant registers its own App `
+        + 'from the Deploy page; delete the old App on github.com once they have.');
+    return null;
+}
+
+/**
+ * Safe to send to a browser: no secret, only whether one exists.
+ *
+ * Per tenant, because the row it renders says "GitHub App registered" and the
+ * question that answers is whether *this* tenant may deploy a private
+ * repository, not whether somebody on this host once did.
+ */
+function publicStatus(slug) {
+    const app = getGitHubApp(slug);
     return {
         enabled: isEnabled(),
         detection: detectionPath(),
@@ -233,8 +347,8 @@ function getBuildAccountSecret(accountName) {
 
 module.exports = {
     isEnabled, publicBaseUrl, detectionPath,
-    getGitHubApp, saveGitHubApp, publicStatus,
+    getGitHubApp, saveGitHubApp, clearGitHubApp, migrateLegacyGitHubApp, publicStatus,
     saveBuildAccountSecret, getBuildAccountSecret,
     encrypt, decrypt,
-    storeDir, storeFile
+    storeDir, storeFile, SLUG_RE
 };

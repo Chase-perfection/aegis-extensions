@@ -358,7 +358,7 @@
             readinessEl.appendChild(row(
                 'todo',
                 tr('deploy_gh_missing_label', 'No GitHub App yet'),
-                tr('deploy_gh_missing_detail', 'Aegis registers its own GitHub App so it never holds a personal access token. Registration lands in phase 1.'),
+                tr('deploy_gh_missing_detail', 'Aegis registers a GitHub App of its own, for this tenant, so it never holds a personal access token. Use Connect GitHub below: it takes one click and a confirmation on github.com.'),
                 ''
             ));
         }
@@ -384,7 +384,7 @@
             readinessEl.appendChild(row(
                 'todo',
                 tr('deploy_poll_label', 'GitHub cannot reach this server'),
-                tr('deploy_poll_detail', 'Pushes get picked up by polling the branch instead of by webhook. Registering the App one click at a time needs an address GitHub can reach, so on this server you register it by hand below. Cloning works either way, over outbound HTTPS.'),
+                tr('deploy_poll_detail', 'Pushes get picked up by polling the branch instead of by webhook. Registering the App is unaffected: GitHub only needs your browser to come back here, not to reach this server itself. Cloning works either way, over outbound HTTPS.'),
                 ''
             ));
         }
@@ -428,7 +428,7 @@
         bad_private_key: ['deploy_manual_bad_key', 'That is not a private key. Paste the whole .pem file, including the BEGIN and END lines.'],
         github_rejected_credentials: ['deploy_manual_rejected', 'GitHub refused these credentials. Check the App ID, and generate a fresh key if the old one was deleted.'],
         app_id_key_mismatch: ['deploy_manual_mismatch', 'That key belongs to a different App than the ID you entered.'],
-        github_already_connected: ['deploy_manual_already', 'A GitHub App is already connected on this server.'],
+        github_already_connected: ['deploy_manual_already', 'A GitHub App is already connected for this tenant. Reload the page to see it.'],
         github_unreachable: ['deploy_manual_unreachable', 'Aegis could not reach github.com. Check outbound HTTPS from this server.']
     };
 
@@ -873,7 +873,14 @@
         // reach the card, never the create form.
         branch_gone: ['deploy_branch_gone', 'That branch or repository is gone from GitHub. Check the App still has access to it.',
             'deploy_ref_branch_gone', 'The branch or repository disappeared'],
-        poll_failed: ['deploy_poll_failed', 'Aegis could not ask GitHub about this branch. Check outbound HTTPS from this server.']
+        poll_failed: ['deploy_poll_failed', 'Aegis could not ask GitHub about this branch. Check outbound HTTPS from this server.'],
+        // A schema that did not move is a deployment that did not happen. Both
+        // of these put the previous version back on the port before refusing,
+        // so the site an operator reads these next to is the one that worked.
+        migration_failed: ['deploy_new_migration_failed', 'A migration was refused. What SQLite said is in the console above; the version that was serving has been put back.',
+            'deploy_ref_migration_failed', 'A migration in that branch was refused'],
+        migrations_unsupported: ['deploy_new_migrations_unsupported', 'That branch carries migrations and this Aegis is too old to play them. Update Aegis on this server, or take the migrations folder out of the branch.',
+            'deploy_ref_migrations_unsupported', 'This Aegis cannot play the migrations in that branch']
     };
 
     /**
@@ -1320,6 +1327,17 @@
                 entry ? tr(entry[0], entry[1]) : p.lastError));
         }
 
+        // Said out loud, because the alternative is a card that looks exactly
+        // like one about to be retried. A refusal about what the branch holds
+        // does not become right by being run again, so the sweep stops after a
+        // few attempts, and this is what tells the operator the next move is
+        // theirs. The button below still works: it never goes through the sweep.
+        if (p.pollGaveUp) {
+            body.appendChild(el('p', 'dep-card-note',
+                tr('deploy_card_gave_up',
+                    'Aegis has stopped retrying this commit. Push a fix, or deploy it again by hand.')));
+        }
+
         var actions = el('div', 'dep-card-actions');
 
         var open = el('a', 'dep-btn dep-btn-ghost dep-btn-small',
@@ -1352,6 +1370,58 @@
         return card;
     }
 
+    /**
+     * The empty state, pointed at whichever step is actually next.
+     *
+     * It used to offer "Connect GitHub" whether or not GitHub was connected,
+     * which is the wrong instruction for the reader who has just finished
+     * connecting it: they arrive at an empty Projects pane and the page sends
+     * them back to the screen they came from. Once an App is registered, the
+     * next thing to do is deploy something, so the primary button says that and
+     * the steps above it say how.
+     *
+     * Reads `appInfo`, which `load()` fills from the status payload. That is
+     * per tenant, like the registration behind it.
+     */
+    function paintHero() {
+        var connected = !!(appInfo && appInfo.connected);
+        var steps = document.getElementById('deploy-hero-steps');
+        if (steps) steps.hidden = !connected;
+
+        // The key goes on the element, not just the text: core's
+        // `applyTranslations` repaints every [data-i18n] node on a language
+        // switch, so a node whose text was set here and whose key was left
+        // behind would snap back to the other state in the other language.
+        var say = function (id, key, fallback) {
+            var node = document.getElementById(id);
+            if (!node) return;
+            node.setAttribute('data-i18n', key);
+            node.textContent = tr(key, fallback);
+        };
+
+        say('deploy-hero-title',
+            connected ? 'deploy_hero_title_ready' : 'deploy_hero_title',
+            connected ? 'Deploy your first site' : 'Connect a repository and Aegis takes it from there');
+        say('deploy-hero-body',
+            connected ? 'deploy_hero_body_ready' : 'deploy_hero_body',
+            connected
+                ? 'GitHub is connected for this tenant. Four steps and a repository is live, then every push to the branch you pick republishes it on its own.'
+                : 'Push to the production branch and the site follows.');
+        say('deploy-hero-primary',
+            connected ? 'deploy_hero_deploy' : 'deploy_hero_connect',
+            connected ? 'Deploy a repository' : 'Connect GitHub');
+        // A public repository clones with no App at all, so pasting a URL stays
+        // a real way in even before anything is connected.
+        say('deploy-hero-secondary',
+            connected ? 'deploy_hero_manage' : 'deploy_hero_paste',
+            connected ? 'Review the GitHub connection' : 'Paste a repository URL');
+
+        var primary = document.getElementById('deploy-hero-primary');
+        var secondary = document.getElementById('deploy-hero-secondary');
+        if (primary) primary.href = connected ? '#new' : '#github';
+        if (secondary) secondary.href = connected ? '#github' : '#new';
+    }
+
     function renderProjects() {
         var hero = document.getElementById('deploy-hero');
         var block = document.getElementById('deploy-projects');
@@ -1361,6 +1431,7 @@
 
         hero.hidden = !!projects.length;
         block.hidden = !projects.length;
+        if (!hero.hidden) paintHero();
 
         var shown = projects.filter(function (p) {
             return !needle ||
@@ -1467,11 +1538,39 @@
     var runMisses = 0;
     var RUN_MISS_LIMIT = 40;
 
-    /** Runs still going, by project id, so a card can say "Building". */
+    /**
+     * Runs still going: run id -> project id. Feeds the card's "Building" badge
+     * and the "N running" pill on the rail.
+     *
+     * Keyed by run id and not by project id, which is what it was until 0.1.3
+     * and is why the pill got stuck. A first deployment starts recording before
+     * the repository has been parsed, so its `projectId` is empty on the first
+     * polls and becomes the real id a second later. The entry went in under `''`
+     * and the delete looked for the project id, found nothing, and left it: the
+     * rail then read "1 running" over a deployment whose every stage was green,
+     * for as long as the page stayed open. A run id never changes, so the key
+     * used to file an entry is the key used to remove it.
+     */
     var runningRuns = {};
 
     function runningFor(projectId) {
-        return !!runningRuns[projectId];
+        if (!projectId) return false;
+        for (var id in runningRuns) {
+            if (runningRuns[id] === projectId) return true;
+        }
+        return false;
+    }
+
+    /** Files or forgets one run, and repaints only when that changed something. */
+    function markRun(runId, projectId, isRunning) {
+        if (!runId) return;
+        var had = Object.prototype.hasOwnProperty.call(runningRuns, runId);
+        // The project id is refreshed on every poll even when the count did
+        // not move: it is empty on a first deployment's first polls, and the
+        // card that says "Building" is found through it.
+        if (isRunning) runningRuns[runId] = projectId || '';
+        else delete runningRuns[runId];
+        if (had !== !!isRunning) paintRunningCount();
     }
 
     function stopRunPolling() {
@@ -1479,6 +1578,10 @@
         if (runClockTimer) clearInterval(runClockTimer);
         runTimer = null;
         runClockTimer = null;
+        // The console was the thing watching. Leaving it mid-build is what left
+        // the rail's pill frozen on a count nothing would ever correct, so the
+        // slower watch takes over here.
+        syncRunWatch();
     }
 
     function consoleNote(msg) {
@@ -1507,8 +1610,22 @@
         install: ['deploy_stage_install', 'Install'],
         build: ['deploy_stage_build', 'Build'],
         check: ['deploy_stage_check', 'Acceptance test'],
-        publish: ['deploy_stage_publish', 'Publish']
+        publish: ['deploy_stage_publish', 'Publish'],
+        migrate: ['deploy_stage_migrate', 'Migrations']
     };
+
+    /**
+     * A stage's name, or its key when this page has never heard of it.
+     *
+     * A backend can be newer than the page in front of it -- the files are read
+     * per request, the module tree is read at boot -- and looking the key up
+     * blind used to throw here, which blanked the whole console over a stage
+     * that had only just been added.
+     */
+    function stageLabel(key) {
+        var entry = STAGE_LABELS[key];
+        return entry ? tr(entry[0], entry[1]) : key;
+    }
 
     var TRIGGER_LABELS = {
         create: ['deploy_trigger_create', 'First deployment'],
@@ -1579,8 +1696,7 @@
             var wrap = el('div', 'dep-stage is-' + s.status);
             var head = el('div', 'dep-stage-head');
             head.appendChild(el('span', 'dep-stage-mark', ''));
-            var entry = STAGE_LABELS[s.key];
-            head.appendChild(el('span', 'dep-stage-name', tr(entry[0], entry[1])));
+            head.appendChild(el('span', 'dep-stage-name', stageLabel(s.key)));
             if (s.startedAt && s.endedAt) {
                 head.appendChild(el('span', 'dep-stage-time', clock(s.endedAt - s.startedAt)));
             } else if (s.status === 'running') {
@@ -1652,12 +1768,9 @@
                 currentRun = run;
                 runCursor = run.cursor;
 
-                if (run.status === 'running') {
-                    runningRuns[run.projectId] = true;
-                    paintRunningCount();
-                } else if (runningRuns[run.projectId]) {
-                    delete runningRuns[run.projectId];
-                    paintRunningCount();
+                var wasRunning = Object.prototype.hasOwnProperty.call(runningRuns, runId);
+                markRun(runId, run.projectId, run.status === 'running');
+                if (wasRunning && run.status !== 'running') {
                     // The card said "Building"; the run is over and the project
                     // record now says what happened.
                     loadProjects();
@@ -1725,6 +1838,9 @@
 
         pollRun(runId);
         runTimer = setInterval(function () { pollRun(runId); }, RUN_POLL_MS);
+        // Twice a second beats every five seconds, so the slower watch stands
+        // down while this console is open.
+        syncRunWatch();
         // The header clock ticks on its own so a slow poll does not freeze it.
         runClockTimer = setInterval(paintClock, 1000);
 
@@ -1778,9 +1894,65 @@
                 box.textContent = '';
                 empty.hidden = !!list.length;
                 list.forEach(function (run) { box.appendChild(runRow(run)); });
+                reconcileRunning(list);
                 return undefined;
             })
             .catch(function (e) { console.error('[Deploy] runs failed:', e); });
+    }
+
+    /**
+     * Replaces what this page believes is running with what the backend says.
+     *
+     * The console poll is the only thing that used to move that set, so it was
+     * only ever right while a console was open on the page. Leave the console
+     * mid-build and the pill kept its count after the build ended; come back to
+     * a page reloaded while a deployment was going and the pill showed nothing.
+     * The backend already answers the question on `/api/deploy/runs`, so this
+     * takes the answer instead of accumulating one.
+     */
+    function reconcileRunning(list) {
+        runningRuns = {};
+        (list || []).forEach(function (run) {
+            if (run.status === 'running') runningRuns[run.id] = run.projectId || '';
+        });
+        paintRunningCount();
+    }
+
+    /** How often the pill checks itself when no console is open on the page. */
+    var RUN_WATCH_MS = 5000;
+    var runWatchTimer = null;
+
+    /**
+     * Watches the runs the page believes are going, when nothing else is.
+     *
+     * Only while the pill has something on it and no console is polling: an
+     * operator who left the build console is the case this covers, and a page
+     * with nothing running asks nothing. Started and stopped by
+     * `paintRunningCount`, which is the one function that knows the count moved.
+     */
+    function syncRunWatch() {
+        var wanted = !runTimer && Object.keys(runningRuns).length > 0;
+        if (wanted && !runWatchTimer) {
+            runWatchTimer = setInterval(refreshRunning, RUN_WATCH_MS);
+        } else if (!wanted && runWatchTimer) {
+            clearInterval(runWatchTimer);
+            runWatchTimer = null;
+        }
+    }
+
+    function refreshRunning() {
+        return window.api('/api/deploy/runs')
+            .then(function (r) { return readJson(r, 'runs'); })
+            .then(function (data) {
+                if (!data || !data.success) return undefined;
+                var before = Object.keys(runningRuns).length;
+                reconcileRunning(data.runs);
+                // A build that ended somewhere else changed what the cards say.
+                if (before !== Object.keys(runningRuns).length) loadProjects();
+                return undefined;
+            })
+            // A blip must not empty the pill: the next tick asks again.
+            .catch(function (e) { console.error('[Deploy] running count refresh failed:', e); });
     }
 
     // --- One project --------------------------------------------------------
@@ -4652,6 +4824,9 @@
      */
     function paintRunningCount() {
         var pill = document.getElementById('deploy-runs-count');
+        // The watch is decided here rather than at each call site: this is the
+        // one function every path that changes the set already goes through.
+        syncRunWatch();
         if (!pill) return;
         var n = Object.keys(runningRuns).length;
         pill.hidden = n === 0;

@@ -13,7 +13,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { decide, shouldPoll } = require('../poller');
+const { decide, shouldPoll, SAME_SHA_ATTEMPTS } = require('../poller');
 const { addHistory, skipTicks, HISTORY_LIMIT } = require('../projectStore');
 
 const project = (over) => Object.assign({ id: 'site', lastSha: 'aaaa1111' }, over || {});
@@ -71,6 +71,47 @@ test('a push after a promote deploys forward again', () => {
         decide(promoted, { moved: true, sha: 'cccc3333', etag: 'W/"z"' }),
         { action: 'deploy', sha: 'cccc3333' }
     );
+});
+
+// The loop this closes: a commit that cannot build was redeployed forever. The
+// backoff spaced the attempts out and stopped nothing, so a branch pushed on a
+// Friday spent the weekend cloning, building and failing, and filed a run each
+// time. Attempts are counted against the commit, not against the project.
+test('a commit still gets its attempts before the sweep gives up on it', () => {
+    for (let n = 0; n < SAME_SHA_ATTEMPTS; n++) {
+        const tried = project({ lastFailedSha: 'bbbb2222', failedShaAttempts: n });
+        assert.deepStrictEqual(
+            decide(tried, { moved: true, sha: 'bbbb2222', etag: 'W/"y"' }),
+            { action: 'deploy', sha: 'bbbb2222' },
+            `attempt ${n + 1} must still run`
+        );
+    }
+});
+
+test('a commit that used up its attempts is not deployed again', () => {
+    const spent = project({ lastFailedSha: 'bbbb2222', failedShaAttempts: SAME_SHA_ATTEMPTS });
+    assert.deepStrictEqual(
+        decide(spent, { moved: true, sha: 'bbbb2222', etag: 'W/"y"' }),
+        { action: 'none', reason: 'sha_failed' }
+    );
+});
+
+// The block has to clear itself, or a project would need a button nobody built
+// to start deploying again.
+test('the next commit deploys even though the one before it was given up on', () => {
+    const spent = project({ lastFailedSha: 'bbbb2222', failedShaAttempts: 9 });
+    assert.deepStrictEqual(
+        decide(spent, { moved: true, sha: 'cccc3333', etag: 'W/"z"' }),
+        { action: 'deploy', sha: 'cccc3333' }
+    );
+});
+
+// A failure recorded against no commit -- a clone that died before the head was
+// read, on a deployment nobody could attribute -- must not block the branch.
+test('a failure with no commit named blocks nothing', () => {
+    const vague = project({ lastFailedSha: null, failedShaAttempts: 20 });
+    assert.strictEqual(
+        decide(vague, { moved: true, sha: 'bbbb2222' }).action, 'deploy');
 });
 
 test('a healthy project is polled on every tick', () => {

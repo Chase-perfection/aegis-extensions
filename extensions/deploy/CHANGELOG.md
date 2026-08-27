@@ -2,6 +2,87 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.1.3
+
+Three things a deployment said about itself were not true.
+
+**The rail said a deployment was running after it had finished.** A first
+deployment showed "1 running" beside a console whose five stages were all green,
+and kept showing it for as long as the page stayed open, so the one number that
+says whether anything is happening contradicted everything next to it. The page
+counted runs by project id, and a first deployment starts recording before its
+repository has been parsed: its entry went in under an empty id, became a real
+id one poll later, and the removal then looked for something that was no longer
+there. Runs are counted by run id now, which never changes. Two more holes went
+with it: the count only ever moved while a build console was open, so leaving one
+mid-build or reloading the page left it frozen, and it is reconciled against
+`/api/deploy/runs` every five seconds when no console is watching.
+
+**A deployment reported migrations it had not played.** A project with no
+migrations printed "cette version d Aegis ne sait pas jouer de migration" on
+every deployment, which is alarming and was about nothing: nothing was skipped
+because there was nothing to skip. Worse, a project that did carry migrations on
+an Aegis too old to play them printed the same line and published anyway. A
+version whose code expects a column that does not exist answers the health
+check, passes every stage in green, and fails on the first request from a user,
+which is the most expensive failure in the sequence because the proxy has
+already moved. A check nobody can perform is a failure, not a remark: the
+deployment is now refused, the previous version goes back on the port, and the
+message names what to do on the host. A project with no migrations says nothing
+at all, and one whose schema is already current says so.
+
+Migrations also have a stage on the console. They never had one: `migrate` was
+missing from the list of stages, so the call that would have moved it matched
+nothing and returned. Migrations ran, or did not, with no box either way.
+
+**A commit that could not build was redeployed forever.** The sweep retried on a
+backoff that spaced the attempts out and stopped nothing, so a branch pushed on a
+Friday spent the weekend cloning, running the build account and failing, and
+filed a console for each attempt. One project on a live install had eight
+consecutive identical refusals and would have had a ninth. The backoff was doing
+what it was written for; what was missing is that a refusal about what a
+repository contains does not become right by being run again. A commit now gets
+three attempts, counted against the commit rather than against the project, and
+the block clears itself on the next push because that is a different commit.
+Failures that are not the commit's fault are unaffected: an unreachable GitHub
+still retries on the backoff alone, and a deployment an operator cancelled counts
+for nothing.
+
+Deploy and Redeploy never go through the sweep, so a commit it has given up on
+can still be deployed by hand at any time. The card says when that is the
+situation, because one that has been given up on otherwise looks exactly like one
+about to be tried again.
+
+A GitHub App registration belongs to one tenant instead of to the machine.
+
+It was stored once per host, which on a host with several tenants meant any
+tenant administrator could list another tenant's GitHub installations and mint a
+token that clones its private repositories. What the tenants share is the
+callback URL, and that already carries the slug in its path; the credential
+never had to be shared with it. Every route now reads and writes the
+registration under `req.tenant.slug`, and the poller resolves one per tenant
+inside its sweep rather than holding one for the whole pass.
+
+Upgrading moves an existing registration rather than dropping it. On the
+single-tenant host, which is what an Aegis install normally is, there is exactly
+one candidate and it is handed over at the next boot. On a host with several
+there is no record of who registered it, so it is set aside under
+`githubAppUnattributed` in the machine store, no tenant can read it, and each
+registers its own App from the Deploy page. Guessing the owner would have been
+the leak this change closes.
+
+The page now says what to do rather than what is true. The empty Projects pane
+used to offer "Connect GitHub" whether or not GitHub was connected, so an
+operator who had just finished connecting it landed on an empty grid pointing
+back at the screen they came from; once an App is registered it offers "Deploy a
+repository" with the four steps of a first deployment above it. The one-click
+card lists what the button is about to do, including the two things a reader
+cannot guess: the App name is unique across the whole of GitHub and stays
+editable on GitHub's own form, and installing the App on repositories is a
+separate step without which the repository list stays empty. The by-hand
+instructions name the exact address for a personal account and for an
+organisation, say that the choice is final, and say which box to untick and why.
+
 ## 0.1.1
 
 Deploy sets itself up on the host. Installing it now creates the sandbox

@@ -68,7 +68,7 @@ That gate has a hole worth knowing before you lean on it. The browser tier under
 `extensions/<id>/frontend/tests/` skips on the runner, which has no Aegis checkout,
 so a green release run says nothing about whether the extension's pages still
 render. Run those locally with `AEGIS_TREE` set before you tag. See
-[README.md](README.md), "The four that need Aegis on disk".
+[README.md](README.md), "The six that need Aegis on disk".
 
 `workflow_dispatch` takes the same tag as an input, for re-running a release whose
 workflow failed after the tag was pushed.

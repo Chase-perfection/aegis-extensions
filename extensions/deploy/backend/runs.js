@@ -55,8 +55,14 @@ const RUN_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
  * reasons and the operator reads them differently: a failed install is a
  * dependency problem, a failed build is their own code. builder.js tells them
  * apart by which log file the sandbox has started writing.
+ *
+ * `migrate` is last because that is when it runs: the `.sql` files live in the
+ * clone, so the schema moves once the folder is on the port. It was missing
+ * from this list until 0.1.3, which meant `stage('migrate', ...)` found no
+ * index and returned -- migrations ran, or were skipped, with no box on the
+ * console either way. A step nobody can see is a step nobody checks.
  */
-const STAGES = ['clone', 'install', 'build', 'check', 'publish'];
+const STAGES = ['clone', 'install', 'build', 'check', 'publish', 'migrate'];
 
 /** runId -> run. */
 const byId = new Map();

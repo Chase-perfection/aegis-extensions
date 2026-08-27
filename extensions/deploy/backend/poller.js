@@ -30,6 +30,26 @@ const previews = require('./previews');
 
 const DEFAULT_INTERVAL_MS = 20000;
 
+/**
+ * Times the sweep redeploys one commit that keeps failing, before it stops.
+ *
+ * Three, because the first failure is often the network and the second is often
+ * the disk, and neither is the commit's fault. The third says it is.
+ *
+ * Before 0.1.3 there was no such number: a commit that could not build was
+ * retried forever, slowed by the backoff to one attempt every five minutes and
+ * stopped by nothing. Each attempt cloned the repository, ran the build account,
+ * and filed a run -- so a branch pushed on a Friday spent the weekend failing,
+ * and the console filled with two hundred identical consoles. The backoff was
+ * doing what it was written to do; what was missing is that a build refused for
+ * what the repository contains does not become right by being run again.
+ *
+ * The block is per commit and clears itself: the next push has a different sha,
+ * so nothing has to be reset by hand. Redeploying by hand is always allowed --
+ * the buttons call `deployNow` and never come through here.
+ */
+const SAME_SHA_ATTEMPTS = 3;
+
 let timer = null;
 let tick = 0;
 
@@ -68,6 +88,13 @@ function decide(project, head) {
     // used to compare with.
     const seen = project.lastSeenSha || project.lastSha;
     if (head.sha === seen) return { action: 'none', reason: 'same_sha' };
+    // Ce commit a eu ses chances. Rien ici ne dit qu'il est mauvais -- il est
+    // seulement refuse pour la meme raison a chaque fois, et la sweep n'a rien
+    // de nouveau a lui apporter. La branche repart au prochain commit.
+    if (head.sha === project.lastFailedSha &&
+        (project.failedShaAttempts || 0) >= SAME_SHA_ATTEMPTS) {
+        return { action: 'none', reason: 'sha_failed' };
+    }
     return { action: 'deploy', sha: head.sha };
 }
 
@@ -108,6 +135,10 @@ async function pollProject(app, slug, tenantPaths, project) {
         // printed.
         await deployNow({
             app, slug, tenantPaths, project, trigger: 'poll',
+            // Le commit dont la sweep a decide. `deployNow` ne le connaitrait
+            // sinon qu'apres le clone, donc un clone refuse ne saurait pas quel
+            // commit compter et le meme serait retente sans fin.
+            headSha: verdict.sha,
             run: runs.start({
                 slug,
                 tenantPaths,
@@ -126,10 +157,6 @@ async function pollProject(app, slug, tenantPaths, project) {
 async function sweep({ pathsFor, tenantsRoot }) {
     if (!machineStore.isEnabled()) return;
 
-    // May be null. A project on a public repository is polled and cloned without
-    // credentials, so the absence of an App stops only the private ones.
-    const app = machineStore.getGitHubApp();
-
     tick += 1;
 
     // Once a sweep, before the polling: a preview that is about to be removed
@@ -142,6 +169,14 @@ async function sweep({ pathsFor, tenantsRoot }) {
     }
 
     for (const { slug, tenantPaths } of projectStore.tenantsWithProjects(tenantsRoot(), pathsFor)) {
+        // Resolved per tenant, and inside the loop for that reason: a
+        // registration belongs to one tenant, so the sweep cannot hold one App
+        // and spend it on every project it walks past. May be null, and that is
+        // a normal state: a project on a public repository is polled and cloned
+        // with no credential at all, so a missing App stops only the private
+        // ones, tenant by tenant.
+        const app = machineStore.getGitHubApp(slug);
+
         for (const project of projectStore.listProjects(tenantPaths)) {
             if (project.installationId && !(app && app.privateKey)) continue;
             if (!shouldPoll(project, slug, tick)) continue;
@@ -179,4 +214,4 @@ function startPoller({ pathsFor, tenantsRoot, intervalMs }) {
     return timer;
 }
 
-module.exports = { startPoller, shouldPoll, decide, DEFAULT_INTERVAL_MS };
+module.exports = { startPoller, shouldPoll, decide, DEFAULT_INTERVAL_MS, SAME_SHA_ATTEMPTS };

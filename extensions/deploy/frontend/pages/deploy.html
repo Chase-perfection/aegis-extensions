@@ -149,16 +149,33 @@
                         <section class="dep-pane" data-pane="projects" hidden>
                             <div id="deploy-hero" class="dep-hero" hidden>
                                 <span class="dep-eyebrow">Deploy</span>
-                                <h1 class="dep-hero-title" data-i18n="deploy_hero_title">Connect a repository and
+                                <h1 class="dep-hero-title" id="deploy-hero-title" data-i18n="deploy_hero_title">Connect a repository and
                                     Aegis takes it from there</h1>
-                                <p class="dep-hero-body" data-i18n="deploy_hero_body">Push to the production branch
+                                <p class="dep-hero-body" id="deploy-hero-body" data-i18n="deploy_hero_body">Push to the production branch
                                     and the site follows. Aegis clones the repository, runs the build in an isolated
                                     sandbox when you declare one, checks that the result is really a site, then serves
                                     it on a port of its own.</p>
+                                <!-- What to do next, once GitHub is connected. Hidden until
+                                     then, because the answer before that is the one thing the
+                                     buttons below already say. `paintHero` fills it in. -->
+                                <ol id="deploy-hero-steps" class="dep-hero-steps" hidden>
+                                    <li data-i18n="deploy_hero_step1">Have the repository to hand. It needs a site at
+                                        its root, or a build command that produces one. Nothing else is required of
+                                        it.</li>
+                                    <li data-i18n="deploy_hero_step2">Click Deploy a repository and paste its URL.
+                                        Aegis reads the default branch from GitHub, so that is the only field you have
+                                        to fill.</li>
+                                    <li data-i18n="deploy_hero_step3">If it needs a build, give the install and build
+                                        commands, for instance npm ci and npm run build, and the folder they produce.
+                                        Leave all three empty for a site that is already static.</li>
+                                    <li data-i18n="deploy_hero_step4">Deploy. The console opens on the clone, the
+                                        build and the acceptance test, and the site is live on its own port when they
+                                        pass. Every later commit on that branch republishes on its own.</li>
+                                </ol>
                                 <div class="dep-hero-actions">
-                                    <a class="dep-btn" href="#github" data-i18n="deploy_hero_connect">Connect
-                                        GitHub</a>
-                                    <a class="dep-btn dep-btn-ghost" href="#new"
+                                    <a class="dep-btn" id="deploy-hero-primary" href="#github"
+                                        data-i18n="deploy_hero_connect">Connect GitHub</a>
+                                    <a class="dep-btn dep-btn-ghost" id="deploy-hero-secondary" href="#new"
                                         data-i18n="deploy_hero_paste">Paste a repository URL</a>
                                 </div>
                                 <div class="dep-features">
@@ -394,9 +411,27 @@
                                  the work invisibly. -->
                             <div id="deploy-connect" class="dep-card-block" hidden>
                                 <h2 data-i18n="deploy_connect_title">Connect GitHub</h2>
-                                <p class="dep-body" data-i18n="deploy_connect_body">Aegis registers its own GitHub App.
-                                    You confirm it on GitHub, choose which repositories it may read,
-                                    and no personal access token is ever stored here.</p>
+                                <p class="dep-body" data-i18n="deploy_connect_body">Aegis registers a GitHub App of its
+                                    own, for this tenant alone. You confirm it on GitHub, you choose which
+                                    repositories it may read, and no personal access token is ever stored here. The App
+                                    and its key belong to this tenant: another tenant on this server cannot use
+                                    them and cannot see your repositories.</p>
+                                <p class="dep-steps-title" data-i18n="deploy_connect_steps_title">What the button
+                                    does</p>
+                                <ol class="dep-manual-steps">
+                                    <li data-i18n="deploy_connect_step1">It opens github.com on a registration form
+                                        already filled in: the name, the read-only permissions and the return address.
+                                        Sign in there if you are not already.</li>
+                                    <li data-i18n="deploy_connect_step2">Check it and click Create GitHub App. Every
+                                        field stays editable, so if GitHub answers that the name is taken, change the
+                                        name there and carry on. Nothing else needs touching.</li>
+                                    <li data-i18n="deploy_connect_step3">GitHub sends your browser back here, and Aegis
+                                        picks up the App and its private key on the way past. GitHub never connects to
+                                        this server itself, which is why this works on a private network.</li>
+                                    <li data-i18n="deploy_connect_step4">Last step, on the screen that follows: install
+                                        the App and tick the repositories it may read. Until you do, the repository list
+                                        on this page stays empty.</li>
+                                </ol>
                                 <label class="dep-label" for="deploy-connect-owner"
                                     data-i18n="deploy_connect_owner_label">Organisation owning the repositories</label>
                                 <input type="text" id="deploy-connect-owner" class="dep-input"
@@ -412,11 +447,12 @@
                             </div>
 
                             <div id="deploy-install" class="dep-card-block" hidden>
-                                <h2 data-i18n="deploy_grant_title">Connect GitHub</h2>
-                                <p class="dep-body" data-i18n="deploy_grant_body">Give Aegis read access to the
-                                    repositories you want to deploy. You choose which ones on GitHub, and you can change
-                                    that later without touching Aegis. Read on contents and metadata is all it asks
-                                    for.</p>
+                                <h2 data-i18n="deploy_grant_title">Choose the repositories</h2>
+                                <p class="dep-body" data-i18n="deploy_grant_body">The App exists, and it can see nothing
+                                    yet. Open it on GitHub, click Install, and pick either every repository or only the
+                                    ones you want to deploy. Read on contents and metadata is all it asks for, and you
+                                    can change the selection later on GitHub without touching Aegis. This page notices
+                                    on its own once access is granted.</p>
                                 <a id="deploy-install-link" class="dep-btn dep-btn-link" target="_blank"
                                     rel="noopener noreferrer" data-i18n="deploy_grant_cta">Connect GitHub</a>
                                 <p id="deploy-install-note" class="dep-note" hidden></p>
@@ -428,21 +464,33 @@
                                  connection is ever needed. -->
                             <div id="deploy-manual" class="dep-card-block" hidden>
                                 <h2 data-i18n="deploy_manual_title">Register an App by hand</h2>
-                                <p class="dep-body" data-i18n="deploy_manual_body">For a server GitHub cannot reach,
-                                    create the App yourself on github.com with the webhook left unchecked, then paste
-                                    what it gives you. Aegis checks the pair against GitHub before storing it. Cloning
-                                    needs only outbound HTTPS, and pushes are picked up by polling the branch.</p>
+                                <p class="dep-body" data-i18n="deploy_manual_body">The button above already does all of
+                                    this. Use this form only if you would rather create the App yourself, or if GitHub
+                                    refused the one-click registration. Aegis checks the pair against GitHub before
+                                    storing it, and stores it for this tenant alone.</p>
                                 <ol class="dep-manual-steps">
-                                    <li data-i18n="deploy_manual_step1">Open github.com, Settings, Developer settings,
-                                        GitHub Apps, New GitHub App.</li>
-                                    <li data-i18n="deploy_manual_step2">Name it, put any homepage URL, and untick
-                                        Active under Webhook so no address is required.</li>
-                                    <li data-i18n="deploy_manual_step3">Under Repository permissions set Contents to
-                                        Read-only and Metadata to Read-only, then create the App.</li>
-                                    <li data-i18n="deploy_manual_step4">On the App page, note the App ID and use
-                                        Generate a private key, which downloads a .pem file.</li>
-                                    <li data-i18n="deploy_manual_step5">Install the App on your account and choose the
-                                        repositories it may read.</li>
+                                    <li data-i18n="deploy_manual_step1">Go to github.com/settings/apps/new for an App
+                                        on your own account. For repositories owned by an organisation, go to
+                                        github.com/organizations/NAME/settings/apps/new instead, with NAME the
+                                        organisation. This choice is final: an App created on a personal account can
+                                        never read an organisation's private repositories.</li>
+                                    <li data-i18n="deploy_manual_step2">Under GitHub App name, put anything free, for
+                                        instance Aegis Deploy followed by your company name. The name is unique across
+                                        the whole of GitHub, so add something of your own if it is taken. Homepage URL
+                                        takes any address, it is never called.</li>
+                                    <li data-i18n="deploy_manual_step3">Under Webhook, untick Active. That is what lets
+                                        you leave the URL empty: without it GitHub demands an address it can reach, and
+                                        this server has none. Aegis polls the branch instead.</li>
+                                    <li data-i18n="deploy_manual_step4">Under Repository permissions, set Contents to
+                                        Read-only and Metadata to Read-only. Nothing else. Leave the account
+                                        permissions alone, then click Create GitHub App at the bottom.</li>
+                                    <li data-i18n="deploy_manual_step5">On the App page that opens, copy the App ID at
+                                        the top into the field below. Further down, click Generate a private key: a
+                                        .pem file downloads. Open it in a text editor and paste the whole contents,
+                                        BEGIN and END lines included, into the second field. Then save here.</li>
+                                    <li data-i18n="deploy_manual_step6">Back on GitHub, click Install App in the left
+                                        margin, then Install, and tick the repositories Aegis may read. Without this
+                                        step the App exists and sees nothing.</li>
                                 </ol>
                                 <label class="dep-label" for="deploy-manual-appid"
                                     data-i18n="deploy_manual_appid">App ID</label>

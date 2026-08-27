@@ -38,7 +38,7 @@ const migrations = require('./migrations');
 const { deployNow, promoteNow, releasesFor, isDeploying, startAllRuntimes, useWritableDb } = require('./deployService');
 const runs = require('./runs');
 const runStore = require('./runStore');
-const { startPoller } = require('./poller');
+const { startPoller, SAME_SHA_ATTEMPTS } = require('./poller');
 const {
     startSiteFor, restartSiteFor, startAllSites, allocatePort, isServing,
     startRouter, routerPort, routerIsTls, invalidateHostIndex, normaliseHostname
@@ -407,9 +407,15 @@ function ghError(res, e, where) {
     });
 }
 
-/** Refuses when no GitHub App has been registered on this machine yet. */
+/**
+ * Refuses when this tenant has not registered a GitHub App yet.
+ *
+ * Per tenant and not per machine: another tenant's registration on the same
+ * host is not this tenant's credential, and reading it here would hand a token
+ * for somebody else's private repositories to whoever asked first.
+ */
 function withApp(req, res) {
-    const app = machineStore.getGitHubApp();
+    const app = machineStore.getGitHubApp(req.tenant.slug);
     if (!app || !app.privateKey) {
         res.status(409).json({ success: false, error: 'github_not_connected' });
         return null;
@@ -453,7 +459,7 @@ function registerPublic(router, { resolver, moduleGate }) {
         const raw = req.rawBody;
         if (!raw || raw.length > MAX_BODY_BYTES) return accept();
 
-        const app = machineStore.getGitHubApp();
+        const app = machineStore.getGitHubApp(req.tenant.slug);
         if (!app || !app.webhookSecret) return accept();
 
         if (!verifySignature(raw, req.get('X-Hub-Signature-256'), app.webhookSecret)) {
@@ -491,6 +497,22 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
     // gated on the host opt-in: an install that never turns Deploy on never opens
     // the port and never calls GitHub on a timer.
     if (machineStore.isEnabled()) {
+        // Before anything reads a registration. A GitHub App used to be stored
+        // once per machine and is now stored per tenant; this moves an existing
+        // one to its owner when the host has a single tenant, and sets it aside
+        // when it cannot tell. Cheap and idempotent, so it runs at every boot
+        // rather than behind a version flag nobody would remember to bump.
+        try {
+            machineStore.migrateLegacyGitHubApp(
+                projectStore.allTenants(tenantsRoot(), pathsFor).map(({ slug }) => slug)
+            );
+        } catch (e) {
+            // Not fatal. The consequence is that one tenant sees "no GitHub App"
+            // and registers again, which is the fallback the migration already
+            // chooses when it cannot attribute the old one.
+            console.warn(`[Deploy] GitHub App migration skipped: ${e.message}`);
+        }
+
         startAllSites({ pathsFor, tenantsRoot });
         // The listeners are back, and a project served by a process needs the
         // process back too or its port answers 503 until somebody redeploys it.
@@ -511,7 +533,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
      * operator has to fix on the host.
      */
     router.get('/api/deploy/status', (req, res) => {
-        const status = machineStore.publicStatus();
+        const status = machineStore.publicStatus(req.tenant.slug);
         res.json({
             success: true,
             ...status,
@@ -553,7 +575,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
      * App can never read an organisation's private repositories.
      */
     router.post('/api/deploy/github/app/register-start', requireOptIn, requireRole('admin'), (req, res) => {
-        if (machineStore.getGitHubApp()) {
+        if (machineStore.getGitHubApp(req.tenant.slug)) {
             return res.status(409).json({ success: false, error: 'github_already_connected' });
         }
         const state = crypto.randomBytes(24).toString('hex');
@@ -601,7 +623,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
      * mistyped id or half a key pair cannot be saved as a working connection.
      */
     router.post('/api/deploy/github/app/manual', requireOptIn, requireRole('admin'), async (req, res) => {
-        if (machineStore.getGitHubApp()) {
+        if (machineStore.getGitHubApp(req.tenant.slug)) {
             return res.status(409).json({ success: false, error: 'github_already_connected' });
         }
         const appId = String((req.body && req.body.appId) || '').trim();
@@ -618,7 +640,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
 
         try {
             const app = await github.verifyAppCredentials(appId, privateKey);
-            machineStore.saveGitHubApp({
+            machineStore.saveGitHubApp(req.tenant.slug, {
                 appId: app.appId,
                 slug: app.slug,
                 htmlUrl: app.htmlUrl,
@@ -660,7 +682,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
 
         try {
             const app = await github.exchangeManifestCode(String(req.query.code));
-            machineStore.saveGitHubApp(app);
+            machineStore.saveGitHubApp(req.tenant.slug, app);
             console.log(`[Deploy] ${req.tenant.slug}: GitHub App ${app.slug} registered by ${req.user.email}`);
             return res.redirect(`${page}?connected=ok`);
         } catch (e) {
@@ -715,7 +737,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             return res.status(400).json({ success: false, error: 'bad_repo_url' });
         }
         const repoFullName = parsed.fullName;
-        const app = machineStore.getGitHubApp();
+        const app = machineStore.getGitHubApp(req.tenant.slug);
 
         let installationId = null;
         const asked = Number(req.query.installation_id);
@@ -785,6 +807,13 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         deployedAt: p.deployedAt || null,
         lastError: p.lastError || null,
         failureCount: p.failureCount || 0,
+        // Whether the sweep has stopped retrying the commit that keeps failing,
+        // so the card can say so. Without it a project the poller has given up
+        // on looks identical to one it is about to try again, and the operator
+        // has no way to know the next move is theirs. Deploy and Redeploy are
+        // unaffected: they call `deployNow` and never go through `decide`.
+        pollGaveUp: !!p.lastFailedSha &&
+            (p.failedShaAttempts || 0) >= SAME_SHA_ATTEMPTS,
         history: Array.isArray(p.history) ? p.history.slice(0, 5) : [],
         port: p.port || null,
         url: siteUrl(req, p),
@@ -857,7 +886,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
      * docs/superpowers/specs/2026-08-18-deploy-build-sandbox-design.md.
      */
     router.post('/api/deploy/projects', requireOptIn, requireRole('admin'), async (req, res) => {
-        const app = machineStore.getGitHubApp();
+        const app = machineStore.getGitHubApp(req.tenant.slug);
         const body = req.body || {};
 
         // Recording starts here, before anything has been read out of the body.
@@ -1203,7 +1232,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // install where no App was ever registered. The one case that does need
         // it is checked below, once the record says whether an installation is
         // involved.
-        const app = machineStore.getGitHubApp();
+        const app = machineStore.getGitHubApp(req.tenant.slug);
 
         if (!projectStore.PROJECT_ID_RE.test(req.params.id || '')) {
             return res.status(404).json({ success: false, error: 'unknown_project' });
@@ -1415,7 +1444,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
      * one. It answers on its own port, like every site here.
      */
     router.post('/api/deploy/projects/:id/previews', requireOptIn, requireRole('admin'), async (req, res) => {
-        const app = machineStore.getGitHubApp();
+        const app = machineStore.getGitHubApp(req.tenant.slug);
         if (!projectStore.PROJECT_ID_RE.test(req.params.id || '')) {
             return res.status(404).json({ success: false, error: 'unknown_project' });
         }

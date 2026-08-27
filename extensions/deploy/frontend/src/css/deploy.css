@@ -367,6 +367,23 @@
     line-height: 1.65;
 }
 
+/* The hero is centred; this list is not. Numbered steps read down a left edge,
+   and centring them puts every number in a different column. So the box is
+   centred and its text is left-aligned inside it. */
+.dep-hero-steps {
+    max-width: 34rem;
+    margin: 0 auto var(--space-xl);
+    padding-left: 1.4rem;
+    text-align: left;
+    color: var(--zinc-400);
+    font-size: var(--text-sm);
+    line-height: 1.65;
+}
+
+.dep-hero-steps li + li {
+    margin-top: var(--space-sm);
+}
+
 .dep-hero-actions {
     display: flex;
     flex-wrap: wrap;
@@ -627,6 +644,43 @@
     outline: none;
 }
 
+/* A <select> keeps its native widget unless appearance is reset, and the native
+   widget on Windows is a grey box with a grey chevron that owes nothing to this
+   page. Resetting it means drawing the chevron, hence the arrow below: it is a
+   background image because a pseudo-element cannot be placed on a replaced
+   element like this one.
+
+   The popup the control opens is a different problem and is not solved here.
+   The browser draws it, no author rule reaches inside it, and what decides
+   whether it is black or white is `color-scheme` on the page. The skin declares
+   it; see `body.aegis-white` in core's aegis-white.css. The option rules below
+   are the belt to that braces: Chrome and Firefox on Windows honour a colour on
+   an <option>, Safari ignores it, and none of the three is worse for having it. */
+.dep-select,
+select.dep-input {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 30px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%235a5a5a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6.5 8 10.5l4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 9px center;
+    background-size: 14px 14px;
+    cursor: pointer;
+}
+
+.dep-select option,
+select.dep-input option {
+    color: var(--text-main);
+    background-color: var(--ag-surface, var(--dep-surface));
+}
+
+/* The disabled placeholder row a branch picker shows while it loads. Muted, and
+   still on the same surface as the rest of the list. */
+.dep-select option:disabled,
+select.dep-input option:disabled {
+    color: var(--zinc-500);
+}
+
 .dep-search:focus { border-color: var(--accent); }
 
 .dep-search::placeholder { color: var(--zinc-500); }
@@ -667,6 +721,22 @@
     line-height: 1.6;
     margin: 0 0 var(--space-md);
     padding-left: 1.4rem;
+}
+
+.dep-manual-steps li + li {
+    margin-top: var(--space-xs);
+}
+
+/* Heads a numbered list, so it reads as a step count rather than as more prose.
+   Not an <h3>: the card already has its heading, and a second level here would
+   put a rung in the outline for a label four words long. */
+.dep-steps-title {
+    margin: 0 0 var(--space-xs);
+    color: var(--zinc-300);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
 .dep-hint {
@@ -862,6 +932,16 @@
 .dep-card-error {
     margin: 0;
     color: var(--risk-critical);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+}
+
+/* Sits under the refusal it qualifies, and in ink rather than in red: the
+   refusal above is the problem, this is only what Aegis has stopped doing
+   about it. Two reds in a row would read as two separate failures. */
+.dep-card-note {
+    margin: 4px 0 0;
+    color: var(--ag-meta, var(--zinc-500));
     font-size: var(--text-xs);
     line-height: 1.5;
 }

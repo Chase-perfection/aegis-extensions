@@ -76,8 +76,8 @@ the catalogue, or run `node scripts/build-index.mjs` yourself.
 npm test
 ```
 
-364 tests: 360 that run anywhere, and 4 that need a checkout of Aegis and skip
-without one.
+436 tests: 430 that run anywhere, and 6 files that need a checkout of Aegis and
+skip without one.
 
 `node --test` takes no arguments, so it walks the tree and finds both suites of
 every extension, `backend/tests/` and `frontend/tests/` alike. A new extension is
@@ -88,7 +88,7 @@ backend runs and where Deploy's PowerShell sandbox means anything.
 
 There are no dependencies, so there is nothing to install first.
 
-### The four that need Aegis on disk
+### The six that need Aegis on disk
 
 `extensions/deploy/frontend/tests/` drives the Deploy pages through puppeteer, and
 those pages are only half the extension's: the nav, the layout CSS, `app.js` and

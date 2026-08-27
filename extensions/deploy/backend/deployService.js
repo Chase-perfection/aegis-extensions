@@ -49,7 +49,8 @@ function useWritableDb(mod) { writableDb = mod || null; }
 const NAMED = [
     'needs_build', 'no_index', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink',
     'build_failed', 'build_account_unconfigured', 'bad_site_config',
-    'runtime_disabled', 'no_runtime_account', 'start_failed', 'unhealthy', 'bad_site_port'
+    'runtime_disabled', 'no_runtime_account', 'start_failed', 'unhealthy', 'bad_site_port',
+    'migration_failed', 'migrations_unsupported'
 ];
 
 /**
@@ -93,8 +94,13 @@ function isDeploying(slug, projectId) {
  * after the clone succeeds, so the previous version keeps serving. That is the
  * plan's "failure never takes the site down", and it is why this function
  * records the failure and returns instead of trying to roll anything back.
+ *
+ * `headSha` is the commit the caller decided to deploy, for the callers that
+ * know it before the clone (the poller does; a button does not). It is what a
+ * failure gets filed under, so the sweep can stop redeploying a commit that has
+ * already failed its attempts -- see `decide` in poller.js.
  */
-async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run }) {
+async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run, headSha }) {
     const k = key(slug, project.id);
     if (inFlight.has(k)) return { deployed: false, reason: 'busy' };
     inFlight.add(k);
@@ -162,36 +168,77 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run 
         //
         // Et apres `cloner.cloneToCurrent`, parce que les `.sql` sont dans le
         // clone qui vient d'etre publie.
-        const migDir = path.join(
-            projectStore.currentDir(tenantPaths, project.id),
-            project.migrationsDir || migrations.DEFAULT_DIR);
-        const migDb = path.join(
-            projectStore.ensureDataDir(tenantPaths, project.id),
-            project.dbFile || migrations.DEFAULT_DB);
+        const migName = project.migrationsDir || migrations.DEFAULT_DIR;
+        const migDir = path.join(projectStore.currentDir(tenantPaths, project.id), migName);
+        // Lues avant toute autre chose, parce que la reponse a « y a-t-il
+        // quelque chose a jouer » decide de tout ce qui suit. Un projet qui
+        // n'en a aucune ne merite ni etape, ni ligne de journal : jusqu'a
+        // 0.1.3, un site statique sans dossier `migrations/` voyait passer
+        // « cette version d Aegis ne sait pas jouer de migration » a chaque
+        // deploiement, une phrase alarmante qui ne parlait de rien.
+        const found = migrations.list(migDir);
 
-        if (!writableDb) {
-            // Un coeur anterieur a writableDb. On le dit dans le journal du
-            // deploiement plutot que de laisser croire que les migrations sont
-            // passees : un schema non migre se decouvrira sinon a la premiere
-            // requete d'un utilisateur.
-            if (report) report.log('cette version d Aegis ne sait pas jouer de migration');
-        } else try {
-            const m = await migrations.run({
-                dbFile: migDb, dir: migDir, sha, writableDb
-            });
-            if (report && m.applied.length) {
-                report.stage('migrate', 'running', m.applied.join(', '));
-                m.applied.forEach((n) => report.log(`migration appliquee : ${n}`));
+        if (found.length) {
+            if (report) {
+                report.stage('migrate', 'running',
+                    `${found.length} dans ${migName}/`);
             }
-        } catch (e) {
-            if (report) report.log(`migration refusee : ${e.message}`);
-            cloner.rollback({
-                projectDir: projectStore.projectDir(tenantPaths, project.id),
-                currentDir: projectStore.currentDir(tenantPaths, project.id),
-                currentSha: sha,
-                previousSha: project.lastSha || null
-            });
-            throw e;
+
+            // Un coeur anterieur a `writableDb`. Le deploiement est refuse et
+            // pas seulement signale : jusqu'a 0.1.3 cette branche imprimait une
+            // ligne et publiait quand meme, donc une version dont le code
+            // attend une colonne qui n'existe pas passait toutes les etapes en
+            // vert et tombait a la premiere requete d'un utilisateur. Une
+            // verification qu'on ne sait pas faire est un echec, pas un
+            // commentaire.
+            const stop = (code, message) => {
+                if (report) {
+                    report.log(message);
+                    report.stage('migrate', 'failed');
+                }
+                // Le dossier vient d'etre echange ; la version qui servait
+                // repart sur le port, comme apres un demarrage rate.
+                try {
+                    cloner.rollback({
+                        projectDir: projectStore.projectDir(tenantPaths, project.id),
+                        currentDir: projectStore.currentDir(tenantPaths, project.id),
+                        currentSha: sha,
+                        previousSha: project.lastSha || null
+                    });
+                    if (report) report.log('la version qui servait a ete remise en place');
+                } catch (undo) {
+                    // Rien a remettre : un premier deploiement qui n'a jamais
+                    // servi. Le journal dit pourquoi.
+                    console.warn(`[Deploy] ${slug}: ${project.id} pas de version a remettre apres une migration refusee: ${undo.message}`);
+                }
+                throw Object.assign(new Error(message), { code });
+            };
+
+            if (!writableDb) {
+                stop('migrations_unsupported',
+                    `${migName}/ contient ${found.length} migration(s) et cette version d Aegis ne sait pas les jouer : mettre a jour Aegis sur cet hote`);
+            }
+
+            let m;
+            try {
+                m = await migrations.run({
+                    dbFile: path.join(
+                        projectStore.ensureDataDir(tenantPaths, project.id),
+                        project.dbFile || migrations.DEFAULT_DB),
+                    dir: migDir, sha, writableDb
+                });
+            } catch (e) {
+                // `stop` releve, donc `m` n'est jamais lu apres cette branche.
+                stop('migration_failed', `migration refusee : ${e.message}`);
+            }
+
+            if (report) {
+                m.applied.forEach((n) => report.log(`migration appliquee : ${n}`));
+                if (!m.applied.length) {
+                    report.log(`${found.length} migration(s) deja jouee(s), le schema est a jour`);
+                }
+                report.stage('migrate', 'done');
+            }
         }
 
         // A project served by a process: the version is on disk, and now it has
@@ -253,6 +300,10 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run 
             deployedAt: Date.now(),
             failureCount: 0,
             lastError: null,
+            // Ce commit passe : ce qui avait echoue avant n'a plus a bloquer
+            // quoi que ce soit.
+            lastFailedSha: null,
+            failedShaAttempts: 0,
             history: projectStore.addHistory(project, {
                 sha, at: Date.now(), status: 'ready', trigger, actor: actor || null
             })
@@ -272,11 +323,27 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run 
         const cancelled = !!(run && run.controller.signal.aborted);
         const reason = cancelled ? 'cancelled' : reasonFor(e);
 
+        // Quel commit vient d'echouer. `run.sha` existe des que le clone a
+        // abouti ; avant cela seul l'appelant qui a decide du deploiement le
+        // connait. Un abandon demande par l'operateur ne compte pas : le commit
+        // n'a pas ete juge, il a ete interrompu.
+        const failedSha = cancelled ? null : ((run && run.sha) || headSha || null);
+        const repeat = !!failedSha && failedSha === project.lastFailedSha;
+
         projectStore.saveProject(tenantPaths, Object.assign({}, project, {
             failureCount: (project.failureCount || 0) + 1,
             lastError: reason,
+            // Compte par commit, a cote de `failureCount` qui compte les echecs
+            // consecutifs quels qu'ils soient (un GitHub injoignable en fait
+            // partie). C'est celui-ci que `decide` lit, parce que la question
+            // qu'il pose est « ce commit-la a-t-il deja eu ses chances », pas
+            // « ce projet va-t-il mal ».
+            lastFailedSha: failedSha || project.lastFailedSha || null,
+            failedShaAttempts: failedSha
+                ? (repeat ? (project.failedShaAttempts || 0) + 1 : 1)
+                : (project.failedShaAttempts || 0),
             history: projectStore.addHistory(project, {
-                sha: null, at: Date.now(), status: cancelled ? 'cancelled' : 'failed',
+                sha: failedSha, at: Date.now(), status: cancelled ? 'cancelled' : 'failed',
                 error: reason, trigger, actor: actor || null
             })
         }));
