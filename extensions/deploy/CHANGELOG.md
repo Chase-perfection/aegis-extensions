@@ -2,6 +2,23 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.1.1
+
+`Create-BuildAccounts.ps1` runs again on a real install. It reached
+machineStore.js by walking five levels up from itself to a `backend` folder,
+which only existed while the extension lived inside the Aegis tree. On an
+install the extension is unpacked under ProgramData, so that path resolved to
+nothing and the script failed with a Node stack about a missing module, naming
+neither itself nor the move that broke it. It now loads the machineStore sitting
+beside it, which needs no node_modules and no path into the Aegis install.
+
+This is the script that creates the sandbox accounts, so until now the node
+runtime could not be enabled on any install that took Deploy from the store.
+
+The generated account password no longer travels as an argument to `node`, where
+anyone able to list processes could read it, but through the environment of that
+one call.
+
 ## 0.1.0
 
 The extension now ships from the extension repository rather than from the Aegis

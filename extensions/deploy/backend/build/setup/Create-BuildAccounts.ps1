@@ -5,10 +5,10 @@ runtime is being enabled: a running application needs accounts of its own
 (AEGIS_RUNTIME_ACCOUNTS), not the build pool's. Creates 3 restricted local accounts, each
 scoped by NTFS ACL to its own workspace folder, and 2 outbound firewall
 rules per account (deny the domain/RFC1918, allow only 443/80/53). Passwords
-are generated here and handed to machineStore.js for encrypted storage --
-run this from a shell where `node` can reach the Aegis backend's
-node_modules, since it shells out to Node once per account to store the
-secret.
+are generated here and handed to machineStore.js for encrypted storage. It
+shells out to Node once per account to do that, and machineStore requires
+nothing but Node built-ins, so `node` on PATH is the only requirement: no
+node_modules, and no path into the Aegis install.
 
 Re-running is safe: an account or rule that already exists is left alone,
 not recreated.
@@ -28,7 +28,6 @@ Examples:
 param(
     [string[]]$AccountNames = @('aegis-build-01', 'aegis-build-02', 'aegis-build-03'),
     [string]$WorkspaceRoot = (Join-Path $env:ProgramData 'Aegis\deploy-build'),
-    [string]$BackendDir = (Join-Path $PSScriptRoot '..\..\..\..\..\backend'),
     [string[]]$DomainSubnets = @(),  # e.g. '10.0.0.0/8' -- pass the AD subnet(s) explicitly, this script does not guess them
 
     # Grant the accounts read+execute on a machine-wide Python, so a project
@@ -134,6 +133,19 @@ function New-RandomPassword {
     -join ((1..24) | ForEach-Object { [char]((48..57) + (65..90) + (97..122) + (33, 35, 36, 37) | Get-Random) })
 }
 
+# machineStore lives beside this script, inside the extension: setup -> build ->
+# backend. Reached from here rather than through the Aegis install, which is what
+# makes this work now that an extension is unpacked under ProgramData instead of
+# sitting in the Aegis tree. The old path walked five levels up to a `backend`
+# folder that existed only in the pre-move layout, so on any real install it
+# resolved to nothing and the failure surfaced as a Node stack about a missing
+# module, naming neither this script nor the move that broke it.
+$machineStore = Join-Path $PSScriptRoot '..\..\machineStore.js'
+if (-not (Test-Path $machineStore)) {
+    throw "machineStore.js not found at $machineStore -- this script must stay inside the extension, two levels under its backend/."
+}
+$machineStore = (Resolve-Path $machineStore).Path -replace '\\', '/'
+
 foreach ($name in $AccountNames) {
     $workspace = Join-Path $WorkspaceRoot $name
 
@@ -151,10 +163,17 @@ foreach ($name in $AccountNames) {
         Add-Content "$env:TEMP\secpol.cfg" "`nSeDenyInteractiveLogonRight = $sid`nSeDenyRemoteInteractiveLogonRight = $sid`n"
         secedit /configure /db secedit.sdb /cfg "$env:TEMP\secpol.cfg" /areas USER_RIGHTS | Out-Null
 
-        node -e "
-            const ms = require('$($BackendDir -replace '\\', '/')/../extensions/deploy/backend/machineStore');
-            ms.saveBuildAccountSecret('$name', '$password');
-        "
+        # Through the environment, not on the command line. An argument to node
+        # is readable by anyone who can list processes, and the restricted
+        # accounts this script creates are exactly who must not read it.
+        $env:AEGIS_ACCOUNT_NAME = $name
+        $env:AEGIS_ACCOUNT_SECRET = $password
+        try {
+            node -e "require('$machineStore').saveBuildAccountSecret(process.env.AEGIS_ACCOUNT_NAME, process.env.AEGIS_ACCOUNT_SECRET);"
+            if ($LASTEXITCODE -ne 0) { throw "storing the password for $name failed" }
+        } finally {
+            Remove-Item Env:AEGIS_ACCOUNT_NAME, Env:AEGIS_ACCOUNT_SECRET -ErrorAction SilentlyContinue
+        }
         Write-Host "Created account $name and stored its password"
     } else {
         Write-Host "Account $name already exists, leaving it alone"
