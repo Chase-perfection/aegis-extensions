@@ -39,6 +39,8 @@ index.json                          the catalogue Aegis fetches
 catalog.schema.json                 JSON Schema for index.json
 CONTRACT.md                         field contract, versioning, trust model,
                                     and what an extension may import
+WRITING-AN-EXTENSION.md             how to plug one into Aegis, and the parts
+                                    that are easy to get wrong
 PUBLISHING.md                       how to cut an extension release
 package.json                        the test command. No dependencies
 scripts/build-index.mjs             regenerates index.json from the store.json files
@@ -179,9 +181,12 @@ One folder, `extensions/<id>/`, where `<id>` matches the folder name, the `id` i
 folder disagree, so the store keeps the same rule.
 
 `extension.json` and a backend entry point are the minimum the loader will mount;
-`store.json` is what puts it in the catalogue. Read
-[CONTRACT.md](CONTRACT.md) for the fields and for what an extension may import,
-then [PUBLISHING.md](PUBLISHING.md) for the release.
+`store.json` is what puts it in the catalogue.
+
+Start with [WRITING-AN-EXTENSION.md](WRITING-AN-EXTENSION.md), which walks the
+manifest, the deps object, the host opt-in, the provisioning phases and the dev
+loop in the order you meet them. [CONTRACT.md](CONTRACT.md) is the field-by-field
+reference behind it, and [PUBLISHING.md](PUBLISHING.md) is the release.
 
 No template and no generator. `extensions/deploy/` is the worked example, and it is
 the only one so far, so there is nothing yet to abstract from.

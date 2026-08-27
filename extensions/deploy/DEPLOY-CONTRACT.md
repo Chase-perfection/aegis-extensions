@@ -1,5 +1,9 @@
 # What Aegis Deploy serves, and what a repository must contain
 
+For the short version, and an honest account of what Deploy is good at and where
+it stops, read [ADDING-A-SITE.md](ADDING-A-SITE.md) first. This file is the
+reference behind it.
+
 Aegis clones one branch and serves it. What that means depends on the project:
 files by default, or a process it starts and proxies to when the project has a
 start command and the host allows one.
