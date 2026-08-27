@@ -25,8 +25,6 @@ The mechanism is core's and belongs to no version: an extension declares
 `provision` in its manifest and owns a prepare phase and an enable phase. Aegis
 runs the first at every install and the second when an administrator asks.
 
-## 0.1.1
-
 `Create-BuildAccounts.ps1` runs again on a real install. It reached
 machineStore.js by walking five levels up from itself to a `backend` folder,
 which only existed while the extension lived inside the Aegis tree. On an
