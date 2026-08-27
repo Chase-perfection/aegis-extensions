@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## 0.2.0
+## 0.1.1
 
 Deploy sets itself up on the host. Installing it now creates the sandbox
 accounts, their ACLs and their firewall rules, and works out which subnets to
