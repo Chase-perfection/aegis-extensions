@@ -2,13 +2,14 @@
   "id": "deploy",
   "name": "Deploy",
   "version": 1,
-  "release": "0.1.1",
+  "release": "0.2.0",
   "page": "deploy.html",
   "icon": "network",
   "labelKey": "nav_deploy",
   "descKey": "desc_deploy",
   "routePrefixes": ["/api/deploy"],
   "backend": "backend/routes.js",
+  "provision": "backend/build/setup/Provision.ps1",
   "requiresHostOptIn": true,
   "signature": null
 }

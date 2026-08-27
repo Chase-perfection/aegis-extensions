@@ -768,12 +768,34 @@ two host-level locks and not a form field:
 | `AEGIS_DEPLOY_RUNTIME=1` | The host allows application processes at all. Set in the service's environment, like `AEGIS_DEPLOY_ENABLED` |
 | `AEGIS_RUNTIME_ACCOUNTS` | The restricted local accounts a process may run as, comma separated. Empty means the runtime is off whatever the flag says |
 
-The accounts are separate names from the build pool, created the same way
-(`backend/build/setup/Create-BuildAccounts.ps1 -AccountNames aegis-run-01,...`).
-A build borrows a slot for two minutes; a running application holds one until its
-project is deleted, so sharing the pool would mean one project starving every
-build on the install. The count of accounts is the count of projects that can run
-a process, and the refusal (`no_runtime_account`) says so.
+Both are written for you, and neither is written without you asking.
+
+Installing Deploy runs its own setup step as the Aegis service: it creates the
+sandbox accounts, scopes each to its own folder, writes their outbound firewall
+rules, and works out which subnets to deny by looking at the interfaces that
+carry the domain. It does not touch either lock. Nothing about a deployed
+project changes until the next paragraph happens.
+
+The lock is the button. **Finish setup on this host**, on the Deploy card in the
+extension store, is what writes `AEGIS_DEPLOY_RUNTIME=1` and
+`AEGIS_RUNTIME_ACCOUNTS` into the service's own environment, and it applies from
+the next service restart. An administrator clicks it once. There is no
+PowerShell to open, no subnet to look up, and no environment variable to set by
+hand -- that used to be the instruction, and it was one no customer was ever
+going to follow.
+
+What has not changed is what the click means. Allowing application processes on
+a server that holds directory audit data is a change-management decision, and it
+is still taken deliberately, by a named administrator, in a step of its own. The
+procedure was automated; the decision was not.
+
+The accounts are separate names from the build pool. A build borrows a slot for
+two minutes; a running application holds one until its project is deleted, so
+sharing the pool would mean one project starving every build on the install. The
+count of accounts is the count of projects that can run a process, and the
+refusal (`no_runtime_account`) says so. Two are created by default; running
+`backend/build/setup/Provision.ps1 -Phase prepare -RuntimeAccounts a,b,c` by hand
+makes more.
 
 A project asks for one by having a start command. There is no separate switch:
 the command is the reason, and a radio button beside it would be a second way to

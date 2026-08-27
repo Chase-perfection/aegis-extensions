@@ -2,6 +2,29 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.0
+
+Deploy sets itself up on the host. Installing it now creates the sandbox
+accounts, their ACLs and their firewall rules, and works out which subnets to
+deny by looking at the interfaces that carry the domain instead of asking. When
+an administrator clicks "Finish setup on this host" on the extension card, the
+application runtime is switched on: the two environment variables the service
+needs are written into its own environment, and the restart notice says so.
+
+What this replaces: an administrator opening PowerShell, knowing the subnet of
+their own Active Directory, and setting two machine environment variables by
+hand. Aegis ships to customers who will do none of those three, so the runtime
+was a feature only its author could reach.
+
+What it deliberately does not do is turn the runtime on by itself. Installing an
+extension is not the same sentence as allowing application code to run on a
+server that holds directory audit data, and `DEPLOY-CONTRACT.md` calls that a
+change-management decision. The procedure is gone; the decision is a click.
+
+The mechanism is core's and belongs to no version: an extension declares
+`provision` in its manifest and owns a prepare phase and an enable phase. Aegis
+runs the first at every install and the second when an administrator asks.
+
 ## 0.1.1
 
 `Create-BuildAccounts.ps1` runs again on a real install. It reached
