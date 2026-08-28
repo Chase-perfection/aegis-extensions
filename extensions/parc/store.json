@@ -6,6 +6,7 @@
   "icon": "server",
   "page": "parc.html",
   "category": "Inventory",
+  "image": "card.png",
   "manifestVersion": 1,
   "routePrefixes": [
     "/api/equipment"

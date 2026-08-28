@@ -6,6 +6,7 @@
   "icon": "network",
   "page": "network-inventory.html",
   "category": "Inventory",
+  "image": "card.png",
   "manifestVersion": 1,
   "routePrefixes": [
     "/api/inventory"
