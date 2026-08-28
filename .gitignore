@@ -8,6 +8,11 @@
 *.key
 *.pfx
 
+# The local half of the release pipeline. It reaches for the signing key and for
+# an Aegis checkout beside this one, so it is a maintainer-machine tool and not
+# part of what this repository publishes.
+/scripts/local/
+
 node_modules/
 
 # Socle workspace : present sur disque pour _workspace/tools/scan.py, hors du
