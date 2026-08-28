@@ -1420,7 +1420,7 @@ async function lookup(config, username) {
  */
 async function searchUsers(config, query) {
     const q = String(query === undefined || query === null ? '' : query).trim();
-    if (q.length < 2 || /[ -]/.test(q)) return { ok: true, users: [] };
+    if (q.length < 2 || /[\u0000-\u001f\u007f]/.test(q)) return { ok: true, users: [] };
 
     let state = null;
     try {
