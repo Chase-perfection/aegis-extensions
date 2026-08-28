@@ -38,33 +38,67 @@ still only cloned and served, exactly as before.
 | `git` on the PATH | `git --version` |
 | Outbound HTTPS to github.com | No inbound access is needed |
 | A free port from 3081 up | `AEGIS_SITES_PORT_BASE` moves the range, 100 ports wide |
-| Reachable from other machines | `AEGIS_DEPLOY_FIREWALL=1`, and the service running elevated. Off by default, and not written for you by the install: opening a port on a machine holding AD audit data is a decision the host takes, not one an extension takes on its behalf. Without it a site binds `0.0.0.0` and answers on the machine itself, and the packets from anywhere else are dropped before they reach it, which a browser reports as a timeout rather than as a refusal. See **Reaching a site from another machine** |
+| Reachable from other machines | `AEGIS_DEPLOY_FIREWALL=1`, written for you by **Finish setup on this host** on the Deploy card, and the service running elevated. Without it a site binds `0.0.0.0` and answers on the machine itself, while the packets from anywhere else are dropped before they reach it, which a browser reports as a timeout rather than as a refusal. See **Reaching a site from another machine** |
 
 ### Reaching a site from another machine
 
 A site listens on `0.0.0.0`, which is what makes it reachable, and on Windows
-that is only half of it: the host firewall drops the packets first. With
-`AEGIS_DEPLOY_FIREWALL=1` Deploy opens one inbound TCP rule per project, on the
-port that project was actually given, named `Aegis Deploy site: <slug>/<id>` and
-grouped under `Aegis Deploy`. The rule is created when the site starts, removed
-when the project is deleted, and the whole set is reconciled against the records
-at every boot, which is the only thing that catches a project deleted while the
-service was stopped.
+that is only half of it: the host firewall drops the packets first. The failure
+that produces is the most expensive one in the product, because it looks like
+the wrong thing. A closed port answers with a reset and the browser says the
+connection was refused; a firewall says nothing at all and the browser says the
+site timed out, which reads as the site being down. The application is fine and
+nothing points at the network.
 
-Two variables shape it, both read from the service's environment and neither
-reachable from a browser:
+So Deploy opens one inbound TCP rule per project, on the port that project was
+actually given, named `Aegis Deploy site: <slug>/<id>` and grouped under
+`Aegis Deploy`. It is created when the site starts, removed when the project is
+deleted or a preview expires, and the whole set is reconciled against the
+records at every boot, which is the only thing that catches a project deleted
+while the service was stopped.
 
-| Variable | Default | What it does |
-|---|---|---|
-| `AEGIS_DEPLOY_FIREWALL_SCOPE` | `LocalSubnet` | Who may reach a site. `LocalSubnet` is the Windows primitive for the networks this machine is on, so it needs no subnet arithmetic and stays correct on a host that is not yours. Takes an address, a CIDR block, a range, one of the named scopes, or a comma-separated list: `192.168.0.0/16` for a domain that spans subnets. A value Windows would not take falls back to `LocalSubnet` with a line in the log, because falling back to the narrow answer is the direction that cannot expose anything |
-| `AEGIS_DEPLOY_FIREWALL_PROFILE` | `Domain,Private` | Which firewall profiles the rule applies to. `Public` is the profile a machine uses on a network it does not trust, so reaching it takes naming it |
+**Nothing to type.** `AEGIS_DEPLOY_FIREWALL=1` is written by the same
+**Finish setup on this host** button that turns the application runtime on, in
+the extension store, on the Deploy card. That button already runs Deploy's setup
+step as the service, and this rides along with it rather than asking for a
+second decision: a site binds `0.0.0.0` whatever the answer is, so the rule
+grants no reach that creating the project did not already ask for. It only stops
+the packets from being dropped on the way to a listener that is already there.
+
+**Which networks is a separate question, and it has a screen.** The Domains pane
+says whether sites are reachable and from where, and changes it. The value is
+stored rather than kept in the environment, so it takes effect at once: the SCM
+caches a service's environment at boot, which would have meant a service restart
+to answer a question about a VLAN.
+
+| Value | Means |
+|---|---|
+| `LocalSubnet` (the default) | The networks this machine is on. The pane prints them next to the field, so widening the scope is a decision made against the real numbers rather than a guess |
+| `192.168.0.0/16` | A domain that spans subnets. Takes an address, a CIDR block, a range, or a comma-separated list of those |
+| `Any` | Every network the machine is attached to. Accepted, never a default, and worth saying out loud on a server that holds directory audit data |
+
+A value the firewall would not take is refused by the form rather than stored,
+and a value that reaches the rule writer unusable falls back to `LocalSubnet`.
+Both fall towards less reach, never more: a typo must not be the reason a site
+becomes visible from somewhere nobody intended.
+
+`AEGIS_DEPLOY_FIREWALL_SCOPE` in the service environment still wins when it is
+set, on the same pattern as `AEGIS_PUBLIC_URL`: the environment is the escape
+hatch for a host built by a script, and the pane is what a person uses. When it
+is set the pane shows the value and disables the field, rather than offering one
+whose contents would be ignored.
+
+Profiles are Domain and Private, and `AEGIS_DEPLOY_FIREWALL_PROFILE` changes
+them. `Public` is the profile a machine uses on a network it does not trust, so
+reaching it takes naming it.
 
 A rule that cannot be created never fails a deployment. The site comes up, the
 refusal is logged with the reason and with the command to run by hand, and an
 operator gets a site that is up and unreachable rather than a deployment rolled
 back by a firewall call. On anything that is not Windows this does nothing at
 all, which is the right answer behind a reverse proxy or a load balancer: the
-local firewall is not the door there.
+local firewall is not the door there, and the Domains pane says so instead of
+offering a setting that would do nothing.
 
 ## Access to the repository
 

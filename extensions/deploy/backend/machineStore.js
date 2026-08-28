@@ -174,6 +174,41 @@ function publicBaseUrl() {
     }
 }
 
+/**
+ * The networks allowed to reach a deployed site.
+ *
+ * Stored rather than left in the environment, and read on every call, because
+ * this is the one host setting an operator changes after the fact: a new VLAN,
+ * a site move, a domain that turns out to span subnets. The SCM caches a
+ * service's environment at boot, so an environment variable would mean a
+ * service restart to answer a question the Domains pane can answer in a click.
+ *
+ * `AEGIS_DEPLOY_FIREWALL_SCOPE` still wins when it is set, on the same pattern
+ * as `publicBaseUrl` above: the environment is the escape hatch for a host
+ * built by a script, the store is what the interface writes.
+ *
+ * `LocalSubnet` is the default and the Windows primitive for "the networks this
+ * machine is on", so an install that never opens this pane is already scoped to
+ * the operator's own network rather than to everything.
+ */
+function siteNetwork() {
+    const raw = process.env.AEGIS_DEPLOY_FIREWALL_SCOPE || readRaw().siteNetwork || '';
+    return String(raw).trim() || 'LocalSubnet';
+}
+
+/** True when the environment holds it, in which case the pane cannot change it. */
+function siteNetworkIsPinned() {
+    return !!String(process.env.AEGIS_DEPLOY_FIREWALL_SCOPE || '').trim();
+}
+
+function saveSiteNetwork(value) {
+    const all = readRaw();
+    const v = String(value === undefined || value === null ? '' : value).trim();
+    if (v) all.siteNetwork = v; else delete all.siteNetwork;
+    writeRaw(all);
+    return siteNetwork();
+}
+
 /** `webhook` when GitHub can reach us, `poll` otherwise. See the plan. */
 function detectionPath() {
     return publicBaseUrl() ? 'webhook' : 'poll';
@@ -347,6 +382,7 @@ function getBuildAccountSecret(accountName) {
 
 module.exports = {
     isEnabled, publicBaseUrl, detectionPath,
+    siteNetwork, siteNetworkIsPinned, saveSiteNetwork,
     getGitHubApp, saveGitHubApp, clearGitHubApp, migrateLegacyGitHubApp, publicStatus,
     saveBuildAccountSecret, getBuildAccountSecret,
     encrypt, decrypt,

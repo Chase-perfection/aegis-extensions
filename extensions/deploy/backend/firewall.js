@@ -45,6 +45,7 @@
 const { execFile } = require('child_process');
 
 const projectStore = require('./projectStore');
+const machineStore = require('./machineStore');
 
 /** The rule group. Every rule this file owns carries it; nothing else does. */
 const GROUP = 'Aegis Deploy';
@@ -100,16 +101,29 @@ function enabled() {
 const SCOPE_WORD = /^(LocalSubnet|Any|DNS|DHCP|WINS|DefaultGateway|Internet|Intranet)$/i;
 const SCOPE_ADDR = /^[0-9a-f.:]{2,45}(\/\d{1,3})?(-[0-9a-f.:]{2,45})?$/i;
 
+/**
+ * Splits and checks a scope, or returns null when it is not one.
+ *
+ * Exported so the route that saves it refuses at the point the operator can
+ * still see the field, rather than storing something that quietly becomes
+ * `LocalSubnet` here and leaves the pane showing a value nothing honours.
+ */
+function parseScope(raw) {
+    const parts = String(raw === undefined || raw === null ? '' : raw)
+        .split(',').map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return null;
+    if (!parts.every((p) => SCOPE_WORD.test(p) || SCOPE_ADDR.test(p))) return null;
+    return parts;
+}
+
 function scope() {
-    const raw = String(process.env.AEGIS_DEPLOY_FIREWALL_SCOPE || '').trim();
-    if (!raw) return ['LocalSubnet'];
-    const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
-    const good = parts.every((p) => SCOPE_WORD.test(p) || SCOPE_ADDR.test(p));
-    if (!parts.length || !good) {
-        console.warn(`[Deploy] firewall: AEGIS_DEPLOY_FIREWALL_SCOPE="${raw}" is not a scope Windows takes; using LocalSubnet`);
+    const raw = machineStore.siteNetwork();
+    const parsed = parseScope(raw);
+    if (!parsed) {
+        console.warn(`[Deploy] firewall: "${raw}" is not a scope Windows takes; using LocalSubnet`);
         return ['LocalSubnet'];
     }
-    return parts;
+    return parsed;
 }
 
 /**
@@ -328,7 +342,7 @@ async function reconcile({ pathsFor, tenantsRoot }) {
 }
 
 module.exports = {
-    enabled, supported, ensureFor, removeFor, reconcile,
+    enabled, supported, ensureFor, removeFor, reconcile, parseScope,
     // Test seams. Nothing outside tests/deployFirewall.test.js reaches for them.
     _setRunner,
     _ruleName: ruleName,

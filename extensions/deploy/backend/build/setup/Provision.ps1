@@ -159,11 +159,25 @@ if ($missing.Count) {
     exit 1
 }
 
+# Opening the port a site already listens on rides along with this click, and
+# does not get a second one.
+#
+# A site binds 0.0.0.0 whatever this says: the listener is the exposure, and the
+# firewall rule only stops the packets from being dropped on the way to it. So
+# this grants no reach that creating the project did not already ask for, and
+# withholding it produces the worst failure in the product: a site that is up,
+# correct, and reported by every browser as a timeout.
+#
+# What is worth a decision is *which* networks, and that is not settled here.
+# It defaults to LocalSubnet, the machine's own networks, and moves from the
+# Domains pane, where it can be read and changed without a service restart.
 $vars = @{
     AEGIS_DEPLOY_RUNTIME   = '1'
     AEGIS_RUNTIME_ACCOUNTS = ($RuntimeAccounts -join ',')
+    AEGIS_DEPLOY_FIREWALL  = '1'
 }
 Write-Output ("Allowing application processes under: " + ($RuntimeAccounts -join ', '))
+Write-Output 'Sites may open their port on this host, scoped to this machine networks. Change that in the Domains pane.'
 # The one line core reads. Everything else on stdout is for the install log.
 Write-Output (@{ env = $vars } | ConvertTo-Json -Compress)
 exit 0

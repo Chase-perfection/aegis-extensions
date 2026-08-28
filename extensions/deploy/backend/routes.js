@@ -28,6 +28,7 @@
 const crypto = require('crypto');
 const path = require('path');
 const machineStore = require('./machineStore');
+const os = require('os');
 const github = require('./github');
 const { verifySignature, createDeliveryCache, parsePush, MAX_BODY_BYTES } = require('./webhook');
 const projectStore = require('./projectStore');
@@ -292,6 +293,66 @@ function isProtectedRecord(project) {
  */
 function methodOfProject(project) {
     return authMethods.methodOf(project && project.auth);
+}
+
+/**
+ * The IPv4 networks this machine sits on, as CIDR.
+ *
+ * Shown next to the scope field so an operator widening it can read the answer
+ * instead of guessing it, which is the difference between typing
+ * `192.168.1.0/24` and typing `Any` because it was the only thing that worked.
+ *
+ * `os.networkInterfaces` and not a PowerShell call: this is a hint on a form,
+ * it runs on every status poll, and the standard library already knows.
+ * Loopback and the link-local range are dropped because neither is a network
+ * anybody reaches a site from.
+ */
+function localSubnets() {
+    const out = [];
+    let all;
+    try { all = os.networkInterfaces(); } catch (_) { return out; }
+    for (const name of Object.keys(all || {})) {
+        for (const ni of (all[name] || [])) {
+            if (!ni || ni.family !== 'IPv4' || ni.internal) continue;
+            if (/^169\.254\./.test(ni.address)) continue;
+            const bits = maskBits(ni.netmask);
+            if (bits === null) continue;
+            const cidr = `${networkAddress(ni.address, bits)}/${bits}`;
+            if (!out.some((o) => o.cidr === cidr)) out.push({ cidr, address: ni.address });
+        }
+    }
+    return out;
+}
+
+/** A dotted netmask as a prefix length, or null when it is not a netmask. */
+function maskBits(netmask) {
+    const parts = String(netmask || '').split('.');
+    if (parts.length !== 4) return null;
+    let bits = 0;
+    let seenZero = false;
+    for (const part of parts) {
+        const n = Number(part);
+        if (!Number.isInteger(n) || n < 0 || n > 255) return null;
+        for (let i = 7; i >= 0; i--) {
+            if ((n >> i) & 1) {
+                // A one after a zero is not a netmask, it is a bit pattern.
+                if (seenZero) return null;
+                bits++;
+            } else {
+                seenZero = true;
+            }
+        }
+    }
+    return bits;
+}
+
+function networkAddress(address, bits) {
+    const octets = address.split('.').map(Number);
+    if (octets.length !== 4 || octets.some((n) => !Number.isInteger(n))) return address;
+    const value = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+    const mask = bits === 0 ? 0 : (0xFFFFFFFF << (32 - bits)) >>> 0;
+    const net = (value & mask) >>> 0;
+    return [net >>> 24, (net >>> 16) & 255, (net >>> 8) & 255, net & 255].join('.');
 }
 
 function groupsOf(project) {
@@ -599,8 +660,65 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 // a feature: a process running application code on the audit
                 // server. The form only offers it when this is true.
                 runtimes: runtime.isEnabled()
+            },
+            // Why a site answers here and not from a colleague's machine. The
+            // pane renders this rather than assuming, because "the site is
+            // down" and "the firewall drops it" look identical in a browser and
+            // only one of them is something to fix in the application.
+            network: {
+                // Whether Aegis may touch the firewall at all. Granted on the
+                // host by the extension's own setup step, never from a browser.
+                managed: firewall.enabled(),
+                // `false` on a host where there is no local firewall to drive,
+                // which is the normal state behind a reverse proxy.
+                supported: firewall.supported(),
+                scope: machineStore.siteNetwork(),
+                // Set in the environment, so the pane shows it and does not
+                // offer a field that would be overridden on the next read.
+                pinned: machineStore.siteNetworkIsPinned(),
+                // What this machine is actually on, so an operator widening the
+                // scope can see the answer rather than guess it.
+                interfaces: localSubnets()
             }
         });
+    });
+
+    /**
+     * Changes the networks a deployed site answers to.
+     *
+     * Refused rather than coerced: a value that is not a scope would be stored,
+     * shown back in the pane, and silently ignored by the rule that gets
+     * written. Refusing keeps the field and the firewall saying the same thing.
+     *
+     * Applied at once. Every rule is rewritten against the new scope rather
+     * than waiting for the next boot, because an operator who has just narrowed
+     * who may reach their sites means now.
+     */
+    router.post('/api/deploy/network', requireOptIn, requireRole('admin'), async (req, res) => {
+        if (machineStore.siteNetworkIsPinned()) {
+            return res.status(409).json({ success: false, error: 'network_pinned' });
+        }
+        const wanted = (req.body && req.body.scope) !== undefined ? req.body.scope : '';
+        if (typeof wanted !== 'string' || wanted.length > 512) {
+            return res.status(400).json({ success: false, error: 'bad_network' });
+        }
+        const parsed = firewall.parseScope(wanted);
+        if (!parsed) return res.status(400).json({ success: false, error: 'bad_network' });
+
+        let scope;
+        try {
+            scope = machineStore.saveSiteNetwork(parsed.join(','));
+        } catch (e) {
+            console.error(`[Deploy] ${req.tenant.slug}: site network write failed: ${e.message}`);
+            return res.status(500).json({ success: false, error: 'network_write_failed' });
+        }
+
+        console.log(`[Deploy] ${req.tenant.slug}: sites reachable from ${scope}, set by ${req.user.email}`);
+        // Rewriting every rule is what makes the change take effect. Not
+        // awaited: the answer is about what was stored, and a firewall that is
+        // slow must not hold the form.
+        firewall.reconcile({ pathsFor, tenantsRoot }).catch(() => { });
+        return res.json({ success: true, network: { scope, managed: firewall.enabled() } });
     });
 
     // --- GitHub App registration (the manifest flow) ---------------------

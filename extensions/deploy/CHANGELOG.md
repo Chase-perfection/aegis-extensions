@@ -2,6 +2,58 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.1.6
+
+Making a site reachable is a click on a card and a field in a pane, not two
+environment variables and a service restart.
+
+0.1.5 opened the port. It also asked whoever installed Deploy to open PowerShell
+as an administrator, know the notation Windows expects for a subnet, set two
+machine environment variables and restart the service, which is the same
+sentence Deploy's own setup script was written to delete for the application
+runtime. Shipping a feature that only its author can turn on is shipping it to
+one person.
+
+**The switch is written by Finish setup on this host.** The button on the Deploy
+card in the extension store already runs the extension's setup step as the
+service and writes what it asks for; `AEGIS_DEPLOY_FIREWALL=1` now rides along
+with it. Nothing is typed and no core code learns that an extension called
+Deploy exists: the script says what it needs and core writes it, which is what
+`hostOptIn.setVars` was generalised for.
+
+It rides along rather than getting a decision of its own because it is not one.
+A site binds `0.0.0.0` whatever the answer is, so the rule grants no reach that
+creating the project did not already ask for. It stops the packets from being
+dropped on the way to a listener that is already there. Withholding it produces
+the most expensive failure in the product: a site that is up, correct, and
+reported by every browser as a timeout, because a firewall drops in silence
+where a closed port would have answered with a reset.
+
+**Which networks is a real decision, and it has a screen.** The Domains pane now
+opens with whether sites are reachable and from where. Three states, and each
+says what to do: no firewall for Aegis to drive, which is the normal answer
+behind a reverse proxy; reachable from this machine only, with the button to
+press; or reachable, with the networks and a field to change them.
+
+The field prints the networks this machine is actually on, read from the
+interfaces. Widening a scope is otherwise a guess, and the guess that always
+works is `Any`, which is the one nobody should make on a server holding
+directory audit data.
+
+**The scope moved out of the environment.** It is stored, and read on every rule
+that gets written, so a new VLAN or a site move takes effect when the form is
+submitted. As an environment variable it could not: the SCM caches a service's
+environment at boot, so changing which network may reach a site meant restarting
+the service that serves them. `AEGIS_DEPLOY_FIREWALL_SCOPE` still wins when it
+is set, on the same pattern as `AEGIS_PUBLIC_URL`, and the pane then shows the
+value and disables the field rather than offering one that would be ignored.
+
+Both refusals still fall towards less reach. The form rejects a value the
+firewall would not take, at the point the operator can still see the field, and
+a value that somehow reaches the rule writer unusable becomes `LocalSubnet`. A
+typo must not be the reason a site becomes visible from somewhere nobody
+intended.
+
 ## 0.1.5
 
 A deployed site is reachable from the other machines on the network, which is

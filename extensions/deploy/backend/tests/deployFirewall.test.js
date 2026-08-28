@@ -350,3 +350,75 @@ test('firewall: an answer that is not JSON is a refusal, not a crash', async () 
         });
     } finally { seeded.cleanup(); }
 });
+
+/* ------------------------------------------------------------------ */
+/* the scope, now that it is stored rather than an environment value   */
+/* ------------------------------------------------------------------ */
+
+test('firewall: parseScope accepts what Windows accepts and nothing else', () => {
+    // Exported so the route refuses at the point the operator can still see the
+    // field. Storing a value that quietly becomes LocalSubnet later would leave
+    // the pane showing a network nothing honours.
+    assert.deepStrictEqual(firewall.parseScope('LocalSubnet'), ['LocalSubnet']);
+    assert.deepStrictEqual(firewall.parseScope('192.168.0.0/16'), ['192.168.0.0/16']);
+    assert.deepStrictEqual(firewall.parseScope('10.0.0.0/8, 192.168.1.5-192.168.1.9'),
+        ['10.0.0.0/8', '192.168.1.5-192.168.1.9']);
+
+    for (const bad of ['', '   ', 'everyone', 'Local Subnet', '192.168.0.0/16; Any',
+        "'; Remove-Item C:\ #", 'LocalSubnet & calc']) {
+        assert.strictEqual(firewall.parseScope(bad), null, `refused: ${JSON.stringify(bad)}`);
+    }
+});
+
+test('firewall: the stored network is what a rule is written with', async () => {
+    // The setting moved out of the environment so that changing it takes effect
+    // without a service restart: the SCM caches a service's environment at boot.
+    const machineStore = require('../machineStore');
+    const before = machineStore.siteNetwork();
+    try {
+        machineStore.saveSiteNetwork('10.9.0.0/16');
+        await withFirewall(withRules([]), async (scripts) => {
+            await muffle('log', async () => firewall.ensureFor('acme', 'kpi', 3081));
+            const add = scripts.find((s) => s.includes('New-NetFirewallRule'));
+            assert.match(add, /-RemoteAddress 10\.9\.0\.0\/16/);
+        });
+    } finally {
+        machineStore.saveSiteNetwork(before === 'LocalSubnet' ? '' : before);
+    }
+});
+
+test('firewall: the environment still beats the stored value', async () => {
+    // The escape hatch for a host built by a script, on the same pattern as
+    // publicBaseUrl. The pane shows it and disables the field rather than
+    // offering one whose value would be ignored on the next read.
+    const machineStore = require('../machineStore');
+    const before = machineStore.siteNetwork();
+    try {
+        machineStore.saveSiteNetwork('10.9.0.0/16');
+        await withEnv('AEGIS_DEPLOY_FIREWALL_SCOPE', '172.16.0.0/12', () => {
+            assert.strictEqual(machineStore.siteNetwork(), '172.16.0.0/12');
+            assert.strictEqual(machineStore.siteNetworkIsPinned(), true);
+            assert.deepStrictEqual(firewall._scope(), ['172.16.0.0/12']);
+        });
+        assert.strictEqual(machineStore.siteNetworkIsPinned(), false,
+            'unset, the stored value comes back');
+        assert.strictEqual(machineStore.siteNetwork(), '10.9.0.0/16');
+    } finally {
+        machineStore.saveSiteNetwork(before === 'LocalSubnet' ? '' : before);
+    }
+});
+
+test('firewall: a stored value that is not a scope narrows rather than widens', async () => {
+    // Hand-edited into the store, or left by an older build. The direction of
+    // the fallback is the whole point: never towards more reach.
+    const machineStore = require('../machineStore');
+    const before = machineStore.siteNetwork();
+    try {
+        machineStore.saveSiteNetwork('anything at all');
+        await muffle('warn', () => {
+            assert.deepStrictEqual(firewall._scope(), ['LocalSubnet']);
+        });
+    } finally {
+        machineStore.saveSiteNetwork(before === 'LocalSubnet' ? '' : before);
+    }
+});

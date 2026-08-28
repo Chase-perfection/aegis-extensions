@@ -1402,6 +1402,36 @@ button.dep-listrow {
    A list of rows and not chips like .dep-auth-groups above, because each row
    carries a decision: the Administrator tick. A chip is a value you remove; a
    row is a value you edit, and these are edited. */
+/* Whether a site is reachable, at the top of the Domains pane.
+
+   The "off" line is the one that has to be read, because the state it names is
+   indistinguishable from a broken site in a browser. It gets the warning wash
+   the sidebar counts already use, not a colour of its own. */
+.dep-net {
+    padding-bottom: var(--space-md);
+    margin-bottom: var(--space-md);
+    border-bottom: 1px solid var(--dep-line);
+}
+
+.dep-net-warn {
+    margin: 0 0 var(--space-xs);
+    padding: var(--space-sm);
+    color: var(--ag-warning, #a35c00);
+    background: var(--ag-warning-wash-alt, #fdf7ec);
+    border: 1px solid var(--ag-warning-border, #f0d9a8);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+}
+
+/* Reachable is the normal state, so it is a sentence and not a badge. The
+   network itself is the part being read, hence the tabular figures. */
+.dep-net-on {
+    margin: 0 0 var(--space-sm);
+    color: var(--text-main);
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+}
+
 .dep-auth-site-people {
     margin-bottom: var(--space-md);
 }

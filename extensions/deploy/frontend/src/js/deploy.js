@@ -91,6 +91,8 @@
 
     /** The registered App, from the status call. Read when linking to GitHub. */
     var appInfo = null;
+    /** What /api/deploy/status said about who can reach a site. */
+    var networkInfo = null;
 
     /** The last project list the server sent, so a pane can repaint without refetching. */
     var projects = [];
@@ -3582,10 +3584,128 @@
      * row as the name is the point: a name only resolves once somebody has added
      * the DNS record, and this page cannot know whether they have.
      */
+    /**
+     * Whether a site is reachable from anywhere but this machine, and from where.
+     *
+     * First thing in the Domains pane, because it is the first question asked by
+     * whoever opens it. A site that binds its port and is dropped by the host
+     * firewall looks exactly like a site that is down: the browser reports a
+     * timeout, not a refusal, so nothing in it points at the firewall. Naming
+     * the state here is the difference between reading one line and spending an
+     * afternoon in an application that was working the whole time.
+     */
+    function renderNetworkBlock(box) {
+        var net = networkInfo || {};
+        var block = el('div', 'dep-net');
+        block.appendChild(el('h2', 'dep-auth-site-sub', tr('deploy_net_title', 'Reachability')));
+
+        if (net.supported === false) {
+            // No local firewall to drive. True behind a reverse proxy or a load
+            // balancer, where whatever sits in front decides and Aegis does not.
+            block.appendChild(el('p', 'dep-hint', tr('deploy_net_unsupported',
+                'This host has no firewall Aegis drives. A site answers as soon as whatever sits in front of it allows the port.')));
+            box.appendChild(block);
+            return;
+        }
+
+        if (!net.managed) {
+            var off = el('p', 'dep-net-warn', tr('deploy_net_off',
+                'Sites answer on this machine only. From another machine the port is dropped, which a browser reports as a timeout and reads as the site being down.'));
+            block.appendChild(off);
+            block.appendChild(el('p', 'dep-hint', tr('deploy_net_off_fix',
+                'To open it, go to the extension store and use "Finish setup on this host" on the Deploy card. It is a decision taken on the host, not from here.')));
+            box.appendChild(block);
+            return;
+        }
+
+        var line = el('p', 'dep-net-on', tr('deploy_net_on', 'Sites are reachable from $1.')
+            .replace('$1', net.scope || 'LocalSubnet'));
+        block.appendChild(line);
+
+        var label = el('label', 'dep-label', tr('deploy_net_scope', 'Networks allowed'));
+        label.setAttribute('data-i18n', 'deploy_net_scope');
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'dep-input';
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+        input.value = net.scope || 'LocalSubnet';
+        input.id = 'deploy-net-scope';
+        label.htmlFor = input.id;
+        // Pinned in the service environment beats anything written here, so the
+        // field is shown and disabled rather than hidden: an operator has to be
+        // able to see the value that is winning.
+        input.disabled = !isAdmin || !!net.pinned;
+        block.appendChild(label);
+        block.appendChild(input);
+
+        if (net.pinned) {
+            block.appendChild(el('p', 'dep-hint', tr('deploy_net_pinned',
+                'Set in the service environment by AEGIS_DEPLOY_FIREWALL_SCOPE, so this field cannot change it.')));
+            box.appendChild(block);
+            return;
+        }
+
+        // What this machine is actually on. Without it, widening the scope is a
+        // guess, and the guess that always works is the one nobody should make.
+        var seen = (net.interfaces || []).map(function (i) { return i.cidr; });
+        block.appendChild(el('p', 'dep-hint', seen.length
+            ? tr('deploy_net_hint', 'LocalSubnet means the networks this machine is on: $1. Widen it for a domain that spans subnets, for example 192.168.0.0/16. Comma separated.')
+                .replace('$1', seen.join(', '))
+            : tr('deploy_net_hint_bare',
+                'LocalSubnet means the networks this machine is on. Widen it for a domain that spans subnets, for example 192.168.0.0/16. Comma separated.')));
+
+        var save = el('button', 'dep-btn dep-btn-ghost dep-btn-small', tr('deploy_net_save', 'Apply'));
+        save.type = 'button';
+        save.disabled = !isAdmin;
+        var note = el('p', 'dep-auth-site-note', '');
+        note.hidden = true;
+
+        save.addEventListener('click', function () {
+            save.disabled = true;
+            note.hidden = false;
+            note.textContent = tr('deploy_auth_working', 'Saving.');
+            var code = 0;
+            window.api('/api/deploy/network', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scope: input.value })
+            })
+                .then(function (r) { code = r.status; return readJson(r, 'site network'); })
+                .then(function (data) {
+                    save.disabled = !isAdmin;
+                    if (data && data.success) {
+                        networkInfo = Object.assign({}, networkInfo, data.network || {});
+                        note.textContent = tr('deploy_net_applied',
+                            'Saved. Every open port was rewritten to match.');
+                        line.textContent = tr('deploy_net_on', 'Sites are reachable from $1.')
+                            .replace('$1', networkInfo.scope);
+                        return undefined;
+                    }
+                    note.textContent = (data && data.error === 'bad_network')
+                        ? tr('deploy_net_bad', 'That is not a network. Use LocalSubnet, an address, a CIDR block or a range, separated by commas.')
+                        : tr('deploy_net_failed', 'Aegis refused the change ($1).').replace('$1', String((data && data.error) || code));
+                    return undefined;
+                })
+                .catch(function (e) {
+                    save.disabled = !isAdmin;
+                    note.textContent = tr('deploy_auth_unreachable',
+                        'Aegis did not answer. Check the backend is running, then reload this page.');
+                    console.error('[Deploy] site network failed:', e);
+                });
+        });
+
+        block.appendChild(save);
+        block.appendChild(note);
+        box.appendChild(block);
+    }
+
     function renderDomainsPane() {
         var box = document.getElementById('deploy-domains-pane');
         if (!box) return;
         box.textContent = '';
+
+        renderNetworkBlock(box);
 
         var all = [];
         projects.forEach(function (project) {
@@ -4950,6 +5070,7 @@
                     return null;
                 }
                 appInfo = data.github || null;
+                networkInfo = data.network || null;
                 // A process running application code on this server is a host
                 // decision, so the field only exists where the answer is yes.
                 var runtimeRow = document.getElementById('deploy-new-runtime-row');
