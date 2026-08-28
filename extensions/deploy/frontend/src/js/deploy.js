@@ -4008,6 +4008,28 @@
             wrap.appendChild(methodLabel);
             wrap.appendChild(methodSelect);
 
+            // Who gets in, asked before the two lists that answer it. An
+            // operator reads this row top to bottom, and "only the people
+            // below" has to be a visible choice rather than something inferred
+            // from having typed in a field further down.
+            var audienceLabel = el('label', 'dep-label', tr('deploy_auth_audience', 'Who may sign in'));
+            audienceLabel.setAttribute('data-i18n', 'deploy_auth_audience');
+            var audienceSelect = document.createElement('select');
+            audienceSelect.className = 'dep-input';
+            audienceSelect.id = 'deploy-auth-audience-' + site.id;
+            audienceLabel.htmlFor = audienceSelect.id;
+            audienceSelect.disabled = !isAdmin;
+            [['directory', 'deploy_auth_audience_directory', 'Anyone the directory authenticates'],
+             ['listed', 'deploy_auth_audience_listed', 'Only the groups and people listed below']
+            ].forEach(function (row) {
+                var opt = document.createElement('option');
+                opt.value = row[0];
+                opt.textContent = tr(row[1], row[2]);
+                opt.setAttribute('data-i18n', row[1]);
+                if (row[0] === (site.audience || 'directory')) opt.selected = true;
+                audienceSelect.appendChild(opt);
+            });
+
             // Short label, sentence underneath: .dep-label is uppercase and
             // letter-spaced, which a whole sentence would be unreadable in.
             var groupsBlock = el('div', 'dep-auth-site-groups');
@@ -4025,16 +4047,26 @@
             groupsBlock.appendChild(label);
             groupsBlock.appendChild(groups);
             var hint = el('p', 'dep-hint', tr('deploy_auth_allowed_hint',
-                'Separated by commas. Empty means anyone the directory authenticates.'));
+                'Separated by commas.'));
             hint.setAttribute('data-i18n', 'deploy_auth_allowed_hint');
             groupsBlock.appendChild(hint);
+
+            var peopleBlock = buildPeopleBlock(site);
+
+            wrap.appendChild(audienceLabel);
+            wrap.appendChild(audienceSelect);
             wrap.appendChild(groupsBlock);
+            wrap.appendChild(peopleBlock.root);
 
             // Groups belong to the directory and mean nothing under any other
             // method. Hidden rather than removed: the value stays typed, so
             // switching away and back does not cost the operator the list.
             function paintGroups() {
-                groupsBlock.hidden = methodSelect.value !== 'ldap';
+                var ldap = methodSelect.value === 'ldap';
+                audienceLabel.hidden = !ldap;
+                audienceSelect.hidden = !ldap;
+                groupsBlock.hidden = !ldap;
+                peopleBlock.root.hidden = !ldap;
             }
             paintGroups();
             methodSelect.addEventListener('change', paintGroups);
@@ -4046,7 +4078,12 @@
             var note = el('p', 'dep-auth-site-note', '');
             note.hidden = true;
             apply.addEventListener('click', function () {
-                saveSiteAuth(site, methodSelect, groups, apply, note);
+                saveSiteAuth(site, {
+                    method: methodSelect,
+                    groups: groups,
+                    audience: audienceSelect,
+                    people: peopleBlock.value
+                }, apply, note);
             });
             wrap.appendChild(apply);
             wrap.appendChild(note);
@@ -4055,6 +4092,168 @@
 
             box.appendChild(wrap);
         });
+    }
+
+    /**
+     * The people named on one site, and which of them administers it.
+     *
+     * A search field over the directory rather than a text box, because a SID
+     * is what gets stored and nobody types one. `<datalist>` and not a custom
+     * dropdown: the browser already draws this control, keyboard-navigates it
+     * and announces it to a screen reader, and every line we would write to
+     * replace it is a line that does those three things slightly worse.
+     *
+     * `admin` is a per-person tick and not a separate field, because "who may
+     * enter" and "who runs the place" are answered about the same row. It is
+     * the only thing Aegis says about roles: the application behind the site
+     * reads `/__aegis/whoami`, sees `admin`, and builds its own console. That
+     * is the whole point of stopping here -- an access panel per deployed
+     * application would live in Aegis and be edited in Aegis every time an
+     * application changed its mind about roles.
+     */
+    function buildPeopleBlock(site) {
+        var root = el('div', 'dep-auth-site-people');
+        var label = el('label', 'dep-label', tr('deploy_auth_people', 'Allowed people'));
+        label.setAttribute('data-i18n', 'deploy_auth_people');
+
+        var listId = 'deploy-auth-people-list-' + site.id;
+        var search = document.createElement('input');
+        search.type = 'search';
+        search.className = 'dep-input';
+        search.autocomplete = 'off';
+        search.spellcheck = false;
+        search.setAttribute('list', listId);
+        search.id = 'deploy-auth-people-' + site.id;
+        search.placeholder = tr('deploy_auth_people_search', 'Search the directory');
+        search.setAttribute('data-i18n-placeholder', 'deploy_auth_people_search');
+        search.disabled = !isAdmin;
+        label.htmlFor = search.id;
+
+        var datalist = document.createElement('datalist');
+        datalist.id = listId;
+
+        var chips = el('div', 'dep-auth-people-list');
+        var hint = el('p', 'dep-hint', tr('deploy_auth_people_hint',
+            'Tick Administrator to let someone manage access inside the application itself.'));
+        hint.setAttribute('data-i18n', 'deploy_auth_people_hint');
+
+        root.appendChild(label);
+        root.appendChild(search);
+        root.appendChild(datalist);
+        root.appendChild(chips);
+        root.appendChild(hint);
+
+        // The chosen people, and the last search answer keyed by the string the
+        // datalist put in the field. The browser hands back a value, never the
+        // row it came from, so the mapping has to be kept on this side.
+        var chosen = (site.allowedUsers || []).map(function (u) {
+            return { sid: u.sid, login: u.login || '', name: u.name || '', admin: u.admin === true };
+        });
+        var offered = {};
+
+        function paint() {
+            chips.textContent = '';
+            if (!chosen.length) {
+                var none = el('p', 'dep-hint', tr('deploy_auth_people_none', 'Nobody named yet.'));
+                none.setAttribute('data-i18n', 'deploy_auth_people_none');
+                chips.appendChild(none);
+                return;
+            }
+            chosen.forEach(function (person, index) {
+                var row = el('div', 'dep-auth-person');
+                row.appendChild(el('span', 'dep-auth-person-name',
+                    person.name || person.login || person.sid));
+                if (person.login && person.name) {
+                    row.appendChild(el('span', 'dep-auth-person-login', person.login));
+                }
+
+                var adminWrap = el('label', 'dep-check dep-auth-person-admin');
+                var adminBox = document.createElement('input');
+                adminBox.type = 'checkbox';
+                adminBox.checked = person.admin === true;
+                adminBox.disabled = !isAdmin;
+                adminBox.addEventListener('change', function () {
+                    chosen[index].admin = adminBox.checked;
+                });
+                adminWrap.appendChild(adminBox);
+                adminWrap.appendChild(el('span', '', tr('deploy_auth_person_admin', 'Administrator')));
+                row.appendChild(adminWrap);
+
+                var drop = el('button', 'dep-btn dep-btn-ghost dep-btn-small', tr('deploy_auth_person_remove', 'Remove'));
+                drop.type = 'button';
+                drop.disabled = !isAdmin;
+                drop.addEventListener('click', function () {
+                    chosen.splice(index, 1);
+                    paint();
+                });
+                row.appendChild(drop);
+                chips.appendChild(row);
+            });
+        }
+
+        function add(person) {
+            var already = chosen.some(function (p) {
+                return String(p.sid).toUpperCase() === String(person.sid).toUpperCase();
+            });
+            if (already) return;
+            chosen.push({ sid: person.sid, login: person.login || '', name: person.name || '', admin: false });
+            paint();
+        }
+
+        // One timer, restarted on every keystroke. Without it the field fires a
+        // directory search per character, and the answers race: the reply to
+        // "PV" can land after the reply to "P" and repaint the shorter list.
+        var timer = null;
+        var seq = 0;
+        function schedule() {
+            if (timer) window.clearTimeout(timer);
+            timer = window.setTimeout(run, 250);
+        }
+        function run() {
+            var q = search.value.trim();
+            if (q.length < 2) { datalist.textContent = ''; return; }
+            var mine = ++seq;
+            window.api('/api/deploy/auth/users?q=' + encodeURIComponent(q))
+                .then(function (r) { return readJson(r, 'directory users'); })
+                .then(function (data) {
+                    // A stale answer repaints nothing.
+                    if (mine !== seq) return;
+                    datalist.textContent = '';
+                    offered = {};
+                    if (!data || !data.success || !data.users) return;
+                    data.users.forEach(function (u) {
+                        // The option value is what comes back in the field, so
+                        // it has to identify one person. A login is unique in a
+                        // directory and a display name is not.
+                        var key = u.login || u.sid;
+                        offered[key] = u;
+                        var opt = document.createElement('option');
+                        opt.value = key;
+                        opt.label = u.name ? (u.name + (u.mail ? ' - ' + u.mail : '')) : key;
+                        datalist.appendChild(opt);
+                    });
+                })
+                .catch(function (e) { console.error('[Deploy] directory search failed:', e); });
+        }
+
+        search.addEventListener('input', function () {
+            // Picking from the datalist fires `input` with the whole value at
+            // once. Anything else is still typing.
+            var hit = offered[search.value.trim()];
+            if (hit) {
+                add(hit);
+                search.value = '';
+                datalist.textContent = '';
+                return;
+            }
+            schedule();
+        });
+
+        paint();
+        return {
+            root: root,
+            value: function () { return chosen.slice(); }
+        };
     }
 
     /**
@@ -4193,7 +4392,9 @@
             });
     }
 
-    function saveSiteAuth(site, methodSelect, groupsInput, btn, note) {
+    function saveSiteAuth(site, controls, btn, note) {
+        var methodSelect = controls.method;
+        var groupsInput = controls.groups;
         var method = methodSelect.value;
         // The list is only meaningful to the directory, and sending a stale one
         // under another method would store an allow list nothing reads and the
@@ -4203,6 +4404,9 @@
                 .map(function (s) { return s.trim(); })
                 .filter(function (s) { return !!s; })
             : [];
+
+        var people = method === 'ldap' ? controls.people() : [];
+        var audience = method === 'ldap' ? controls.audience.value : 'directory';
 
         btn.disabled = true;
         note.hidden = false;
@@ -4221,7 +4425,9 @@
             body: JSON.stringify({
                 method: method,
                 enabled: method !== 'none',
-                allowedGroups: allowed
+                allowedGroups: allowed,
+                allowedUsers: people,
+                audience: audience
             })
         })
             .then(function (r) { status = r.status; return readJson(r, 'project auth'); })
@@ -4231,6 +4437,8 @@
                     site.protected = !!(data.project && data.project.protected);
                     site.method = (data.project && data.project.method) || method;
                     site.allowedGroups = (data.project && data.project.allowedGroups) || allowed;
+                    site.allowedUsers = (data.project && data.project.allowedUsers) || people;
+                    site.audience = (data.project && data.project.audience) || audience;
                     note.textContent = tr('deploy_auth_applied', 'Saved.');
                     // The card in the project list carries the badge, so it has
                     // to hear about this too.

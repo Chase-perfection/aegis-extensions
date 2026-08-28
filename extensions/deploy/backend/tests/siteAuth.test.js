@@ -106,9 +106,74 @@ const GOOD_CONFIG = {
 /* group matching (section C)                                          */
 /* ------------------------------------------------------------------ */
 
-test('group matching: empty allow list lets any authenticated user through', () => {
-    assert.strictEqual(siteAuth._groupAllowed([], ['CN=Anything,DC=corp,DC=local']), true);
-    assert.strictEqual(siteAuth._groupAllowed([], []), true);
+test('group matching: an empty allow list matches nothing', () => {
+    // The inverse of what this function used to return, and the change is the
+    // point. "Empty means everyone" moved up to `audience`, where it is a
+    // stored choice; leaving it here as well would mean a site whose audience
+    // is `listed` and whose lists are both empty opens to the whole directory.
+    assert.strictEqual(siteAuth._groupAllowed([], ['CN=Anything,DC=corp,DC=local']), false);
+    assert.strictEqual(siteAuth._groupAllowed([], []), false);
+});
+
+test('access: the directory audience lets anyone in and still names one admin', () => {
+    // The shape an application that manages its own roles asks for: Aegis says
+    // who is reading and who may open the console, the application does the
+    // rest. Opening the gate and appointing an administrator are two decisions.
+    const users = [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }];
+    assert.deepStrictEqual(
+        siteAuth._accessFor([], users, 'directory', [], 'S-1-5-21-1-2-3-1103'),
+        { allowed: true, admin: true });
+    assert.deepStrictEqual(
+        siteAuth._accessFor([], users, 'directory', [], 'S-1-5-21-1-2-3-9999'),
+        { allowed: true, admin: false });
+});
+
+test('access: the listed audience refuses a SID that is on no list', () => {
+    const users = [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }];
+    assert.deepStrictEqual(
+        siteAuth._accessFor([], users, 'listed', [], 'S-1-5-21-1-2-3-9999'),
+        { allowed: false, admin: false });
+    // Either list may open the door.
+    assert.deepStrictEqual(
+        siteAuth._accessFor(['Domain Admins'], users, 'listed',
+            ['CN=Domain Admins,CN=Users,DC=corp,DC=local'], 'S-1-5-21-1-2-3-9999'),
+        { allowed: true, admin: false });
+});
+
+test('access: listed with both lists empty is closed, not open', () => {
+    // The trap the audience field exists to remove. Before it, this shape was
+    // indistinguishable from "open to the directory" and served the site.
+    assert.deepStrictEqual(
+        siteAuth._accessFor([], [], 'listed', ['CN=Anything,DC=corp,DC=local'], 'S-1-5-21-1-2-3-1'),
+        { allowed: false, admin: false });
+});
+
+test('access: a group can never confer admin', () => {
+    // "Whoever is in this group administers the site" is a promotion nobody
+    // reviews. Admin is carried by a named person or by no one.
+    assert.deepStrictEqual(
+        siteAuth._accessFor(['Domain Admins'], [], 'listed',
+            ['CN=Domain Admins,CN=Users,DC=corp,DC=local'], 'S-1-5-21-1-2-3-1'),
+        { allowed: true, admin: false });
+});
+
+test('access: a SID matches whatever case it was stored in', () => {
+    // An operator adding the first administrator on a machine with no picker
+    // types it by hand, and Windows tools print it in mixed case.
+    const users = [{ sid: 's-1-5-21-1-2-3-1103', login: 'PV', name: '', admin: true }];
+    assert.deepStrictEqual(
+        siteAuth._accessFor([], users, 'listed', [], 'S-1-5-21-1-2-3-1103'),
+        { allowed: true, admin: true });
+});
+
+test('access: an empty SID matches nobody', () => {
+    // The direct-bind path reads the entry best effort, so an absent SID is a
+    // real state. It must never collapse onto the first entry in the list.
+    const users = [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: '', admin: true }];
+    assert.deepStrictEqual(
+        siteAuth._accessFor([], users, 'listed', [], ''),
+        { allowed: false, admin: false });
+    assert.strictEqual(siteAuth._findUser(users, ''), null);
 });
 
 test('group matching: a bare CN matches the full DN it came from', () => {
@@ -1443,4 +1508,173 @@ test('restart: an unparseable new certificate settles the restart instead of han
 
     const refused = await waitRefused(port);
     assert.strictEqual(refused.ok, false, 'the site must be left stopped, not left up in clear');
+});
+
+/* ------------------------------------------------------------------ */
+/* named people, and what the site is told about them                  */
+/* ------------------------------------------------------------------ */
+
+const PV_SID = 'S-1-5-21-1-2-3-1103';
+
+/** Signs somebody in and hands back the session cookie, or null if refused. */
+async function loginAs(slug, tenantPaths, id, username, result) {
+    siteAuth._setVerifier(() => result);
+    try {
+        const { res } = await login(slug, tenantPaths, id,
+            { username, password: SECRET, next: '/' });
+        return cookieValue(res.headers['Set-Cookie'], 'aegis_site');
+    } finally {
+        siteAuth._setVerifier(null);
+    }
+}
+
+/** GETs a path on a site with a session cookie, and returns the fake response. */
+async function getWith(slug, tenantPaths, id, path, token) {
+    const res = fakeRes();
+    const headers = token ? { cookie: `aegis_site=${token}` } : {};
+    const handled = await siteAuth.gate(
+        fakeReq('GET', path, { headers }), res,
+        { slug, tenantPaths, project: { id, name: id } });
+    return { res, handled };
+}
+
+test('login: a named person is let in on their SID, with no group anywhere', async () => {
+    const slug = 'tenant-named';
+    const tenantPaths = seed(slug, 'named', {
+        name: 'Named',
+        auth: {
+            method: 'ldap', enabled: true, audience: 'listed', allowedGroups: [],
+            allowedUsers: [{ sid: PV_SID, login: 'PV', name: 'Paul Vue', admin: true }]
+        }
+    }, GOOD_CONFIG);
+
+    const token = await loginAs(slug, tenantPaths, 'named', 'PV',
+        { ok: true, dn: 'PV@corp.local', displayName: 'Paul Vue', groups: [], sid: PV_SID });
+    assert.ok(token, 'the SID alone must be enough to open a listed site');
+
+    const { handled } = await getWith(slug, tenantPaths, 'named', '/', token);
+    assert.strictEqual(handled, false, 'an authenticated request is served');
+});
+
+test('login: a listed site refuses a SID nobody named', async () => {
+    const slug = 'tenant-named-no';
+    const tenantPaths = seed(slug, 'named', {
+        name: 'Named',
+        auth: {
+            method: 'ldap', enabled: true, audience: 'listed', allowedGroups: [],
+            allowedUsers: [{ sid: PV_SID, login: 'PV', name: 'Paul Vue', admin: true }]
+        }
+    }, GOOD_CONFIG);
+
+    const token = await loginAs(slug, tenantPaths, 'named', 'other',
+        { ok: true, dn: 'other@corp.local', groups: [], sid: 'S-1-5-21-1-2-3-9999' });
+    assert.strictEqual(token, null);
+});
+
+test('login: people are named and the directory returns no SID, so nobody gets in', async () => {
+    // The direct-bind path reads the entry best effort. A directory that
+    // refuses that read leaves the one field a named person is matched on
+    // empty, and an empty field must not fall through to the group rule.
+    const slug = 'tenant-nosid';
+    const tenantPaths = seed(slug, 'nosid', {
+        name: 'NoSid',
+        auth: {
+            method: 'ldap', enabled: true, audience: 'listed',
+            allowedGroups: ['Domain Admins'],
+            allowedUsers: [{ sid: PV_SID, login: 'PV', name: 'Paul Vue', admin: true }]
+        }
+    }, GOOD_CONFIG);
+
+    const token = await loginAs(slug, tenantPaths, 'nosid', 'PV', {
+        ok: true, dn: 'PV@corp.local', displayName: 'Paul Vue',
+        groups: ['CN=Domain Admins,CN=Users,DC=corp,DC=local']
+        // no sid
+    });
+    assert.strictEqual(token, null,
+        'a group match must not stand in for the identity the operator actually named');
+});
+
+test('whoami: an administrator is told so, and the answer is never cached', async () => {
+    const slug = 'tenant-whoami';
+    const tenantPaths = seed(slug, 'app', {
+        name: 'App',
+        auth: {
+            method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [],
+            allowedUsers: [{ sid: PV_SID, login: 'PV', name: 'Paul Vue', admin: true }]
+        }
+    }, GOOD_CONFIG);
+
+    const token = await loginAs(slug, tenantPaths, 'app', 'PV',
+        { ok: true, dn: 'PV@corp.local', displayName: 'Paul Vue', groups: [], sid: PV_SID });
+    const { res, handled } = await getWith(slug, tenantPaths, 'app', '/__aegis/whoami', token);
+
+    assert.strictEqual(handled, true);
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.headers['Cache-Control'], 'no-store',
+        'a cached answer is a stale role, and a shared cache would hand it to the next visitor');
+    assert.deepStrictEqual(JSON.parse(res.body), {
+        authenticated: true, login: 'PV', name: 'Paul Vue', sid: PV_SID, admin: true
+    });
+});
+
+test('whoami: someone let in by the audience is not an administrator', async () => {
+    // The shape the whole feature exists for: open to the directory, one named
+    // administrator, everybody else a reader the application can tell apart.
+    const slug = 'tenant-whoami-plain';
+    const tenantPaths = seed(slug, 'app', {
+        name: 'App',
+        auth: {
+            method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [],
+            allowedUsers: [{ sid: PV_SID, login: 'PV', name: 'Paul Vue', admin: true }]
+        }
+    }, GOOD_CONFIG);
+
+    const token = await loginAs(slug, tenantPaths, 'app', 'jdoe',
+        { ok: true, dn: 'jdoe@corp.local', displayName: 'J Doe', groups: [],
+          sid: 'S-1-5-21-1-2-3-2000' });
+    const { res } = await getWith(slug, tenantPaths, 'app', '/__aegis/whoami', token);
+
+    assert.strictEqual(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.authenticated, true);
+    assert.strictEqual(body.login, 'jdoe');
+    assert.strictEqual(body.admin, false);
+});
+
+test('whoami: no session answers 401 and names nobody', async () => {
+    const slug = 'tenant-whoami-anon';
+    const tenantPaths = seed(slug, 'app',
+        { name: 'App', auth: { method: 'ldap', enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
+
+    const { res, handled } = await getWith(slug, tenantPaths, 'app', '/__aegis/whoami', null);
+    assert.strictEqual(handled, true);
+    assert.strictEqual(res.statusCode, 401);
+    assert.deepStrictEqual(JSON.parse(res.body), { authenticated: false });
+});
+
+test('whoami: an unprotected site has no identity to report', async () => {
+    // 404 on the whole reserved prefix, which is the honest answer: there is no
+    // directory identity behind an unprotected site. An application reads any
+    // non-200 as "no Aegis identity here".
+    const slug = 'tenant-whoami-open';
+    const tenantPaths = seed(slug, 'app', { name: 'App' }, GOOD_CONFIG);
+
+    const { res, handled } = await getWith(slug, tenantPaths, 'app', '/__aegis/whoami', null);
+    assert.strictEqual(handled, true);
+    assert.strictEqual(res.statusCode, 404);
+});
+
+test('whoami: the site cannot serve its own file on that path', async () => {
+    // The prefix is reserved before any file is resolved. A repository that
+    // contained __aegis/whoami could otherwise answer admin:true itself.
+    const slug = 'tenant-whoami-post';
+    const tenantPaths = seed(slug, 'app',
+        { name: 'App', auth: { method: 'ldap', enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
+
+    const res = fakeRes();
+    const handled = await siteAuth.gate(
+        fakeReq('POST', '/__aegis/whoami', {}), res,
+        { slug, tenantPaths, project: { id: 'app', name: 'App' } });
+    assert.strictEqual(handled, true);
+    assert.strictEqual(res.statusCode, 404, 'only GET and HEAD answer here');
 });

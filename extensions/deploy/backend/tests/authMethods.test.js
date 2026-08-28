@@ -128,13 +128,59 @@ test('methods: an unknown method is reported as itself and counts as gated', () 
 
 test('methods: record() derives the mirror rather than taking one', () => {
     assert.deepStrictEqual(authMethods.record('ldap', ['Domain Admins']),
-        { method: 'ldap', enabled: true, allowedGroups: ['Domain Admins'] });
+        { method: 'ldap', enabled: true, audience: 'listed', allowedGroups: ['Domain Admins'], allowedUsers: [] });
     assert.deepStrictEqual(authMethods.record('none', ['Domain Admins']),
-        { method: 'none', enabled: false, allowedGroups: ['Domain Admins'] });
+        { method: 'none', enabled: false, audience: 'listed', allowedGroups: ['Domain Admins'], allowedUsers: [] });
     // A caller that passes nothing gets an empty list, not undefined: the
     // record goes to JSON and a missing key reads back as "no allow list",
     // which is the widest possible rule.
     assert.deepStrictEqual(authMethods.record('none').allowedGroups, []);
+    assert.deepStrictEqual(authMethods.record('none').allowedUsers, []);
+});
+
+test('methods: a caller that names no audience gets the pre-audience meaning', () => {
+    // The whole back-compatibility promise. A page that predates the field
+    // keeps writing two-argument records, and every one has to mean what it
+    // meant before: groups named restricts to them, none named opens to the
+    // directory.
+    assert.strictEqual(authMethods.record('ldap', ['Domain Admins']).audience, 'listed');
+    assert.strictEqual(authMethods.record('ldap', []).audience, 'directory');
+});
+
+test('methods: audienceOf derives the old rule for a record that predates it', () => {
+    assert.strictEqual(authMethods.audienceOf({ method: 'ldap', enabled: true, allowedGroups: [] }), 'directory');
+    assert.strictEqual(authMethods.audienceOf({ method: 'ldap', enabled: true, allowedGroups: ['G'] }), 'listed');
+    // Stored beats derived, in both directions.
+    assert.strictEqual(authMethods.audienceOf({ audience: 'listed', allowedGroups: [] }), 'listed');
+    assert.strictEqual(authMethods.audienceOf({ audience: 'directory', allowedGroups: ['G'] }), 'directory');
+    // An audience this build has no rule for falls back to the derivation
+    // rather than being honoured, for the same reason an unknown method is
+    // gated: a value we cannot act on must not decide who gets in.
+    assert.strictEqual(authMethods.audienceOf({ audience: 'everyone', allowedGroups: ['G'] }), 'listed');
+});
+
+test('methods: usersOf drops a person with no SID', () => {
+    // The SID is the only field a login is matched on. An entry without one
+    // would show in the panel as an access that can never be exercised.
+    const users = authMethods.usersOf({ allowedUsers: [
+        { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true },
+        { login: 'ghost', name: 'No SID' },
+        { sid: '  ', login: 'blank' },
+        'not-an-object'
+    ] });
+    assert.deepStrictEqual(users,
+        [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }]);
+});
+
+test('methods: admin is a strict boolean, never a truthy value', () => {
+    // The flag arrives from a request body. A string promoting somebody is the
+    // difference between a reader and the person who runs the site.
+    const users = authMethods.usersOf({ allowedUsers: [
+        { sid: 'S-1-5-21-1-2-3-1', admin: 'yes' },
+        { sid: 'S-1-5-21-1-2-3-2', admin: 1 },
+        { sid: 'S-1-5-21-1-2-3-3', admin: true }
+    ] });
+    assert.deepStrictEqual(users.map((u) => u.admin), [false, false, true]);
 });
 
 /* ------------------------------------------------------------------ */

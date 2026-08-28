@@ -89,6 +89,11 @@ const ATTR_RE = /^[A-Za-z][A-Za-z0-9-]{0,63}$/;
 
 const MAX_GROUPS = 64;
 const MAX_GROUP_LEN = 512;
+/** People one site may name. A list an operator maintains by hand, not a group. */
+const MAX_USERS = 64;
+const MAX_USER_FIELD = 256;
+/** `S-1-` then decimal parts. Nothing else is a SID, and this text ends up in a file. */
+const SID_RE = /^S-1-\d{1,10}(-\d{1,10}){1,15}$/i;
 
 /** A filesystem path to a certificate or a key, as an operator may type it. */
 const MAX_PATH_LEN = 4096;
@@ -292,6 +297,52 @@ function groupsOf(project) {
     return (project && project.auth && Array.isArray(project.auth.allowedGroups))
         ? project.auth.allowedGroups
         : [];
+}
+
+function usersOfProject(project) {
+    return authMethods.usersOf(project && project.auth);
+}
+
+function audienceOfProject(project) {
+    return authMethods.audienceOf(project && project.auth);
+}
+
+/**
+ * The named people from a request body, or null when the body is not one.
+ *
+ * Every field is bounded and the SID is shape-checked, because this list is
+ * written to `projects.json` and read back by the site guard on every request
+ * to a protected site. `admin` is a strict boolean: a truthy string arriving
+ * from a hand-written call must not promote anybody.
+ */
+function parseAllowedUsers(value) {
+    if (value === undefined || value === null) return [];
+    if (!Array.isArray(value) || value.length > MAX_USERS) return null;
+    const out = [];
+    const seen = new Set();
+    for (const raw of value) {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+        const sid = String(raw.sid === undefined || raw.sid === null ? '' : raw.sid).trim();
+        if (!SID_RE.test(sid)) return null;
+        // The same person twice is the picker being clicked twice, not an
+        // error worth refusing the save over.
+        const key = sid.toUpperCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const login = String(raw.login === undefined || raw.login === null ? '' : raw.login);
+        const name = String(raw.name === undefined || raw.name === null ? '' : raw.name);
+        if (login.length > MAX_USER_FIELD || name.length > MAX_USER_FIELD) return null;
+        if (CTRL_RE.test(login) || CTRL_RE.test(name)) return null;
+        out.push({ sid, login, name, admin: raw.admin === true });
+    }
+    return out;
+}
+
+/** The audience from a request body, or null when it names one this build has no rule for. */
+function parseAudience(value) {
+    if (value === undefined || value === null) return undefined;   // absent: derive it
+    if (typeof value !== 'string' || authMethods.AUDIENCES.indexOf(value) < 0) return null;
+    return value;
 }
 
 /**
@@ -827,6 +878,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         protected: isProtectedRecord(p),
         authMethod: methodOfProject(p),
         allowedGroups: groupsOf(p),
+        allowedUsers: usersOfProject(p),
+        audience: audienceOfProject(p),
         tls: tlsView(p),
         envCount: projectEnv.list(p).length,
         spaFallback: !!p.spaFallback,
@@ -2196,6 +2249,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             protected: isProtectedRecord(p),
             method: methodOfProject(p),
             allowedGroups: groupsOf(p),
+            allowedUsers: usersOfProject(p),
+            audience: audienceOfProject(p),
             // The panel warns next to a protected site that is served in clear:
             // that is where a password is about to be typed.
             tls: tlsView(p)
@@ -2316,6 +2371,45 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         siteAuth.dropSessions(req.tenant.slug, null);
         console.log(`[Deploy] ${req.tenant.slug}: directory config cleared by ${req.user.email}`);
         return res.json({ success: true });
+    });
+
+    /**
+     * The people matching what the operator is typing into the picker.
+     *
+     * Admin, and deliberately so even though it only reads: it spends the
+     * service account's credentials and returns real names out of the company
+     * directory. A tenant member who can see a project list has no business
+     * enumerating staff through it.
+     *
+     * A short query answers with an empty list rather than an error. The field
+     * fires this on every keystroke, and the first character of a name is not a
+     * mistake the operator needs to be told about.
+     */
+    router.get('/api/deploy/auth/users', requireOptIn, requireRole('admin'), async (req, res) => {
+        const config = authStore.readConfig(req.tenantPaths);
+        if (!config) {
+            return res.status(409).json({ success: false, error: 'ldap_not_configured' });
+        }
+        const q = String((req.query && req.query.q) || '');
+
+        let result;
+        try {
+            result = await ldap.searchUsers(config, q);
+        } catch (e) {
+            // `ldap.js` answers with a code rather than throwing, so this is the
+            // unforeseen case only, and it still has to leave as JSON.
+            console.error(`[Deploy] ${req.tenant.slug}: directory user search threw: ${e.message}`);
+            return res.status(502).json({ success: false, error: 'ldap_protocol_error' });
+        }
+        if (!result || !result.ok) {
+            const code = (result && result.error) || 'ldap_protocol_error';
+            console.warn(`[Deploy] ${req.tenant.slug}: directory user search refused (${code})`);
+            return res.status(LDAP_STATUS[code] || 502).json({ success: false, error: code });
+        }
+        // Not logged with the query in it. What an administrator typed into a
+        // search field is a fishing expedition through the staff directory, and
+        // the log of an audit platform is not the place to keep one.
+        return res.json({ success: true, users: result.users });
     });
 
     /**
@@ -2573,11 +2667,27 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             return res.status(400).json({ success: false, error: 'bad_allowed_groups' });
         }
 
+        const allowedUsers = parseAllowedUsers(body.allowedUsers);
+        if (!allowedUsers) {
+            return res.status(400).json({ success: false, error: 'bad_allowed_users' });
+        }
+
+        // `undefined` means the caller did not mention it and the record derives
+        // the pre-audience meaning; `null` means it named one this build has no
+        // rule for, which is refused rather than resolved to a default. The
+        // difference matters: an older page that knows nothing about audiences
+        // must keep working, and a newer one with a typo must not silently open
+        // a site to the whole directory.
+        const audience = parseAudience(body.audience);
+        if (audience === null) {
+            return res.status(400).json({ success: false, error: 'bad_audience' });
+        }
+
         // Mutated on the record that was read, not rebuilt from the body:
         // `saveProject` replaces the row whole, so a fresh object would drop
         // every field this route does not know about -- installationId, port,
         // history, lastSha.
-        project.auth = authMethods.record(method, allowedGroups);
+        project.auth = authMethods.record(method, allowedGroups, { allowedUsers, audience });
 
         let stored;
         try {
@@ -2598,19 +2708,22 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // its own copy of the rule so the guard can read one record per
         // request; that copy is only correct if it follows the parent's.
         for (const preview of previews.listFor(req.tenantPaths, stored.id)) {
-            preview.auth = authMethods.record(method, allowedGroups);
+            preview.auth = authMethods.record(method, allowedGroups, { allowedUsers, audience });
             projectStore.saveProject(req.tenantPaths, preview);
             siteAuth.invalidate(req.tenant.slug, preview.id);
             siteAuth.dropSessions(req.tenant.slug, preview.id);
         }
-        console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} authentication ${method}, ${allowedGroups.length} group(s) allowed, by ${req.user.email}`);
+        const admins = usersOfProject(stored).filter((u) => u.admin).length;
+        console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} authentication ${method}, audience ${audienceOfProject(stored)}, ${allowedGroups.length} group(s) and ${allowedUsers.length} person(s) allowed, ${admins} administrator(s), by ${req.user.email}`);
         return res.json({
             success: true,
             project: {
                 id: stored.id,
                 protected: isProtectedRecord(stored),
                 method: methodOfProject(stored),
-                allowedGroups: groupsOf(stored)
+                allowedGroups: groupsOf(stored),
+                allowedUsers: usersOfProject(stored),
+                audience: audienceOfProject(stored)
             }
         });
     });

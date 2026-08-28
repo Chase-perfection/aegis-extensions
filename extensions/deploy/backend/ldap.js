@@ -1028,24 +1028,37 @@ function adSubCode(diagnostic) {
     return m ? m[1].toLowerCase() : null;
 }
 
-function userBindError(res) {
-    if (res.resultCode === RESULT.INVALID_CREDENTIALS) {
-        const sub = adSubCode(res.diagnostic);
-        // The diagnostic is kept as the detail whatever it says: it is the DC's
-        // own sentence, and it is what an administrator reads in the log when a
-        // sub-code this build does not know shows up.
-        return new LdapError(AD_SUB_CODE[sub] || 'ldap_invalid_credentials',
-            res.diagnostic || 'bind rejected');
-    }
+function userBindError(res) {
+
+    if (res.resultCode === RESULT.INVALID_CREDENTIALS) {
+
+        const sub = adSubCode(res.diagnostic);
+
+        // The diagnostic is kept as the detail whatever it says: it is the DC's
+
+        // own sentence, and it is what an administrator reads in the log when a
+
+        // sub-code this build does not know shows up.
+
+        return new LdapError(AD_SUB_CODE[sub] || 'ldap_invalid_credentials',
+
+            res.diagnostic || 'bind rejected');
+
+    }
+
     return new LdapError('ldap_bind_refused',
         res.diagnostic || `user bind refused with result ${res.resultCode}`);
 }
 
 function attributesFor(cfg) {
-    const wanted = [cfg.groupAttribute, 'displayName', 'cn'];
-    // Only fetched when they will be used. `objectSid` is binary and
-    // `primaryGroupID` means nothing on a directory that is not AD.
-    if (cfg.nestedGroups) wanted.push('objectSid', 'primaryGroupID');
+    // `objectSid` is always asked for. It is the only identifier that survives
+    // a rename and a move between OUs, and an allow list of named people is
+    // matched on it. A directory that has no such attribute returns nothing,
+    // which costs one name in the request and no behaviour anywhere else.
+    const wanted = [cfg.groupAttribute, 'displayName', 'cn', 'objectSid'];
+    // `primaryGroupID` means nothing on a directory that is not AD, and is read
+    // only to compute the primary group the nested walk would otherwise miss.
+    if (cfg.nestedGroups) wanted.push('primaryGroupID');
     const seen = new Set();
     return wanted.filter((a) => {
         const k = a.toLowerCase();
@@ -1069,6 +1082,9 @@ const NO_ATTRIBUTES = ['1.1'];
 /** A user in more groups than this has a directory problem, not a login. */
 const MAX_GROUPS = 500;
 
+/** Rows one directory search may hand a picker. A list, not a directory dump. */
+const MAX_USER_HITS = 25;
+
 /* --------------------------------------------------------------- AD SIDs -- */
 
 /**
@@ -1088,6 +1104,31 @@ function parseSid(buf) {
     if (count < 1 || count > 15) return null;
     if (buf.length !== 8 + (4 * count)) return null;
     return { revision, count };
+}
+
+/**
+ * A binary `objectSid` as the canonical `S-1-5-21-...-1103` text.
+ *
+ * An allow list of named people is matched on this string, so it has to be
+ * byte-for-byte the one every other Windows tool prints: an operator comparing
+ * what Aegis stored against what `whoami /user` says must see the same value.
+ *
+ * Sub-authorities are unsigned 32-bit little-endian. `readUInt32LE` and not
+ * `readInt32LE`: a RID above 2^31 is legal and a signed read would print it
+ * negative, which matches nothing. The identifier authority is 48 bits
+ * big-endian, which no Buffer helper reads in one call, hence the two reads.
+ *
+ * Returns '' rather than throwing on anything `parseSid` rejects. Every caller
+ * treats the empty string as "this entry has no usable identity" and drops it,
+ * which is the behaviour a malformed attribute should produce.
+ */
+function sidToString(buf) {
+    if (!parseSid(buf)) return '';
+    const count = buf[1];
+    const authority = (buf.readUInt16BE(2) * 0x100000000) + buf.readUInt32BE(4);
+    let out = `S-${buf[0]}-${authority}`;
+    for (let i = 0; i < count; i++) out += `-${buf.readUInt32LE(8 + (i * 4))}`;
+    return out;
 }
 
 /**
@@ -1167,18 +1208,27 @@ async function collectGroups(state, cfg, userDn, entry, direct) {
     return out;
 }
 
-function shapeUser(cfg, dn, attributes) {
+function shapeUser(cfg, dn, attributes, raw) {
     const attrs = attributes || Object.create(null);
     const groups = attrs[cfg.groupAttribute.toLowerCase()] || [];
     const displayName = (attrs.displayname && attrs.displayname[0]) || (attrs.cn && attrs.cn[0]) || '';
     const out = { ok: true, dn, groups };
     if (displayName) out.displayName = displayName;
+    // The identity an allow list of named people is matched on.
+    //
+    // Absent whenever the entry could not be read, which the direct-bind path
+    // in `verify` does best effort: a directory that refuses the lookup must
+    // not turn a good password into a failed login. `siteAuth` refuses the
+    // session rather than guessing when a list needs this field, so the gap
+    // fails closed at the one place that can tell the difference.
+    const sid = sidToString((raw && raw.objectsid && raw.objectsid[0]) || null);
+    if (sid) out.sid = sid;
     return out;
 }
 
 /** `shapeUser`, plus the nested and primary groups when the operator asked. */
 async function shapeUserResolved(state, cfg, dn, entry) {
-    const out = shapeUser(cfg, dn, entry ? entry.attributes : null);
+    const out = shapeUser(cfg, dn, entry ? entry.attributes : null, entry ? entry.raw : null);
     if (!cfg.nestedGroups || !cfg.baseDn) return out;
     out.groups = await collectGroups(state, cfg, dn, entry, out.groups);
     return out;
@@ -1336,6 +1386,78 @@ async function lookup(config, username) {
         // widen the list; a session is dropped on what this returns, never
         // granted by it, so a wider answer is the safe direction.
         return await shapeUserResolved(state, cfg, entry.dn, entry);
+    } catch (e) {
+        return { ok: false, error: (e && e.ldapCode) || 'ldap_protocol_error' };
+    } finally {
+        if (state) closeSession(state);
+    }
+}
+
+/**
+ * The people whose name starts with what the operator typed.
+ *
+ * `lookup` cannot serve this and should not be bent into it: it resolves one
+ * account and refuses the moment a second matches, which is exactly right for
+ * a login and useless for a picker. This searches the three attributes a person
+ * is actually known by and returns a short page of them.
+ *
+ * The SID is the identity that gets stored; `login`, `name` and `mail` travel
+ * back only so the operator recognises the row they are picking. An entry
+ * without a SID is dropped rather than offered: it could be chosen and would
+ * then match nothing at login, which is a grant of nothing that looks like a
+ * grant of something.
+ *
+ * Two characters minimum. A one-character prefix on a domain is a scan the
+ * controller pays for and returns more rows than anyone can read.
+ *
+ * `escapeFilter` neutralises every wildcard in the operator's text, and the
+ * `*` that makes this a prefix search is appended after escaping. Reversing
+ * those two steps is how a search field becomes a filter injection.
+ *
+ * A `sizeLimitExceeded` from the directory is not an error here. `search`
+ * resolves on SearchResultDone whatever the result code, so the entries that
+ * did arrive are returned and the cap does its job.
+ */
+async function searchUsers(config, query) {
+    const q = String(query === undefined || query === null ? '' : query).trim();
+    if (q.length < 2 || /[ -]/.test(q)) return { ok: true, users: [] };
+
+    let state = null;
+    try {
+        const cfg = normalizeConfig(config);
+        if (!cfg.baseDn) throw badConfig('no baseDn');
+
+        const safe = escapeFilter(q);
+        const filter = parseFilterString(
+            '(&(objectClass=user)(objectCategory=person)(|'
+            + `(sAMAccountName=${safe}*)(displayName=${safe}*)(mail=${safe}*)))`
+        );
+
+        state = await openSession(cfg);
+        await bindService(state, cfg);
+
+        const found = await search(state, {
+            baseDn: cfg.baseDn,
+            filter,
+            attributes: ['sAMAccountName', 'displayName', 'cn', 'mail', 'objectSid'],
+            sizeLimit: MAX_USER_HITS
+        });
+
+        const users = [];
+        for (const entry of found.entries) {
+            const attrs = entry.attributes || Object.create(null);
+            const raw = entry.raw || Object.create(null);
+            const sid = sidToString((raw.objectsid && raw.objectsid[0]) || null);
+            if (!sid) continue;
+            users.push({
+                sid,
+                login: (attrs.samaccountname && attrs.samaccountname[0]) || '',
+                name: (attrs.displayname && attrs.displayname[0]) || (attrs.cn && attrs.cn[0]) || '',
+                mail: (attrs.mail && attrs.mail[0]) || ''
+            });
+        }
+        users.sort((a, b) => String(a.name || a.login).localeCompare(String(b.name || b.login)));
+        return { ok: true, users };
     } catch (e) {
         return { ok: false, error: (e && e.ldapCode) || 'ldap_protocol_error' };
     } finally {
@@ -1514,8 +1636,8 @@ async function inspectCertificate(config) {
 }
 
 module.exports = {
-    verify, lookup, testConnection, inspectCertificate, refreshTrust,
-    escapeFilter, escapeDn, encode, decode,
+    verify, lookup, searchUsers, testConnection, inspectCertificate, refreshTrust,
+    escapeFilter, escapeDn, encode, decode, sidToString,
     // Exercised directly by tests/ldap.test.js: the SID arithmetic has no
     // observable effect without a directory that publishes a primary group.
     parseSid, primaryGroupSid, IN_CHAIN_OID

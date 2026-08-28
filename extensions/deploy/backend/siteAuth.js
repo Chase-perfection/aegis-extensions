@@ -70,6 +70,7 @@ const PREFIX = '/__aegis/';
 const LOGIN_PATH = '/__aegis/login';
 const LOGOUT_PATH = '/__aegis/logout';
 const CSS_PATH = '/__aegis/login.css';
+const WHOAMI_PATH = '/__aegis/whoami';
 
 const SESSION_COOKIE = 'aegis_site';
 const CSRF_COOKIE = 'aegis_site_csrf';
@@ -197,6 +198,14 @@ function allowedGroupsFor(slug, tenantPaths, projectId) {
     return list.map((g) => String(g)).filter((g) => g.trim() !== '');
 }
 
+function allowedUsersFor(slug, tenantPaths, projectId) {
+    return authMethods.usersOf(authRecordFor(slug, tenantPaths, projectId));
+}
+
+function audienceFor(slug, tenantPaths, projectId) {
+    return authMethods.audienceOf(authRecordFor(slug, tenantPaths, projectId));
+}
+
 /* ------------------------------------------------------------------ */
 /* group matching                                                      */
 /* ------------------------------------------------------------------ */
@@ -223,14 +232,59 @@ function firstCn(dn) {
 }
 
 /**
- * Empty `allowedGroups` on an enabled project means "anyone the directory
- * authenticates", which is a deliberate and documented setting, not an
- * accident: it is how you protect a site from the internet at large without
- * maintaining a group for it.
+ * Does any of the user's groups appear on the allow list?
+ *
+ * An empty allow list matches nothing here, which is the opposite of what this
+ * function used to return. The "empty means everyone" rule did not disappear,
+ * it moved up one level to `audience`, where it is a stored choice rather than
+ * a property of a list being empty. Leaving it here as well would mean a site
+ * whose audience is `listed` and whose lists are both empty silently opens to
+ * the whole directory -- the exact trap the audience field exists to remove.
  */
+/**
+ * The named person a SID belongs to, or null.
+ *
+ * Compared case-insensitively. A SID is canonically upper-case hexadecimal-free
+ * decimal text, so this changes nothing on a value `sidToString` produced; it
+ * matters for one hand-edited into projects.json, which is a real way an
+ * operator adds the first administrator on a machine with no picker.
+ */
+function findUser(allowedUsers, sid) {
+    const want = String(sid || '').trim().toUpperCase();
+    if (!want) return null;
+    for (const u of (allowedUsers || [])) {
+        if (String(u.sid || '').trim().toUpperCase() === want) return u;
+    }
+    return null;
+}
+
+/**
+ * Who gets in, and who runs the place once in.
+ *
+ * Two independent answers, which is the whole point of separating `audience`
+ * from the `admin` flag. A site can open to the entire directory and still have
+ * exactly one administrator: the application behind it manages its own roles
+ * and only needs Aegis to say which visitor is allowed to open that panel.
+ *
+ * `admin` is only ever carried by a named person. A group cannot confer it,
+ * because "whoever is in this group administers the site" is a promotion that
+ * happens without anybody reviewing it.
+ *
+ * Directory audience and an empty list is not a bug: it is how a site is kept
+ * off the open network without maintaining a group for it. What changed is that
+ * it is now written down in the record rather than inferred from an absence.
+ */
+function accessFor(allowedGroups, allowedUsers, audience, groups, sid) {
+    const named = findUser(allowedUsers, sid);
+    const admin = !!(named && named.admin === true);
+    if (audience === authMethods.DIRECTORY) return { allowed: true, admin };
+    // Listed: either list may open the door, neither being satisfied closes it.
+    return { allowed: !!named || groupAllowed(allowedGroups, groups), admin };
+}
+
 function groupAllowed(allowedGroups, groups) {
     const wanted = (allowedGroups || []).map(normalizeGroup).filter(Boolean);
-    if (!wanted.length) return true;
+    if (!wanted.length) return false;
 
     const have = new Set();
     for (const raw of (groups || [])) {
@@ -768,6 +822,44 @@ function gate(req, res, { slug, tenantPaths, project }) {
         return true;
     }
 
+    // The one thing core owes an application that manages its own roles: who is
+    // reading it, and whether Aegis considers them this site's administrator.
+    //
+    // This exists so that Aegis does not grow a permissions console per
+    // deployed application. The operator names the administrator here; the
+    // application asks this endpoint and builds whatever panel it wants. The
+    // traffic is one way, as everywhere else in the extension seam: the site
+    // reads a fact, and can write nothing back.
+    //
+    // Only ever served on a protected site. An unprotected one answers 404 on
+    // the whole reserved prefix, above, which is the honest answer -- there is
+    // no directory identity behind an unprotected site to report. An
+    // application should read any non-200 as "no Aegis identity here".
+    //
+    // `no-store`, because a cached answer is a stale role, and shared caches
+    // must never hand one visitor's identity to the next.
+    if (pathOnly === WHOAMI_PATH) {
+        if (req.method !== 'GET' && req.method !== 'HEAD') { notFound(res); return true; }
+        const body = session
+            ? {
+                authenticated: true,
+                login: session.username || '',
+                name: session.user || session.username || '',
+                sid: session.sid || '',
+                admin: session.admin === true
+            }
+            : { authenticated: false };
+        const json = JSON.stringify(body);
+        res.writeHead(session ? 200 : 401, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Content-Length': Buffer.byteLength(json),
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff'
+        });
+        res.end(req.method === 'HEAD' ? undefined : json);
+        return true;
+    }
+
     if (reserved) { notFound(res); return true; }
 
     if (session) {
@@ -888,11 +980,32 @@ async function handleLogin(req, res, ctx, config) {
     }
 
     const groups = Array.isArray(result.groups) ? result.groups : [];
-    if (!groupAllowed(allowedGroupsFor(ctx.slug, ctx.tenantPaths, ctx.projectId), groups)) {
-        // Authenticated but not entitled. Counted, because group probing is a
+    const sid = String(result.sid || '');
+    const allowedUsers = allowedUsersFor(ctx.slug, ctx.tenantPaths, ctx.projectId);
+    const audience = audienceFor(ctx.slug, ctx.tenantPaths, ctx.projectId);
+
+    // No SID, and people are named on this site. The direct-bind path reads the
+    // entry best effort, so a directory that refuses that read leaves the one
+    // field a named person is matched on empty -- and an empty field must not
+    // quietly fall through to the group check and let somebody in on a rule
+    // that was not the one the operator wrote. Refused, and logged as its own
+    // cause: "not in the list" and "could not read your identity" send an
+    // administrator to two very different places.
+    if (!sid && allowedUsers.length) {
+        noteFailure(ip, ctx.projectId);
+        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} (no objectSid returned; the service account may not be able to read it)`);
+        loginPage(res, 403, ctx, { next, error: tr(ctx.lang, 'errForbidden'), username });
+        return true;
+    }
+
+    const verdict = accessFor(
+        allowedGroupsFor(ctx.slug, ctx.tenantPaths, ctx.projectId),
+        allowedUsers, audience, groups, sid);
+    if (!verdict.allowed) {
+        // Authenticated but not entitled. Counted, because probing a list is a
         // way of enumerating accounts.
         noteFailure(ip, ctx.projectId);
-        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} (group_not_allowed)`);
+        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} (not_allowed)`);
         loginPage(res, 403, ctx, { next, error: tr(ctx.lang, 'errForbidden'), username });
         return true;
     }
@@ -906,12 +1019,14 @@ async function handleLogin(req, res, ctx, config) {
         username,
         user: result.displayName || username,
         groups,
+        sid,
+        admin: verdict.admin,
         expiresAt: Date.now() + SESSION_MS,
         // Just checked, by the login itself. The first re-check is a full
         // interval away rather than on the next request.
         nextCheckAt: everyMs > 0 ? Date.now() + everyMs : Infinity
     });
-    console.log(`[Deploy] ${ctx.slug}/${ctx.projectId}: site login by ${username}`);
+    console.log(`[Deploy] ${ctx.slug}/${ctx.projectId}: site login by ${username}${verdict.admin ? ' (site administrator)' : ''}`);
     redirect(res, next, { 'Set-Cookie': sessionCookie(token, Math.floor(SESSION_MS / 1000), ctx.secure) });
     return true;
 }
@@ -964,13 +1079,27 @@ function maybeRevalidate(session, token, ctx, config) {
                 return;
             }
             const groups = Array.isArray(result.groups) ? result.groups : [];
-            const allowed = allowedGroupsFor(ctx.slug, ctx.tenantPaths, ctx.projectId);
-            if (!groupAllowed(allowed, groups)) {
+            // `lookup` searches rather than binding, so it reads the entry and
+            // its SID directly. Falling back to the session's own SID keeps a
+            // session minted before this field existed from being dropped for
+            // having no identity to re-check.
+            const sid = String(result.sid || session.sid || '');
+            const verdict = accessFor(
+                allowedGroupsFor(ctx.slug, ctx.tenantPaths, ctx.projectId),
+                allowedUsersFor(ctx.slug, ctx.tenantPaths, ctx.projectId),
+                audienceFor(ctx.slug, ctx.tenantPaths, ctx.projectId),
+                groups, sid);
+            if (!verdict.allowed) {
                 sessions.delete(token);
-                console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} (no longer in an allowed group)`);
+                console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} (no longer allowed)`);
                 return;
             }
             session.groups = groups;
+            session.sid = sid;
+            // Demotion takes effect on the same timer as removal. An operator
+            // who unticks Administrator has said something about now, not about
+            // the next eight hours.
+            session.admin = verdict.admin;
             session.nextCheckAt = Date.now() + everyMs;
         })
         .catch(() => {
@@ -988,13 +1117,15 @@ function dropSessions(slug, projectId) {
 
 module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
-    PREFIX, LOGIN_PATH, SESSION_COOKIE, LOCK_THRESHOLD, LOCK_MS,
+    PREFIX, LOGIN_PATH, WHOAMI_PATH, SESSION_COOKIE, LOCK_THRESHOLD, LOCK_MS,
     // Test seams. Not part of the contract's public surface; nothing outside
     // tests/siteAuth.test.js should reach for them.
     _setVerifier, _setLookup,
     _escapeHtml: escapeHtml,
     _safeNext: safeNext,
     _groupAllowed: groupAllowed,
+    _accessFor: accessFor,
+    _findUser: findUser,
     _firstCn: firstCn,
     _lockRemaining: lockRemaining,
     _noteFailure: noteFailure,

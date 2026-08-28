@@ -116,7 +116,87 @@ test('route: a known method is stored with the mirror derived from it', async ()
     assert.equal(answer.body.project.method, 'ldap');
     assert.equal(answer.body.project.protected, true);
     assert.deepEqual(storedAuth(id),
-        { method: 'ldap', enabled: true, allowedGroups: ['Domain Admins'] });
+        { method: 'ldap', enabled: true, audience: 'listed',
+          allowedGroups: ['Domain Admins'], allowedUsers: [] });
+});
+
+test('route: a body that names no audience keeps the pre-audience meaning', async () => {
+    // A page that predates the field sends two keys and no more. Groups named
+    // has always meant "those groups"; naming none has always meant the whole
+    // directory. Neither may change under a caller that never asked.
+    const listed = makeProject('site-audience-listed', null);
+    await call('POST /api/deploy/projects/:id/auth',
+        request(listed, { method: 'ldap', allowedGroups: ['Ops'] }));
+    assert.equal(storedAuth(listed).audience, 'listed');
+
+    const open = makeProject('site-audience-open', null);
+    await call('POST /api/deploy/projects/:id/auth',
+        request(open, { method: 'ldap', allowedGroups: [] }));
+    assert.equal(storedAuth(open).audience, 'directory');
+});
+
+test('route: named people are stored, and the administrator flag with them', async () => {
+    const id = makeProject('site-people', null);
+    const answer = await call('POST /api/deploy/projects/:id/auth',
+        request(id, {
+            method: 'ldap',
+            audience: 'listed',
+            allowedGroups: [],
+            allowedUsers: [
+                { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true },
+                { sid: 'S-1-5-21-1-2-3-1200', login: 'JD', name: 'J Doe' }
+            ]
+        }));
+
+    assert.equal(answer.status, 200);
+    assert.deepEqual(storedAuth(id).allowedUsers, [
+        { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true },
+        { sid: 'S-1-5-21-1-2-3-1200', login: 'JD', name: 'J Doe', admin: false }
+    ]);
+    assert.equal(storedAuth(id).audience, 'listed');
+    // The page repaints from the answer, so it has to carry them back.
+    assert.equal(answer.body.project.allowedUsers.length, 2);
+    assert.equal(answer.body.project.audience, 'listed');
+});
+
+test('route: a value that is not a SID is refused, not stored', async () => {
+    // This list is written to projects.json and read by the site guard on every
+    // request. Anything that is not a SID could never match a login, so storing
+    // it would show an access in the panel that does not exist.
+    const id = makeProject('site-bad-sid', null);
+    for (const sid of ['', 'not-a-sid', 'S-1-5', '../../etc', 'S-1-5-21-1-2-3-1103; DROP']) {
+        const answer = await call('POST /api/deploy/projects/:id/auth',
+            request(id, { method: 'ldap', allowedGroups: [], allowedUsers: [{ sid }] }));
+        assert.equal(answer.status, 400, `refused: ${JSON.stringify(sid)}`);
+        assert.equal(answer.body.error, 'bad_allowed_users');
+    }
+    assert.equal(storedAuth(id), null);
+});
+
+test('route: an audience this build has no rule for is refused', async () => {
+    // Refused rather than resolved to a default. A typo must not be the reason
+    // a site opens to the whole directory.
+    const id = makeProject('site-bad-audience', null);
+    const answer = await call('POST /api/deploy/projects/:id/auth',
+        request(id, { method: 'ldap', allowedGroups: [], audience: 'everyone' }));
+    assert.equal(answer.status, 400);
+    assert.equal(answer.body.error, 'bad_audience');
+});
+
+test('route: the same person listed twice is stored once', async () => {
+    // The picker clicked twice, not an error worth refusing the save over.
+    const id = makeProject('site-dup', null);
+    await call('POST /api/deploy/projects/:id/auth',
+        request(id, {
+            method: 'ldap',
+            allowedGroups: [],
+            allowedUsers: [
+                { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', admin: true },
+                { sid: 's-1-5-21-1-2-3-1103', login: 'PV', admin: false }
+            ]
+        }));
+    assert.equal(storedAuth(id).allowedUsers.length, 1);
+    assert.equal(storedAuth(id).allowedUsers[0].admin, true);
 });
 
 test('route: method none stores the mirror as false and unprotects the site', async () => {

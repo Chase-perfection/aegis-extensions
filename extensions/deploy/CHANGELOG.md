@@ -2,6 +2,74 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.1.4
+
+A site can name the people who may sign in, and one of them as its
+administrator.
+
+**Groups were the only way to say who gets in.** A group is a standing rule the
+directory already maintains, which is the right answer when one exists and the
+wrong one when it does not: naming three colleagues meant asking a domain
+administrator for a group, or leaving the site open to everybody the directory
+authenticates. Named people are now a second allow list beside the groups.
+Either one being satisfied opens the site.
+
+They are matched on `objectSid` and not on a login or a DN. It is the only
+identifier that survives a rename and a move between OUs, so an account that
+changes desk keeps its access and an account that is deleted and recreated does
+not inherit it. `objectSid` is now read on every login rather than only when
+nested groups are switched on, and the picker in the Authentication pane
+searches the directory rather than asking anybody to type a SID.
+
+There is a case that fails closed and is worth knowing. When the directory is
+configured with a user DN template, a login binds directly and reads the
+account's entry best effort, so a directory that refuses that read returns no
+SID. If people are named on the site, that login is refused rather than falling
+through to the group rule, and the log says the SID was missing rather than
+saying the person was not on the list. Those are two different problems and they
+send an administrator to two different places.
+
+**Who gets in is now stored instead of being inferred from an empty field.**
+An empty group list used to mean "anyone the directory authenticates". That was
+deliberate and documented, and it stopped working the moment a second list
+existed: an operator who names one person to make them the administrator has not
+said that nobody else may enter, and an operator who names nobody has not said
+that everybody may. A site now carries the answer as a choice, `directory` or
+`listed`, and the pane asks it above the two lists that qualify it.
+
+Nothing migrates. A record written before this release is read under the old
+rule exactly: groups named means those groups, none named means the directory.
+Every existing project keeps the access it has until somebody changes it on
+purpose. What is gone is the shape that used to be indistinguishable from an
+open site, `listed` with both lists empty, which is now closed.
+
+**A site is told who is reading it, so it can manage its own roles.** Aegis says
+two things and stops there:
+
+    GET /__aegis/whoami
+    { "authenticated": true, "login": "PV", "name": "Paul Vue",
+      "sid": "S-1-5-21-...-1103", "admin": true }
+
+The administrator is designated in Aegis, once, when the project is set up. What
+that person may then do is the application's business: it reads this endpoint,
+sees `admin`, and builds whatever access console it wants. The alternative was an
+access panel per deployed application, living in Aegis and edited in Aegis every
+time an application changed its mind about roles, and the point of stopping here
+is that Deploy does not accumulate one product's permission model.
+
+Traffic stays one way, as everywhere else in the extension seam. The site reads
+a fact and can write nothing back. The endpoint answers `no-store`, because a
+cached answer is a stale role and a shared cache would hand one visitor's
+identity to the next. It is served on protected sites only: an unprotected site
+answers 404 on the whole reserved prefix, which is the honest answer, since there
+is no directory identity behind one. An application reads any non-200 as "no
+Aegis identity here".
+
+A group can never confer `admin`. "Whoever is in this group administers the site"
+is a promotion nobody reviews, so the flag is carried by a named person or by no
+one. Demotion takes effect on the group revalidation timer rather than at the end
+of the session: unticking the box says something about now.
+
 ## 0.1.3
 
 Three things a deployment said about itself were not true.

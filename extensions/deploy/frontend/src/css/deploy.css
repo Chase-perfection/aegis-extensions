@@ -1397,6 +1397,60 @@ button.dep-listrow {
     font-size: var(--text-xs);
 }
 
+/* The people named on one site.
+
+   A list of rows and not chips like .dep-auth-groups above, because each row
+   carries a decision: the Administrator tick. A chip is a value you remove; a
+   row is a value you edit, and these are edited. */
+.dep-auth-site-people {
+    margin-bottom: var(--space-md);
+}
+
+.dep-auth-people-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-top: var(--space-xs);
+}
+
+.dep-auth-person {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+}
+
+/* The name takes the slack so the tick and the button line up down the column,
+   whatever the names are. */
+.dep-auth-person-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-main);
+}
+
+/* Tabular figures are not the point here, the muted weight is: the login is how
+   you tell two people with the same display name apart, and nothing more. */
+.dep-auth-person-login {
+    flex: 0 0 auto;
+    color: var(--zinc-300);
+    font-size: var(--text-xs);
+}
+
+/* .dep-check sets a bottom margin for a checkbox that owns its line. Inside a
+   row it does not own the line, so it gives the margin back. */
+.dep-auth-person-admin {
+    flex: 0 0 auto;
+    margin-bottom: 0;
+    white-space: nowrap;
+}
+
 /* The HTTPS half of a site row. A rule rather than a gap or a card inside a
    card: the two halves are one decision about one site, and boxing the second
    would read as a separate setting that happens to sit nearby. */

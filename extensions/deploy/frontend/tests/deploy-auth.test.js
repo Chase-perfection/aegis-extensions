@@ -98,7 +98,9 @@ function site(overrides) {
         name: 'Site A',
         protected: false,
         method: 'none',
+        audience: 'directory',
         allowedGroups: [],
+        allowedUsers: [],
         tls: { enabled: false, certFile: '', keyFile: '' }
     }, overrides || {});
 }
@@ -261,7 +263,10 @@ test('Apply sends the method and the enabled mirror together', async () => {
     const { page, close } = await openAuth(stubs);
     try {
         const body = await applyAndRead(page, 'site-a');
-        assert.deepStrictEqual(body, { method: 'ldap', enabled: true, allowedGroups: ['Admins'] });
+        assert.deepStrictEqual(body, {
+            method: 'ldap', enabled: true, audience: 'directory',
+            allowedGroups: ['Admins'], allowedUsers: []
+        });
     } finally {
         await close();
     }
@@ -279,7 +284,10 @@ test('Apply under none sends no allow list, whatever is still typed in the box',
     try {
         await page.select('#deploy-auth-method-site-a', 'none');
         const body = await applyAndRead(page, 'site-a');
-        assert.deepStrictEqual(body, { method: 'none', enabled: false, allowedGroups: [] });
+        assert.deepStrictEqual(body, {
+            method: 'none', enabled: false, audience: 'directory',
+            allowedGroups: [], allowedUsers: []
+        });
     } finally {
         await close();
     }
@@ -597,5 +605,120 @@ test('the advanced block stays folded when the search base is known, and opens w
             true);
     } finally {
         await open.close();
+    }
+});
+
+test('the audience the site was loaded with is the one shown', async () => {
+    // The selector is the site's stored answer, not a default painted over it.
+    // Showing `directory` on a site that is restricted would invite an operator
+    // to press Apply and open it.
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap', protected: true, audience: 'listed', allowedGroups: ['Admins']
+    })]));
+    const { page, close } = await openAuth(stubs);
+    try {
+        assert.strictEqual(
+            await page.$eval('#deploy-auth-audience-site-a', (e) => e.value), 'listed');
+    } finally {
+        await close();
+    }
+});
+
+test('people loaded with the site are sent back untouched, admin flag included', async () => {
+    // The panel is a round trip. A person the operator did not touch has to
+    // leave in the state they arrived in, or opening the pane and pressing
+    // Apply would quietly demote somebody.
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap',
+        protected: true,
+        audience: 'listed',
+        allowedUsers: [
+            { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true },
+            { sid: 'S-1-5-21-1-2-3-1200', login: 'JD', name: 'J Doe', admin: false }
+        ]
+    })]));
+    stubs['projects/site-a/auth'] = {
+        success: true,
+        project: { id: 'site-a', protected: true, method: 'ldap', audience: 'listed', allowedGroups: [], allowedUsers: [] }
+    };
+    const { page, close } = await openAuth(stubs);
+    try {
+        const body = await applyAndRead(page, 'site-a');
+        assert.strictEqual(body.audience, 'listed');
+        assert.deepStrictEqual(body.allowedUsers, [
+            { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true },
+            { sid: 'S-1-5-21-1-2-3-1200', login: 'JD', name: 'J Doe', admin: false }
+        ]);
+    } finally {
+        await close();
+    }
+});
+
+test('unticking Administrator is what leaves in the body', async () => {
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap',
+        protected: true,
+        audience: 'listed',
+        allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }]
+    })]));
+    stubs['projects/site-a/auth'] = {
+        success: true,
+        project: { id: 'site-a', protected: true, method: 'ldap', audience: 'listed', allowedGroups: [], allowedUsers: [] }
+    };
+    const { page, close } = await openAuth(stubs);
+    try {
+        await page.$eval('.dep-auth-person-admin input', (box) => {
+            box.checked = false;
+            box.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        const body = await applyAndRead(page, 'site-a');
+        assert.strictEqual(body.allowedUsers[0].admin, false);
+    } finally {
+        await close();
+    }
+});
+
+test('Remove takes the person out of the body', async () => {
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap',
+        protected: true,
+        audience: 'listed',
+        allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }]
+    })]));
+    stubs['projects/site-a/auth'] = {
+        success: true,
+        project: { id: 'site-a', protected: true, method: 'ldap', audience: 'listed', allowedGroups: [], allowedUsers: [] }
+    };
+    const { page, close } = await openAuth(stubs);
+    try {
+        await page.$eval('.dep-auth-person button', (b) => b.click());
+        const body = await applyAndRead(page, 'site-a');
+        assert.deepStrictEqual(body.allowedUsers, []);
+    } finally {
+        await close();
+    }
+});
+
+test('under none, the people list leaves as empty like the groups do', async () => {
+    // Same reason as the group list: a rule stored under a method that reads
+    // none of it is shown back on the next load as something being enforced.
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap',
+        protected: true,
+        audience: 'listed',
+        allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }]
+    })]));
+    stubs['projects/site-a/auth'] = {
+        success: true,
+        project: { id: 'site-a', protected: false, method: 'none', audience: 'directory', allowedGroups: [], allowedUsers: [] }
+    };
+    const { page, close } = await openAuth(stubs);
+    try {
+        await page.select('#deploy-auth-method-site-a', 'none');
+        const body = await applyAndRead(page, 'site-a');
+        assert.deepStrictEqual(body.allowedUsers, []);
+        assert.strictEqual(body.audience, 'directory');
+    } finally {
+        await close();
     }
 });

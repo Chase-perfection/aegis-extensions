@@ -1270,13 +1270,13 @@ test('the primary group is computed from the user SID and resolved to a DN', asy
     assert.strictEqual(out.groups.length, 4);
 });
 
-test('objectSid and primaryGroupID are asked for only when nestedGroups is on', async (t) => {
+test('objectSid is always asked for, primaryGroupID only when nestedGroups is on', async (t) => {
     const plain = await startFake({ entries: [userEntry()] });
     t.after(() => plain.close());
     await ldap.verify(Object.assign({ url: plain.url }, SEARCH_CONFIG), 'alice', 'her-password');
     assert.deepStrictEqual(plain.seen.find((s) => s.op === 'search').attributes,
-        ['memberOf', 'displayName', 'cn'],
-        'a directory that is not AD is never asked for AD attributes');
+        ['memberOf', 'displayName', 'cn', 'objectSid'],
+        'the SID is what an allow list of named people is matched on, never optional');
 
     const nested = await startFake({
         onSearch: (seen, index) => (index === 0 ? { entries: [userEntry()] } : { entries: [] })
@@ -1285,7 +1285,7 @@ test('objectSid and primaryGroupID are asked for only when nestedGroups is on', 
     await ldap.verify(Object.assign({ url: nested.url }, SEARCH_CONFIG, { nestedGroups: true }), 'alice', 'her-password');
     assert.deepStrictEqual(nested.seen.find((s) => s.op === 'search').attributes,
         ['memberOf', 'displayName', 'cn', 'objectSid', 'primaryGroupID'],
-        'the two extra attributes ride along on the search that is already happening');
+        'primaryGroupID rides along on the search that is already happening');
 });
 
 test('a directory that refuses the closure search still logs the user in', async (t) => {
