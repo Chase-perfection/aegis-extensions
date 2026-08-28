@@ -45,6 +45,7 @@ const projectStore = require('./projectStore');
 const siteAuth = require('./siteAuth');
 const siteConfig = require('./siteConfig');
 const runtime = require('./runtime');
+const firewall = require('./firewall');
 
 /** First port handed out. Each project takes the next free one above it. */
 const DEFAULT_PORT_BASE = 3081;
@@ -540,6 +541,11 @@ function startSiteFor({ slug, tenantPaths, project }) {
     // network, which is the point of deploying it.
     server.listen(project.port, '0.0.0.0', () => {
         console.log(`[Deploy] ${k}: serving on ${tlsOptions ? 'https' : 'http'}://0.0.0.0:${project.port}/`);
+        // Binding is half of being reachable on Windows; the other half is the
+        // host firewall. Not awaited and never fatal: a site that is up and
+        // unreachable is a problem an operator can see, and refusing to serve
+        // because a firewall call was slow is one they cannot.
+        firewall.ensureFor(slug, project.id, project.port).catch(() => { });
     });
     servers.set(k, server);
     return server;
@@ -570,6 +576,11 @@ function startAllSites({ pathsFor, tenantsRoot }) {
             startSiteFor({ slug, tenantPaths, project });
         }
     }
+    // After the listeners, because the sweep reads the records rather than the
+    // listeners and does not need them up. It closes rules whose project is
+    // gone, which no per-project hook can see: nothing fires for a project
+    // deleted while the service was stopped.
+    firewall.reconcile({ pathsFor, tenantsRoot }).catch(() => { });
 }
 
 /**

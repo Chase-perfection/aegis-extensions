@@ -2,6 +2,59 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.1.5
+
+A deployed site is reachable from the other machines on the network, which is
+what deploying it was for.
+
+**It was not, and nothing said so.** `siteServer` binds `0.0.0.0` on purpose,
+with a comment saying a site is reached from other machines. On Windows that is
+half of it: the listener is up, and the host firewall drops the packets before
+they arrive. Aegis opened exactly one port ever, 3000, in
+`start-dashboard.ps1`, and no site's. The symptom is the worst kind, because it
+looks like the wrong thing: a browser reports a timeout, not a refusal, so a
+site that is running and correctly configured reads as a site that is down.
+A closed port answers with a reset and says "nothing here"; a firewall says
+nothing at all.
+
+With `AEGIS_DEPLOY_FIREWALL=1` Deploy now opens one inbound TCP rule per
+project, on the port that project was actually given. Created when the site
+starts, removed when the project is deleted, including when a preview ages out
+of the expiry sweep, and the whole set reconciled against the records at every
+boot. That last one is not redundancy: nothing fires for a project deleted while
+the service was stopped, and a rule left behind is a port open on a host with no
+project left to explain it.
+
+One port, never the range. The first shape this took was a single rule over
+3081-3180, which is ninety-nine ports opened for one site, and still wrong the
+day `AEGIS_SITES_PORT_BASE` moves.
+
+**Off unless the host says so.** The switch is read from the service's
+environment and reachable from no browser, exactly like `AEGIS_DEPLOY_ENABLED`
+and `AEGIS_DEPLOY_RUNTIME`. Opening a port because a tenant administrator
+clicked New Project is a privilege the extension would be granting itself, on a
+machine holding AD audit data. Unlike `AEGIS_DEPLOY_ENABLED`, installing the
+extension does not write this one: it is a change-management decision about a
+server, not a consequence of clicking Install.
+
+**`LocalSubnet` by default, not `Any`.** It is the Windows primitive for the
+networks the machine is actually on, so there is no subnet arithmetic here to
+get wrong and the default stays correct on a host that is not yours.
+`AEGIS_DEPLOY_FIREWALL_SCOPE` takes an address, a CIDR block, a range or a list
+for a domain that spans subnets. A value Windows would not take falls back to
+`LocalSubnet` rather than to something wider: a typo must never be the reason a
+site becomes reachable from more places than anybody meant. Profiles are Domain
+and Private, because `Public` is the profile a machine uses on a network it does
+not trust, and reaching it takes naming it.
+
+**A firewall call never fails a deployment.** The site comes up either way, and
+a refusal is logged with the reason and with the command to run by hand. A site
+that is up and unreachable is a problem an operator can see and fix in a minute;
+a deployment rolled back because a firewall call timed out is one they cannot.
+
+None of it runs anywhere but Windows. Behind a reverse proxy or a load balancer
+the local firewall is not the door, and there is nothing here to do.
+
 ## 0.1.4
 
 A site can name the people who may sign in, and one of them as its

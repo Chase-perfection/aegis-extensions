@@ -28,6 +28,7 @@ const siteConfig = require('./siteConfig');
 const runs = require('./runs');
 const runStore = require('./runStore');
 const runtime = require('./runtime');
+const firewall = require('./firewall');
 
 /** How long a preview survives with no commit and no visitor. */
 const EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -104,6 +105,11 @@ function remove({ slug, tenantPaths, projectId }) {
     runs.dropProject(slug, projectId);
     runStore.dropProject(tenantPaths, projectId);
     siteServer.invalidateHostIndex();
+    // Here rather than in the delete route, because the expiry sweep runs this
+    // same sequence: a preview that aged out would otherwise leave its port
+    // open on the host with no project left to explain it. Not awaited, for the
+    // same reason as opening it: a firewall call must not hold up a delete.
+    firewall.removeFor(slug, projectId).catch(() => { });
     return removed;
 }
 

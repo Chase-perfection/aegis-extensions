@@ -48,6 +48,7 @@ const authMethods = require('./authMethods');
 const directoryHint = require('./directoryHint');
 const ldap = require('./ldap');
 const siteAuth = require('./siteAuth');
+const firewall = require('./firewall');
 const siteConfig = require('./siteConfig');
 const previews = require('./previews');
 const runtime = require('./runtime');
