@@ -519,10 +519,10 @@
                                         data-i18n="deploy_auth_state_none">Not configured</span>
                                 </div>
                                 <p class="dep-body" data-i18n="deploy_auth_body">A deployed site answers on its own
-                                    port to anyone who can reach it. Each site below picks how it asks who is knocking:
-                                    nothing at all, or a login against your directory. The directory is configured once
-                                    here and then chosen per site, where each site can also be moved to HTTPS. Aegis
-                                    never stores a user password; it checks each login against the directory.</p>
+                                    port to anyone who can reach it. Connect your directory once here; each site then
+                                    chooses, on its own Authentication tab, whether it asks for a login and who may
+                                    sign in. Aegis never stores a user password; it checks each login against the
+                                    directory.</p>
 
                                 <!-- The three fields an operator actually has to know. Everything
                                      else follows from the domain name and lives under Advanced. -->
@@ -687,11 +687,6 @@
                                     data-i18n="deploy_auth_groups_title">Groups returned for that account</h3>
                                 <div id="deploy-auth-groups" class="dep-auth-groups"></div>
 
-                                <h3 class="dep-subtitle" data-i18n="deploy_auth_sites_title">Protected sites</h3>
-                                <div id="deploy-auth-sites"></div>
-                                <p id="deploy-auth-sites-empty" class="dep-empty" hidden
-                                    data-i18n="deploy_auth_sites_empty">No site deployed yet. Deploy one, then come
-                                    back to protect it.</p>
                             </div>
                         </section>
 

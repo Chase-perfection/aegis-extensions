@@ -105,6 +105,19 @@ function site(overrides) {
     }, overrides || {});
 }
 
+/** One row of GET /api/deploy/projects, so the project page has something to open. */
+function project(overrides) {
+    return Object.assign({
+        id: 'site-a', name: 'Site A', repoFullName: 'acme/site-a', branch: 'main', rootDir: null,
+        installCmd: null, buildCmd: null, outputDir: null,
+        lastSha: 'abcdef1234567890', previousSha: null, deployedAt: Date.now() - 60000,
+        lastError: null, failureCount: 0, history: [], port: 4001, url: 'http://127.0.0.1:4001/',
+        serving: true, protected: false, allowedGroups: [], tls: {}, envCount: 0, spaFallback: false,
+        hostname: null, hostUrl: null, routerPort: null, releases: [], runtime: 'static',
+        startCmd: null, running: null, parentId: null, previews: []
+    }, overrides || {});
+}
+
 function authPayload(sites, ldap, methods) {
     return {
         success: true,
@@ -123,16 +136,24 @@ function baseStubs(payload, suggest) {
     return {
         'deploy/status': STATUS_OK,
         'auth/me': ME_ADMIN,
-        'deploy/projects': { success: true, projects: [] },
+        'deploy/projects': { success: true, projects: [project()] },
         'deploy/auth/suggest': suggest === undefined ? { success: true, suggest: null } : suggest,
         'deploy/auth': payload
     };
 }
 
-/** Opens the pane and waits for the first site row to exist. */
+/** Opens the directory pane and waits for GET /api/deploy/auth to have painted it. */
 async function openAuth(stubs) {
     const opened = await openPage(browser, `${server.url}/pages/deploy.html#auth`, stubs);
-    await opened.page.waitForSelector('#deploy-auth-sites .dep-auth-site', { timeout: 5000 });
+    await opened.page.waitForSelector('#deploy-auth[data-loaded="true"]', { timeout: 5000 });
+    return opened;
+}
+
+/** Opens one project's Authentication tab and waits for its card. */
+async function openSiteAuth(stubs, id) {
+    const opened = await openPage(browser,
+        `${server.url}/pages/deploy.html#project/${id || 'site-a'}/authentification`, stubs);
+    await opened.page.waitForSelector('.dep-auth-tab .dep-auth-site', { timeout: 5000 });
     return opened;
 }
 
@@ -151,7 +172,7 @@ function readSelector(page, siteId) {
 // --- The selector --------------------------------------------------------
 
 test('the selector offers the vocabulary the backend sent, with the stored method chosen', async () => {
-    const { page, close } = await openAuth(baseStubs(authPayload([site({ method: 'ldap', protected: true })])));
+    const { page, close } = await openSiteAuth(baseStubs(authPayload([site({ method: 'ldap', protected: true })])));
     try {
         const sel = await readSelector(page, 'site-a');
         assert.strictEqual(sel.value, 'ldap');
@@ -168,7 +189,7 @@ test('a method the backend offers and the page has no label for is listed under 
     // The page must not drop an option the server accepts: a selector that
     // hides one is a selector the operator cannot use to undo it.
     const payload = authPayload([site()], null, ['none', 'ldap', 'oidc']);
-    const { page, close } = await openAuth(baseStubs(payload));
+    const { page, close } = await openSiteAuth(baseStubs(payload));
     try {
         const sel = await readSelector(page, 'site-a');
         assert.deepStrictEqual(sel.options.map((o) => o.value), ['none', 'ldap', 'oidc']);
@@ -182,7 +203,7 @@ test('a stored method this build no longer offers is still shown, and shown as s
     // Otherwise the row would display the site as something it is not, and
     // Apply would write that misreading back.
     const payload = authPayload([site({ method: 'saml', protected: true })], null, ['none', 'ldap']);
-    const { page, close } = await openAuth(baseStubs(payload));
+    const { page, close } = await openSiteAuth(baseStubs(payload));
     try {
         const sel = await readSelector(page, 'site-a');
         assert.strictEqual(sel.value, 'saml');
@@ -198,7 +219,7 @@ test('a record from before the selector reads as the directory', async () => {
     // this pane does not, and the page still has to be right.
     const stored = site({ protected: true });
     delete stored.method;
-    const { page, close } = await openAuth(baseStubs(authPayload([stored])));
+    const { page, close } = await openSiteAuth(baseStubs(authPayload([stored])));
     try {
         assert.strictEqual((await readSelector(page, 'site-a')).value, 'ldap');
     } finally {
@@ -207,7 +228,7 @@ test('a record from before the selector reads as the directory', async () => {
 });
 
 test('allowed groups belong to the directory: hidden under none, shown under ldap', async () => {
-    const { page, close } = await openAuth(baseStubs(authPayload([site({ method: 'ldap', protected: true })])));
+    const { page, close } = await openSiteAuth(baseStubs(authPayload([site({ method: 'ldap', protected: true })])));
     try {
         assert.strictEqual((await readSelector(page, 'site-a')).groupsHidden, false);
 
@@ -238,11 +259,14 @@ async function applyAndRead(page, siteId) {
     }, siteId);
     // Not "the note changed": the row blanks its note while the request is out,
     // so a wait that accepts any change reads the blank and asserts against ''.
+    // The card is rebuilt by the project reload a save triggers, so the element
+    // can be gone for a tick, and "Saving." is not the answer being waited for.
     await page.waitForFunction(
         (id) => {
-            const row = document.getElementById('deploy-auth-method-' + id).closest('.dep-auth-site');
-            const note = row.querySelector('.dep-auth-site-note');
-            return !note.hidden && note.textContent.trim() !== '';
+            const sel = document.getElementById('deploy-auth-method-' + id);
+            const note = sel && sel.closest('.dep-auth-site').querySelector('.dep-auth-site-note');
+            const text = note ? note.textContent.trim() : '';
+            return !!note && !note.hidden && text !== '' && text !== 'Saving.';
         },
         { timeout: 5000 },
         siteId
@@ -260,13 +284,16 @@ test('Apply sends the method and the enabled mirror together', async () => {
         success: true,
         project: { id: 'site-a', protected: true, method: 'ldap', allowedGroups: ['Admins'] }
     };
-    const { page, close } = await openAuth(stubs);
+    const { page, close } = await openSiteAuth(stubs);
     try {
         const body = await applyAndRead(page, 'site-a');
         assert.deepStrictEqual(body, {
             method: 'ldap', enabled: true, audience: 'directory',
             allowedGroups: ['Admins'], allowedUsers: []
         });
+        // The tab is rebuilt by the project reload that follows a save. The
+        // confirmation has to survive that, or the operator sees nothing happen.
+        assert.strictEqual(await page.$eval('.dep-auth-site-note', (n) => n.textContent.trim()), 'Saved.');
     } finally {
         await close();
     }
@@ -280,7 +307,7 @@ test('Apply under none sends no allow list, whatever is still typed in the box',
         success: true,
         project: { id: 'site-a', protected: false, method: 'none', allowedGroups: [] }
     };
-    const { page, close } = await openAuth(stubs);
+    const { page, close } = await openSiteAuth(stubs);
     try {
         await page.select('#deploy-auth-method-site-a', 'none');
         const body = await applyAndRead(page, 'site-a');
@@ -296,7 +323,7 @@ test('Apply under none sends no allow list, whatever is still typed in the box',
 test('a refused method names the refusal rather than the generic sentence', async () => {
     const stubs = baseStubs(authPayload([site({ method: 'ldap', protected: true })]));
     stubs['projects/site-a/auth'] = { success: false, error: 'bad_auth_method' };
-    const { page, close } = await openAuth(stubs);
+    const { page, close } = await openSiteAuth(stubs);
     try {
         await applyAndRead(page, 'site-a');
         const note = await page.$eval('.dep-auth-site-note', (n) => n.textContent.trim());
@@ -615,7 +642,7 @@ test('the audience the site was loaded with is the one shown', async () => {
     const stubs = baseStubs(authPayload([site({
         method: 'ldap', protected: true, audience: 'listed', allowedGroups: ['Admins']
     })]));
-    const { page, close } = await openAuth(stubs);
+    const { page, close } = await openSiteAuth(stubs);
     try {
         assert.strictEqual(
             await page.$eval('#deploy-auth-audience-site-a', (e) => e.value), 'listed');
@@ -641,7 +668,7 @@ test('people loaded with the site are sent back untouched, admin flag included',
         success: true,
         project: { id: 'site-a', protected: true, method: 'ldap', audience: 'listed', allowedGroups: [], allowedUsers: [] }
     };
-    const { page, close } = await openAuth(stubs);
+    const { page, close } = await openSiteAuth(stubs);
     try {
         const body = await applyAndRead(page, 'site-a');
         assert.strictEqual(body.audience, 'listed');
@@ -665,7 +692,7 @@ test('unticking Administrator is what leaves in the body', async () => {
         success: true,
         project: { id: 'site-a', protected: true, method: 'ldap', audience: 'listed', allowedGroups: [], allowedUsers: [] }
     };
-    const { page, close } = await openAuth(stubs);
+    const { page, close } = await openSiteAuth(stubs);
     try {
         await page.$eval('.dep-auth-person-admin input', (box) => {
             box.checked = false;
@@ -689,11 +716,75 @@ test('Remove takes the person out of the body', async () => {
         success: true,
         project: { id: 'site-a', protected: true, method: 'ldap', audience: 'listed', allowedGroups: [], allowedUsers: [] }
     };
-    const { page, close } = await openAuth(stubs);
+    const { page, close } = await openSiteAuth(stubs);
     try {
         await page.$eval('.dep-auth-person button', (b) => b.click());
         const body = await applyAndRead(page, 'site-a');
         assert.deepStrictEqual(body.allowedUsers, []);
+    } finally {
+        await close();
+    }
+});
+
+// --- Where things live ---------------------------------------------------
+
+test('#auth carries the directory connection and no site row', async () => {
+    const { page, close } = await openAuth(baseStubs(authPayload([site({ method: 'ldap', protected: true })])));
+    try {
+        const state = await page.evaluate(() => ({
+            rows: document.querySelectorAll('.dep-auth-site').length,
+            list: !!document.getElementById('deploy-auth-sites'),
+            form: !!document.getElementById('deploy-auth-url')
+        }));
+        assert.deepStrictEqual(state, { rows: 0, list: false, form: true });
+    } finally {
+        await close();
+    }
+});
+
+test('the project page has an Authentication tab, and it is the current one', async () => {
+    const { page, close } = await openSiteAuth(baseStubs(authPayload([site()])));
+    try {
+        const tab = await page.$eval('.dep-tab.is-current', (a) => ({
+            href: a.getAttribute('href'), text: a.textContent.trim()
+        }));
+        assert.deepStrictEqual(tab, { href: '#project/site-a/authentification', text: 'Authentication' });
+    } finally {
+        await close();
+    }
+});
+
+test('the tab shows only its own site', async () => {
+    const stubs = baseStubs(authPayload([site(), site({ id: 'site-b', name: 'Site B' })]));
+    stubs['deploy/projects'] = {
+        success: true,
+        projects: [project(), project({ id: 'site-b', name: 'Site B' })]
+    };
+    const { page, close } = await openSiteAuth(stubs, 'site-b');
+    try {
+        const ids = await page.$$eval('.dep-auth-tab select[id^="deploy-auth-method-"]', (s) => s.map((x) => x.id));
+        assert.deepStrictEqual(ids, ['deploy-auth-method-site-b']);
+    } finally {
+        await close();
+    }
+});
+
+test('Settings sends the operator to the project\'s own tab, not to #auth', async () => {
+    const { page, close } = await openPage(browser,
+        `${server.url}/pages/deploy.html#project/site-a/settings`, baseStubs(authPayload()));
+    try {
+        await page.waitForSelector('.dep-btn[href="#project/site-a/authentification"]', { timeout: 5000 });
+        assert.strictEqual(await page.$('.dep-btn[href="#auth"]'), null);
+    } finally {
+        await close();
+    }
+});
+
+test('a tab with no directory connected says so and links to where it is connected', async () => {
+    const ldap = ldapConfigured({ configured: false, url: '', bindDn: '', hasPassword: false, baseDn: '' });
+    const { page, close } = await openSiteAuth(baseStubs(authPayload([site()], ldap)));
+    try {
+        await page.waitForSelector('.dep-auth-tab-nodir:not([hidden]) a[href="#auth"]', { timeout: 5000 });
     } finally {
         await close();
     }
@@ -712,7 +803,7 @@ test('under none, the people list leaves as empty like the groups do', async () 
         success: true,
         project: { id: 'site-a', protected: false, method: 'none', audience: 'directory', allowedGroups: [], allowedUsers: [] }
     };
-    const { page, close } = await openAuth(stubs);
+    const { page, close } = await openSiteAuth(stubs);
     try {
         await page.select('#deploy-auth-method-site-a', 'none');
         const body = await applyAndRead(page, 'site-a');

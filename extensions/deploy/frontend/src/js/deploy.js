@@ -2212,6 +2212,10 @@
         // deploys one.
         { id: 'data', labelKey: 'deploy_tab_data', labelFallback: 'Data', render: dataPanel, hiddenForPreview: false },
         { id: 'domains', labelKey: 'deploy_tab_domains', labelFallback: 'Domains', render: domainsTab, hiddenForPreview: true },
+        // Shown on a preview too: a preview is its own project record with its
+        // own auth, and a branch under review is exactly what somebody wants to
+        // put behind a login.
+        { id: 'authentification', labelKey: 'deploy_tab_auth', labelFallback: 'Authentication', render: authTab, hiddenForPreview: false },
         { id: 'settings', labelKey: 'deploy_tab_settings', labelFallback: 'Settings', render: settingsTab, hiddenForPreview: false }
     ];
 
@@ -2612,7 +2616,7 @@
                 'Anyone who can reach the port can read this site.')));
         var protect = el('a', 'dep-btn dep-btn-ghost dep-btn-small',
             tr('deploy_settings_protect', 'Who may open it'));
-        protect.href = '#auth';
+        protect.href = '#project/' + encodeURIComponent(project.id) + '/authentification';
         wrap.appendChild(protect);
 
         wrap.appendChild(el('h2', 'dep-subtitle dep-danger-title', tr('deploy_settings_danger', 'Remove')));
@@ -4073,6 +4077,24 @@
     var authLoaded = false;
     var bindPasswordTouched = false;
 
+    /**
+     * What a save on a project's Authentication tab said, kept for the card the
+     * save is about to rebuild.
+     *
+     * Every save reloads the project list, and that repaints the open tab from
+     * scratch, so the "Saved." the operator is waiting for would disappear with
+     * the card it was written in. Keyed `<id>/auth` and `<id>/tls`, read once.
+     */
+    var siteAuthFlash = {};
+
+    function showFlash(note, key) {
+        var text = siteAuthFlash[key];
+        delete siteAuthFlash[key];
+        if (!text) return;
+        note.textContent = text;
+        note.hidden = false;
+    }
+
     // One code, one thing to change. A directory that refuses the service
     // account and a directory that cannot be reached at all need different
     // moves from the operator, and "authentication failed" would cover both.
@@ -4281,140 +4303,195 @@
     }
 
     /**
-     * One row per deployed site.
+     * One site's protection, as a card.
+     *
+     * Rendered by that project's Authentication tab; the directory it checks a
+     * login against is connected once, for every site, on #auth.
      *
      * Protection is per site rather than global because the two sites an install
      * runs are rarely the same audience: an internal dashboard and a public
      * landing page live side by side on the same server.
      */
-    function renderAuthSites(sites) {
-        var box = document.getElementById('deploy-auth-sites');
-        var empty = document.getElementById('deploy-auth-sites-empty');
-        if (!box) return;
-        box.textContent = '';
-        var list = sites || [];
-        if (empty) empty.hidden = !!list.length;
+    function buildSiteAuthCard(site) {
+        var wrap = el('div', 'dep-auth-site');
 
-        list.forEach(function (site) {
-            var wrap = el('div', 'dep-auth-site');
-            wrap.appendChild(el('h4', 'dep-auth-site-name', site.name || site.id));
+        // The method, chosen rather than switched on. A checkbox could only
+        // ever say "the default one or nothing", which is what sent the
+        // operator to a login form they had not picked.
+        var methodLabel = el('label', 'dep-label', tr('deploy_auth_method', 'Authentication'));
+        methodLabel.setAttribute('data-i18n', 'deploy_auth_method');
+        methodLabel.htmlFor = 'deploy-auth-method-' + site.id;
+        var methodSelect = document.createElement('select');
+        methodSelect.className = 'dep-input';
+        methodSelect.id = methodLabel.htmlFor;
+        methodSelect.disabled = !isAdmin;
 
-            // The method, chosen rather than switched on. A checkbox could only
-            // ever say "the default one or nothing", which is what sent the
-            // operator to a login form they had not picked.
-            var methodLabel = el('label', 'dep-label', tr('deploy_auth_method', 'Authentication'));
-            methodLabel.setAttribute('data-i18n', 'deploy_auth_method');
-            methodLabel.htmlFor = 'deploy-auth-method-' + site.id;
-            var methodSelect = document.createElement('select');
-            methodSelect.className = 'dep-input';
-            methodSelect.id = methodLabel.htmlFor;
-            methodSelect.disabled = !isAdmin;
-
-            var current = site.method || (site.protected ? 'ldap' : 'none');
-            var offered = authMethods.slice();
-            // A stored method this build no longer offers still has to appear,
-            // or the selector would show the site as something it is not and
-            // rewrite it that way on the next Apply.
-            if (offered.indexOf(current) < 0) offered.push(current);
-            offered.forEach(function (m) {
-                var opt = document.createElement('option');
-                opt.value = m;
-                opt.textContent = authMethodLabel(m);
-                // data-i18n as well as the text: the text paints it now, and
-                // the attribute lets applyTranslations repaint it when the
-                // language switches. A method with no label key carries its own
-                // identifier, which is the same in every language.
-                if (AUTH_METHOD_LABELS[m]) opt.setAttribute('data-i18n', AUTH_METHOD_LABELS[m][0]);
-                if (m === current) opt.selected = true;
-                methodSelect.appendChild(opt);
-            });
-            wrap.appendChild(methodLabel);
-            wrap.appendChild(methodSelect);
-
-            // Who gets in, asked before the two lists that answer it. An
-            // operator reads this row top to bottom, and "only the people
-            // below" has to be a visible choice rather than something inferred
-            // from having typed in a field further down.
-            var audienceLabel = el('label', 'dep-label', tr('deploy_auth_audience', 'Who may sign in'));
-            audienceLabel.setAttribute('data-i18n', 'deploy_auth_audience');
-            var audienceSelect = document.createElement('select');
-            audienceSelect.className = 'dep-input';
-            audienceSelect.id = 'deploy-auth-audience-' + site.id;
-            audienceLabel.htmlFor = audienceSelect.id;
-            audienceSelect.disabled = !isAdmin;
-            [['directory', 'deploy_auth_audience_directory', 'Anyone the directory authenticates'],
-             ['listed', 'deploy_auth_audience_listed', 'Only the groups and people listed below']
-            ].forEach(function (row) {
-                var opt = document.createElement('option');
-                opt.value = row[0];
-                opt.textContent = tr(row[1], row[2]);
-                opt.setAttribute('data-i18n', row[1]);
-                if (row[0] === (site.audience || 'directory')) opt.selected = true;
-                audienceSelect.appendChild(opt);
-            });
-
-            // Short label, sentence underneath: .dep-label is uppercase and
-            // letter-spaced, which a whole sentence would be unreadable in.
-            var groupsBlock = el('div', 'dep-auth-site-groups');
-            var label = el('label', 'dep-label', tr('deploy_auth_allowed', 'Allowed groups'));
-            label.setAttribute('data-i18n', 'deploy_auth_allowed');
-            var groups = document.createElement('input');
-            groups.type = 'text';
-            groups.className = 'dep-input';
-            groups.autocomplete = 'off';
-            groups.spellcheck = false;
-            groups.value = (site.allowedGroups || []).join(', ');
-            groups.disabled = !isAdmin;
-            label.htmlFor = 'deploy-auth-groups-' + site.id;
-            groups.id = label.htmlFor;
-            groupsBlock.appendChild(label);
-            groupsBlock.appendChild(groups);
-            var hint = el('p', 'dep-hint', tr('deploy_auth_allowed_hint',
-                'Separated by commas.'));
-            hint.setAttribute('data-i18n', 'deploy_auth_allowed_hint');
-            groupsBlock.appendChild(hint);
-
-            var peopleBlock = buildPeopleBlock(site);
-
-            wrap.appendChild(audienceLabel);
-            wrap.appendChild(audienceSelect);
-            wrap.appendChild(groupsBlock);
-            wrap.appendChild(peopleBlock.root);
-
-            // Groups belong to the directory and mean nothing under any other
-            // method. Hidden rather than removed: the value stays typed, so
-            // switching away and back does not cost the operator the list.
-            function paintGroups() {
-                var ldap = methodSelect.value === 'ldap';
-                audienceLabel.hidden = !ldap;
-                audienceSelect.hidden = !ldap;
-                groupsBlock.hidden = !ldap;
-                peopleBlock.root.hidden = !ldap;
-            }
-            paintGroups();
-            methodSelect.addEventListener('change', paintGroups);
-
-            var apply = el('button', 'dep-btn dep-btn-ghost dep-btn-small', tr('deploy_auth_apply', 'Apply'));
-            apply.setAttribute('data-i18n', 'deploy_auth_apply');
-            apply.type = 'button';
-            apply.disabled = !isAdmin;
-            var note = el('p', 'dep-auth-site-note', '');
-            note.hidden = true;
-            apply.addEventListener('click', function () {
-                saveSiteAuth(site, {
-                    method: methodSelect,
-                    groups: groups,
-                    audience: audienceSelect,
-                    people: peopleBlock.value
-                }, apply, note);
-            });
-            wrap.appendChild(apply);
-            wrap.appendChild(note);
-
-            appendTlsBlock(wrap, site, methodSelect);
-
-            box.appendChild(wrap);
+        var current = site.method || (site.protected ? 'ldap' : 'none');
+        var offered = authMethods.slice();
+        // A stored method this build no longer offers still has to appear,
+        // or the selector would show the site as something it is not and
+        // rewrite it that way on the next Apply.
+        if (offered.indexOf(current) < 0) offered.push(current);
+        offered.forEach(function (m) {
+            var opt = document.createElement('option');
+            opt.value = m;
+            opt.textContent = authMethodLabel(m);
+            // data-i18n as well as the text: the text paints it now, and
+            // the attribute lets applyTranslations repaint it when the
+            // language switches. A method with no label key carries its own
+            // identifier, which is the same in every language.
+            if (AUTH_METHOD_LABELS[m]) opt.setAttribute('data-i18n', AUTH_METHOD_LABELS[m][0]);
+            if (m === current) opt.selected = true;
+            methodSelect.appendChild(opt);
         });
+        wrap.appendChild(methodLabel);
+        wrap.appendChild(methodSelect);
+
+        // Who gets in, asked before the two lists that answer it. An
+        // operator reads this row top to bottom, and "only the people
+        // below" has to be a visible choice rather than something inferred
+        // from having typed in a field further down.
+        var audienceLabel = el('label', 'dep-label', tr('deploy_auth_audience', 'Who may sign in'));
+        audienceLabel.setAttribute('data-i18n', 'deploy_auth_audience');
+        var audienceSelect = document.createElement('select');
+        audienceSelect.className = 'dep-input';
+        audienceSelect.id = 'deploy-auth-audience-' + site.id;
+        audienceLabel.htmlFor = audienceSelect.id;
+        audienceSelect.disabled = !isAdmin;
+        [['directory', 'deploy_auth_audience_directory', 'Anyone the directory authenticates'],
+         ['listed', 'deploy_auth_audience_listed', 'Only the groups and people listed below']
+        ].forEach(function (row) {
+            var opt = document.createElement('option');
+            opt.value = row[0];
+            opt.textContent = tr(row[1], row[2]);
+            opt.setAttribute('data-i18n', row[1]);
+            if (row[0] === (site.audience || 'directory')) opt.selected = true;
+            audienceSelect.appendChild(opt);
+        });
+
+        // Short label, sentence underneath: .dep-label is uppercase and
+        // letter-spaced, which a whole sentence would be unreadable in.
+        var groupsBlock = el('div', 'dep-auth-site-groups');
+        var label = el('label', 'dep-label', tr('deploy_auth_allowed', 'Allowed groups'));
+        label.setAttribute('data-i18n', 'deploy_auth_allowed');
+        var groups = document.createElement('input');
+        groups.type = 'text';
+        groups.className = 'dep-input';
+        groups.autocomplete = 'off';
+        groups.spellcheck = false;
+        groups.value = (site.allowedGroups || []).join(', ');
+        groups.disabled = !isAdmin;
+        label.htmlFor = 'deploy-auth-groups-' + site.id;
+        groups.id = label.htmlFor;
+        groupsBlock.appendChild(label);
+        groupsBlock.appendChild(groups);
+        var hint = el('p', 'dep-hint', tr('deploy_auth_allowed_hint',
+            'Separated by commas.'));
+        hint.setAttribute('data-i18n', 'deploy_auth_allowed_hint');
+        groupsBlock.appendChild(hint);
+
+        var peopleBlock = buildPeopleBlock(site);
+
+        wrap.appendChild(audienceLabel);
+        wrap.appendChild(audienceSelect);
+        wrap.appendChild(groupsBlock);
+        wrap.appendChild(peopleBlock.root);
+
+        // Groups belong to the directory and mean nothing under any other
+        // method. Hidden rather than removed: the value stays typed, so
+        // switching away and back does not cost the operator the list.
+        function paintGroups() {
+            var ldap = methodSelect.value === 'ldap';
+            audienceLabel.hidden = !ldap;
+            audienceSelect.hidden = !ldap;
+            groupsBlock.hidden = !ldap;
+            peopleBlock.root.hidden = !ldap;
+        }
+        paintGroups();
+        methodSelect.addEventListener('change', paintGroups);
+
+        var apply = el('button', 'dep-btn dep-btn-ghost dep-btn-small', tr('deploy_auth_apply', 'Apply'));
+        apply.setAttribute('data-i18n', 'deploy_auth_apply');
+        apply.type = 'button';
+        apply.disabled = !isAdmin;
+        var note = el('p', 'dep-auth-site-note', '');
+        note.hidden = true;
+        showFlash(note, site.id + '/auth');
+        apply.addEventListener('click', function () {
+            saveSiteAuth(site, {
+                method: methodSelect,
+                groups: groups,
+                audience: audienceSelect,
+                people: peopleBlock.value
+            }, apply, note);
+        });
+        wrap.appendChild(apply);
+        wrap.appendChild(note);
+
+        appendTlsBlock(wrap, site, methodSelect);
+        return wrap;
+    }
+
+    /**
+     * A project's Authentication tab: its card, read from the payload the
+     * directory pane also uses.
+     *
+     * Fetched on every render rather than held, because the save that just
+     * happened is what triggered this render, and the card shows saved state.
+     *
+     * The directory is not configured here. With none connected the card still
+     * renders, because None and HTTPS are answers that need no directory, and a
+     * line above it says where the connection is made.
+     */
+    function authTab(project) {
+        var wrap = el('div', 'dep-block dep-auth-tab');
+        wrap.appendChild(el('h2', 'dep-subtitle', tr('deploy_tab_auth', 'Authentication')));
+        wrap.appendChild(el('p', 'dep-hint', tr('deploy_auth_tab_body',
+            'Who may open this site, and whether it is served over HTTPS. The directory these logins are checked against is connected once, for every site, under Authentication in the side menu.')));
+
+        var nodir = el('p', 'dep-hint dep-auth-tab-nodir', '');
+        nodir.hidden = true;
+        var note = el('p', 'dep-note', '');
+        note.hidden = true;
+        var box = el('div', '');
+        wrap.appendChild(nodir);
+        wrap.appendChild(note);
+        wrap.appendChild(box);
+
+        window.api('/api/deploy/auth')
+            .then(function (r) { return readJson(r, '/api/deploy/auth'); })
+            .then(function (data) {
+                if (!data || !data.success) throw new Error('auth payload not usable');
+                // Before the card is built, so its selector offers what this
+                // backend accepts rather than the built-in pair.
+                if (Array.isArray(data.methods) && data.methods.length) authMethods = data.methods;
+
+                if (!(data.ldap && data.ldap.configured)) {
+                    nodir.appendChild(document.createTextNode(tr('deploy_auth_tab_no_directory',
+                        'No directory is connected yet, so a directory login has nobody to check.') + ' '));
+                    var link = el('a', '', tr('deploy_auth_tab_connect', 'Connect the directory'));
+                    link.href = '#auth';
+                    nodir.appendChild(link);
+                    nodir.hidden = false;
+                }
+
+                var site = (data.sites || []).filter(function (s) { return s.id === project.id; })[0];
+                if (!site) {
+                    note.textContent = tr('deploy_detail_gone',
+                        'That project is not in the list. Reload the page.');
+                    note.hidden = false;
+                    return;
+                }
+                box.appendChild(buildSiteAuthCard(site));
+            })
+            .catch(function (e) {
+                note.textContent = tr('deploy_auth_load_failed',
+                    'Could not load the authentication settings.');
+                note.hidden = false;
+                console.error('[Deploy] auth tab load failed:', e);
+            });
+
+        return wrap;
     }
 
     /**
@@ -4663,6 +4740,7 @@
         apply.disabled = !isAdmin;
         var note = el('p', 'dep-auth-site-note', '');
         note.hidden = true;
+        showFlash(note, site.id + '/tls');
         apply.addEventListener('click', function () {
             saveSiteTls(site, tlsBox, cert, key, apply, note);
         });
@@ -4691,6 +4769,7 @@
                     site.tls = (data.project && data.project.tls) || site.tls;
                     note.textContent = tr('deploy_tls_applied',
                         'Saved. The site restarted on its new scheme.');
+                    siteAuthFlash[site.id + '/tls'] = note.textContent;
                     // The card in the list prints the URL, and its scheme just
                     // changed.
                     return loadProjects();
@@ -4702,6 +4781,7 @@
                     site.tls = data.tls || site.tls;
                     note.textContent = tr('deploy_tls_cert_unreadable',
                         'Aegis could not read the certificate or the key, so the site is stopped. Check both paths and that the Aegis service may read them.');
+                    siteAuthFlash[site.id + '/tls'] = note.textContent;
                     return loadProjects();
                 }
                 note.textContent = authRefusal(data, status);
@@ -4763,6 +4843,7 @@
                     site.allowedUsers = (data.project && data.project.allowedUsers) || people;
                     site.audience = (data.project && data.project.audience) || audience;
                     note.textContent = tr('deploy_auth_applied', 'Saved.');
+                    siteAuthFlash[site.id + '/auth'] = note.textContent;
                     // The card in the project list carries the badge, so it has
                     // to hear about this too.
                     return loadProjects();
@@ -4867,7 +4948,10 @@
                 // the built-in pair stands.
                 if (Array.isArray(data.methods) && data.methods.length) authMethods = data.methods;
                 fillAuthForm(data.ldap);
-                renderAuthSites(data.sites);
+                // Read by the browser tests as "this pane has painted", and by
+                // nothing else. The sites are no longer drawn here: each one is
+                // configured on its own project page.
+                document.getElementById('deploy-auth').setAttribute('data-loaded', 'true');
                 // A first visit lands on an empty form, and the domain is
                 // already known from the audit. Filling it here rather than
                 // waiting for the Scan button means the operator reads a

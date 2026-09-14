@@ -137,7 +137,7 @@ function firstHeading(page) {
   });
 }
 
-test('the tab strip lists all seven tabs, in order, each linking to its own hash, with one aria-current', async () => {
+test('the tab strip lists all eight tabs, in order, each linking to its own hash, with one aria-current', async () => {
   const { page, close } = await openPage(browser, detailUrl('project/site-a/deployments'), stubs([PROJECT]));
   try {
     const expected = [
@@ -147,10 +147,11 @@ test('the tab strip lists all seven tabs, in order, each linking to its own hash
       ['env', 'Variables'],
       ['data', 'Data'],
       ['domains', 'Domains'],
+      ['authentification', 'Authentication'],
       ['settings', 'Settings']
     ];
     const tabs = await readTabs(page);
-    assert.strictEqual(tabs.length, 7, 'expected exactly seven tabs, got ' + tabs.length);
+    assert.strictEqual(tabs.length, 8, 'expected exactly eight tabs, got ' + tabs.length);
     tabs.forEach((tab, i) => {
       assert.strictEqual(tab.text, expected[i][1], 'tab ' + i + ' label');
       assert.strictEqual(tab.href, '#project/site-a/' + expected[i][0], 'tab ' + i + ' href');
@@ -168,7 +169,10 @@ test('a preview (parentId set) does not render the Previews or Domains tabs', as
   const { page, close } = await openPage(browser, detailUrl('project/site-a-preview/overview'), stubs([PROJECT, PREVIEW]));
   try {
     const tabs = await readTabs(page);
-    assert.deepStrictEqual(tabs.map((t) => t.text), ['Overview', 'Deployments', 'Variables', 'Data', 'Settings']);
+    // Authentication is there: a preview is its own record with its own auth,
+    // and a branch under review is exactly what gets put behind a login.
+    assert.deepStrictEqual(tabs.map((t) => t.text),
+      ['Overview', 'Deployments', 'Variables', 'Data', 'Authentication', 'Settings']);
     tabs.forEach((t) => assert.ok(t.href.startsWith('#project/site-a-preview/'), t.href));
   } finally {
     await close();
@@ -186,6 +190,7 @@ const PANEL_HEADING = {
   env: 'Environment variables',
   data: 'Data',
   domains: 'Host name',
+  authentification: 'Authentication',
   settings: 'Unknown paths'
 };
 

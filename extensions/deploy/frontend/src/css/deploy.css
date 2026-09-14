@@ -1506,12 +1506,6 @@ button.dep-listrow {
     border-radius: var(--radius-md);
 }
 
-.dep-auth-site-name {
-    margin: 0 0 var(--space-sm);
-    font-size: var(--text-h3);
-    color: var(--text-main);
-}
-
 .dep-auth-site-note {
     margin: var(--space-xs) 0 0;
     color: var(--zinc-300);
