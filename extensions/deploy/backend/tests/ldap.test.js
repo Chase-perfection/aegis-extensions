@@ -1427,3 +1427,103 @@ test('lookup on a user the directory does not have is ldap_user_not_found', asyn
     const out = await ldap.lookup(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'ghost');
     assert.deepStrictEqual(out, { ok: false, error: 'ldap_user_not_found' });
 });
+
+/* ------------------------------------------------------ people search ---- */
+
+function personEntry(login, name, rid) {
+    return {
+        dn: 'CN=' + name + ',OU=Users,DC=corp,DC=local',
+        attrs: {
+            sAMAccountName: [login],
+            displayName: [name],
+            objectSid: [sidBuffer(DOMAIN.concat([rid]))]
+        }
+    };
+}
+
+function prefix(attr, value) {
+    return { type: 'substrings', attr, pieces: [{ tag: 0x80, value }] };
+}
+
+test('people search: a login, a first name, a surname, a display name or a mail, by prefix', async (t) => {
+    const fake = await startFake({ entries: [] });
+    t.after(() => fake.close());
+
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'EG');
+    assert.deepStrictEqual(fake.errors, []);
+    assert.deepStrictEqual(out, { ok: true, users: [] });
+
+    const search = fake.seen.find((s) => s.op === 'search');
+    assert.deepStrictEqual(search.filter, {
+        type: 'and',
+        items: [
+            { type: 'eq', attr: 'objectClass', value: 'user' },
+            { type: 'eq', attr: 'objectCategory', value: 'person' },
+            {
+                type: 'or',
+                items: [
+                    prefix('sAMAccountName', 'EG'),
+                    prefix('givenName', 'EG'),
+                    prefix('sn', 'EG'),
+                    prefix('displayName', 'EG'),
+                    prefix('mail', 'EG')
+                ]
+            }
+        ]
+    });
+    assert.strictEqual(search.sizeLimit, 25);
+});
+
+test('people search: wildcards and parentheses typed in the field stay text', async (t) => {
+    const fake = await startFake({ entries: [] });
+    t.after(() => fake.close());
+
+    const injection = '*)(cn=*';
+    await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), injection);
+    assert.deepStrictEqual(fake.errors, []);
+
+    const or = fake.seen.find((s) => s.op === 'search').filter.items[2];
+    assert.strictEqual(or.items.length, 5, 'five branches, no smuggled sixth');
+    for (const branch of or.items) {
+        assert.deepStrictEqual(branch.pieces, [{ tag: 0x80, value: injection }],
+            branch.attr + ' kept the typed text as one initial piece');
+    }
+});
+
+test('people search: one character never reaches the directory', async (t) => {
+    const fake = await startFake({ entries: [] });
+    t.after(() => fake.close());
+
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'E');
+    assert.deepStrictEqual(out, { ok: true, users: [] });
+    assert.strictEqual(fake.connections, 0);
+});
+
+test('people search: the account whose login is exactly what was typed comes first', async (t) => {
+    const fake = await startFake({
+        entries: [
+            personEntry('EGA', 'Albert EGON', 1201),
+            personEntry('EG', 'Emmanuel GENDRON', 1202),
+            personEntry('MARTE', 'Egide MARTIN', 1203)
+        ]
+    });
+    t.after(() => fake.close());
+
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'eg');
+    assert.deepStrictEqual(fake.errors, []);
+    assert.strictEqual(out.ok, true);
+    assert.deepStrictEqual(out.users.map((u) => u.login), ['EG', 'EGA', 'MARTE'],
+        'exact login first, then by name, case-insensitive');
+    assert.strictEqual(out.users[0].name, 'Emmanuel GENDRON');
+    assert.strictEqual(out.users[0].sid, 'S-1-5-21-1111111111-2222222222-3333333333-1202');
+});
+
+test('people search: an entry without a SID is not offered', async (t) => {
+    const noSid = personEntry('EGX', 'Eric GHOST', 1);
+    delete noSid.attrs.objectSid;
+    const fake = await startFake({ entries: [noSid, personEntry('EG', 'Emmanuel GENDRON', 1202)] });
+    t.after(() => fake.close());
+
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'EG');
+    assert.deepStrictEqual(out.users.map((u) => u.login), ['EG']);
+});

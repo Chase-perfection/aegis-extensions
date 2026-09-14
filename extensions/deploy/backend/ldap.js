@@ -1398,8 +1398,9 @@ async function lookup(config, username) {
  *
  * `lookup` cannot serve this and should not be bent into it: it resolves one
  * account and refuses the moment a second matches, which is exactly right for
- * a login and useless for a picker. This searches the three attributes a person
- * is actually known by and returns a short page of them.
+ * a login and useless for a picker. This searches the attributes a person is
+ * actually known by -- login, first name, surname, display name, mail -- and
+ * returns a short page of them, the exact login first.
  *
  * The SID is the identity that gets stored; `login`, `name` and `mail` travel
  * back only so the operator recognises the row they are picking. An entry
@@ -1430,7 +1431,8 @@ async function searchUsers(config, query) {
         const safe = escapeFilter(q);
         const filter = parseFilterString(
             '(&(objectClass=user)(objectCategory=person)(|'
-            + `(sAMAccountName=${safe}*)(displayName=${safe}*)(mail=${safe}*)))`
+            + `(sAMAccountName=${safe}*)(givenName=${safe}*)(sn=${safe}*)`
+            + `(displayName=${safe}*)(mail=${safe}*)))`
         );
 
         state = await openSession(cfg);
@@ -1456,7 +1458,17 @@ async function searchUsers(config, query) {
                 mail: (attrs.mail && attrs.mail[0]) || ''
             });
         }
-        users.sort((a, b) => String(a.name || a.login).localeCompare(String(b.name || b.login)));
+        // Where logins are initials, typing them is how an operator names a
+        // colleague, and "EG" must not sit below "Albert EGON" because A sorts
+        // first. This only reorders what the directory returned: it cannot
+        // rescue an exact login the size limit cut off.
+        const exact = q.toUpperCase();
+        users.sort((a, b) => {
+            const ea = a.login.toUpperCase() === exact ? 0 : 1;
+            const eb = b.login.toUpperCase() === exact ? 0 : 1;
+            if (ea !== eb) return ea - eb;
+            return String(a.name || a.login).localeCompare(String(b.name || b.login));
+        });
         return { ok: true, users };
     } catch (e) {
         return { ok: false, error: (e && e.ldapCode) || 'ldap_protocol_error' };
