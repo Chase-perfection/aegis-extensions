@@ -726,6 +726,149 @@ test('Remove takes the person out of the body', async () => {
     }
 });
 
+// --- Picking people from the directory ------------------------------------
+
+const EG = { sid: 'S-1-5-21-1-2-3-1202', login: 'EG', name: 'Emmanuel GENDRON', mail: 'eg@dom2.local' };
+const EGA = { sid: 'S-1-5-21-1-2-3-1201', login: 'EGA', name: 'Albert EGON', mail: '' };
+
+function peopleStubs(answer, allowedUsers) {
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap', protected: true, audience: 'listed', allowedUsers: allowedUsers || []
+    })]));
+    stubs['deploy/auth/users'] = answer;
+    stubs['projects/site-a/auth'] = {
+        success: true,
+        project: { id: 'site-a', protected: true, method: 'ldap', audience: 'listed', allowedGroups: [], allowedUsers: [] }
+    };
+    return stubs;
+}
+
+/** Types into the people field and reads the list once it has opened. */
+async function typeAndReadList(page, text) {
+    await page.type('#deploy-auth-people-site-a', text);
+    await page.waitForSelector('#deploy-auth-people-list-site-a:not([hidden]) .dep-auth-suggest-item', { timeout: 5000 });
+    return page.evaluate(() => {
+        const input = document.getElementById('deploy-auth-people-site-a');
+        return {
+            expanded: input.getAttribute('aria-expanded'),
+            active: input.getAttribute('aria-activedescendant'),
+            items: [...document.querySelectorAll('#deploy-auth-people-list-site-a .dep-auth-suggest-item')]
+                .map((li) => ({ id: li.id, text: li.textContent, selected: li.getAttribute('aria-selected') }))
+        };
+    });
+}
+
+function readPicker(page) {
+    return page.evaluate(() => ({
+        value: document.getElementById('deploy-auth-people-site-a').value,
+        open: !document.getElementById('deploy-auth-people-list-site-a').hidden,
+        people: [...document.querySelectorAll('.dep-auth-person .dep-auth-person-name')].map((n) => n.textContent)
+    }));
+}
+
+test('typing initials opens a list of the directory\'s answer, first row highlighted', async () => {
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }));
+    try {
+        const list = await typeAndReadList(page, 'eg');
+        assert.strictEqual(list.expanded, 'true');
+        assert.strictEqual(list.items.length, 2);
+        assert.ok(list.items[0].text.includes('Emmanuel GENDRON') && list.items[0].text.includes('EG'));
+        assert.strictEqual(list.items[0].selected, 'true');
+        assert.strictEqual(list.active, list.items[0].id);
+    } finally {
+        await close();
+    }
+});
+
+test('Enter adds the highlighted person, empties the field and closes the list', async () => {
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }));
+    try {
+        await typeAndReadList(page, 'eg');
+        await page.keyboard.press('Enter');
+        assert.deepStrictEqual(await readPicker(page), { value: '', open: false, people: ['Emmanuel GENDRON'] });
+        const body = await applyAndRead(page, 'site-a');
+        assert.deepStrictEqual(body.allowedUsers, [
+            { sid: EG.sid, login: 'EG', name: 'Emmanuel GENDRON', admin: false }
+        ]);
+    } finally {
+        await close();
+    }
+});
+
+test('the arrow keys move the highlight before Enter picks', async () => {
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }));
+    try {
+        await typeAndReadList(page, 'eg');
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('Enter');
+        assert.deepStrictEqual((await readPicker(page)).people, ['Albert EGON']);
+    } finally {
+        await close();
+    }
+});
+
+test('a click on a row adds that person', async () => {
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }));
+    try {
+        const list = await typeAndReadList(page, 'eg');
+        await page.$eval('#' + list.items[1].id,
+            (li) => li.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })));
+        assert.deepStrictEqual((await readPicker(page)).people, ['Albert EGON']);
+    } finally {
+        await close();
+    }
+});
+
+test('Escape closes the list and adds nobody', async () => {
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }));
+    try {
+        await typeAndReadList(page, 'eg');
+        await page.keyboard.press('Escape');
+        const state = await readPicker(page);
+        assert.strictEqual(state.open, false);
+        assert.deepStrictEqual(state.people, []);
+    } finally {
+        await close();
+    }
+});
+
+test('a person already allowed is not offered a second time', async () => {
+    const already = [{ sid: EG.sid, login: 'EG', name: 'Emmanuel GENDRON', admin: true }];
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }, already));
+    try {
+        const list = await typeAndReadList(page, 'eg');
+        assert.strictEqual(list.items.length, 1);
+        assert.ok(list.items[0].text.includes('Albert EGON'));
+    } finally {
+        await close();
+    }
+});
+
+test('no match says so instead of opening an empty list', async () => {
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [] }));
+    try {
+        await page.type('#deploy-auth-people-site-a', 'zz');
+        await page.waitForSelector('.dep-auth-suggest-status:not([hidden])', { timeout: 5000 });
+        assert.strictEqual(await page.$eval('.dep-auth-suggest-status', (p) => p.textContent.trim()),
+            'Nobody in the directory matches that.');
+        assert.strictEqual((await readPicker(page)).open, false);
+    } finally {
+        await close();
+    }
+});
+
+test('a tenant with no directory is told where to connect one', async () => {
+    const { page, close } = await openSiteAuth(peopleStubs({ success: false, error: 'ldap_not_configured' }));
+    try {
+        await page.type('#deploy-auth-people-site-a', 'eg');
+        await page.waitForSelector('.dep-auth-suggest-status:not([hidden])', { timeout: 5000 });
+        assert.strictEqual(await page.$eval('.dep-auth-suggest-status', (p) => p.textContent.trim()),
+            'Connect the directory first, under Authentication in the side menu.');
+    } finally {
+        await close();
+    }
+});
+
 // --- Where things live ---------------------------------------------------
 
 test('#auth carries the directory connection and no site row', async () => {

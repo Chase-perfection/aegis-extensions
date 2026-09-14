@@ -1596,6 +1596,64 @@ button.dep-listrow {
     white-space: nowrap;
 }
 
+/* The directory picker under Allowed people.
+
+   Positioned against its own field, so the list opens under the input it
+   answers and over the rows below rather than pushing them down while somebody
+   is typing. The highlighted row takes the same inset accent bar as the current
+   rail entry: it is the row Enter will take. */
+.dep-auth-people-field {
+    position: relative;
+}
+
+.dep-auth-suggest {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 5;
+    margin: var(--space-xs) 0 0;
+    padding: var(--space-xs) 0;
+    list-style: none;
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line-strong);
+    border-radius: var(--radius-sm);
+    /* About eight rows. The search returns 25 at most and the rest scroll;
+       there is no token for the height of a list. */
+    max-height: 18rem;
+    overflow-y: auto;
+}
+
+.dep-auth-suggest-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--text-sm);
+    cursor: pointer;
+}
+
+.dep-auth-suggest-item.is-highlighted {
+    background: var(--dep-sunken);
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* The mail is how two people with the same name are told apart, and nothing
+   more, so it is muted and gives up its width first. */
+.dep-auth-suggest-mail {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--zinc-300);
+    font-size: var(--text-xs);
+}
+
+.dep-auth-suggest-status {
+    margin: var(--space-xs) 0 0;
+}
+
 /* The HTTPS half of a site row. A rule rather than a gap or a card inside a
    card: the two halves are one decision about one site, and boxing the second
    would read as a separate setting that happens to sit nearby. */

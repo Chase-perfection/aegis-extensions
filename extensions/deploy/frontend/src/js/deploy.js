@@ -4498,10 +4498,13 @@
      * The people named on one site, and which of them administers it.
      *
      * A search field over the directory rather than a text box, because a SID
-     * is what gets stored and nobody types one. `<datalist>` and not a custom
-     * dropdown: the browser already draws this control, keyboard-navigates it
-     * and announces it to a screen reader, and every line we would write to
-     * replace it is a line that does those three things slightly worse.
+     * is what gets stored and nobody types one. A list drawn here and not a
+     * `<datalist>`: the browser opens that one on a keystroke, and a directory
+     * answers after the keystroke, so the options arrived into a popup that was
+     * already closed and the next character threw them away. The field looked
+     * broken because it was. What the datalist gave for free is what this has
+     * to earn back: arrow keys, Enter, Escape, and a row a screen reader can
+     * announce, hence the combobox roles below.
      *
      * `admin` is a per-person tick and not a separate field, because "who may
      * enter" and "who runs the place" are answered about the same row. It is
@@ -4517,20 +4520,35 @@
         label.setAttribute('data-i18n', 'deploy_auth_people');
 
         var listId = 'deploy-auth-people-list-' + site.id;
+        var field = el('div', 'dep-auth-people-field');
         var search = document.createElement('input');
-        search.type = 'search';
+        search.type = 'text';
         search.className = 'dep-input';
         search.autocomplete = 'off';
         search.spellcheck = false;
-        search.setAttribute('list', listId);
         search.id = 'deploy-auth-people-' + site.id;
-        search.placeholder = tr('deploy_auth_people_search', 'Search the directory');
+        search.placeholder = tr('deploy_auth_people_search', 'Initials, name or mail');
         search.setAttribute('data-i18n-placeholder', 'deploy_auth_people_search');
+        search.setAttribute('role', 'combobox');
+        search.setAttribute('aria-autocomplete', 'list');
+        search.setAttribute('aria-expanded', 'false');
+        search.setAttribute('aria-controls', listId);
         search.disabled = !isAdmin;
         label.htmlFor = search.id;
 
-        var datalist = document.createElement('datalist');
-        datalist.id = listId;
+        var list = el('ul', 'dep-auth-suggest');
+        list.id = listId;
+        list.setAttribute('role', 'listbox');
+        list.hidden = true;
+        field.appendChild(search);
+        field.appendChild(list);
+
+        // Why a search answered nothing is a sentence, not an empty list: an
+        // unconfigured directory and a name nobody carries look identical from
+        // the field, and only one of them is the operator's mistake.
+        var status = el('p', 'dep-hint dep-auth-suggest-status', '');
+        status.setAttribute('aria-live', 'polite');
+        status.hidden = true;
 
         var chips = el('div', 'dep-auth-people-list');
         var hint = el('p', 'dep-hint', tr('deploy_auth_people_hint',
@@ -4538,18 +4556,20 @@
         hint.setAttribute('data-i18n', 'deploy_auth_people_hint');
 
         root.appendChild(label);
-        root.appendChild(search);
-        root.appendChild(datalist);
+        root.appendChild(field);
+        root.appendChild(status);
         root.appendChild(chips);
         root.appendChild(hint);
 
-        // The chosen people, and the last search answer keyed by the string the
-        // datalist put in the field. The browser hands back a value, never the
-        // row it came from, so the mapping has to be kept on this side.
+        // The chosen people, the rows currently on offer, and which of those
+        // Enter would take. The rows carry text and the person has to leave
+        // with their SID, so the answer is kept here rather than read back off
+        // the DOM.
         var chosen = (site.allowedUsers || []).map(function (u) {
             return { sid: u.sid, login: u.login || '', name: u.name || '', admin: u.admin === true };
         });
-        var offered = {};
+        var results = [];
+        var active = -1;
 
         function paint() {
             chips.textContent = '';
@@ -4591,13 +4611,95 @@
             });
         }
 
-        function add(person) {
-            var already = chosen.some(function (p) {
-                return String(p.sid).toUpperCase() === String(person.sid).toUpperCase();
+        function isChosen(sid) {
+            return chosen.some(function (p) {
+                return String(p.sid).toUpperCase() === String(sid).toUpperCase();
             });
-            if (already) return;
+        }
+
+        function add(person) {
+            if (isChosen(person.sid)) return;
             chosen.push({ sid: person.sid, login: person.login || '', name: person.name || '', admin: false });
             paint();
+        }
+
+        function say(text) {
+            status.textContent = text || '';
+            status.hidden = !text;
+        }
+
+        function closeList() {
+            list.hidden = true;
+            list.textContent = '';
+            results = [];
+            active = -1;
+            search.setAttribute('aria-expanded', 'false');
+            search.removeAttribute('aria-activedescendant');
+        }
+
+        function highlight(index) {
+            active = index;
+            for (var i = 0; i < list.children.length; i++) {
+                var item = list.children[i];
+                var on = i === index;
+                item.classList.toggle('is-highlighted', on);
+                item.setAttribute('aria-selected', on ? 'true' : 'false');
+                if (on) {
+                    search.setAttribute('aria-activedescendant', item.id);
+                    item.scrollIntoView({ block: 'nearest' });
+                }
+            }
+        }
+
+        function pick(index) {
+            var person = results[index];
+            if (!person) return;
+            add(person);
+            search.value = '';
+            closeList();
+            say('');
+            search.focus();
+        }
+
+        function openList(users) {
+            list.textContent = '';
+            // Somebody already on the site is not an answer: picking them again
+            // would do nothing while looking like it did something.
+            results = users.filter(function (u) { return !isChosen(u.sid); });
+            if (!results.length) {
+                closeList();
+                say(users.length
+                    ? tr('deploy_auth_people_all_added', 'Everyone who matches is already on the list.')
+                    : tr('deploy_auth_people_no_match', 'Nobody in the directory matches that.'));
+                return;
+            }
+            say('');
+            results.forEach(function (u, i) {
+                var item = el('li', 'dep-auth-suggest-item');
+                item.id = listId + '-' + i;
+                item.setAttribute('role', 'option');
+                item.appendChild(el('span', 'dep-auth-person-name', u.name || u.login));
+                if (u.login) item.appendChild(el('span', 'dep-auth-person-login', u.login));
+                if (u.mail) item.appendChild(el('span', 'dep-auth-suggest-mail', u.mail));
+                // mousedown and not click: the field's own blur closes the list
+                // before a click would land on it. preventDefault keeps the
+                // focus in the field, so the next name can be typed straight
+                // after this one.
+                item.addEventListener('mousedown', function (e) {
+                    e.preventDefault();
+                    pick(i);
+                });
+                item.addEventListener('mousemove', function () {
+                    if (active !== i) highlight(i);
+                });
+                list.appendChild(item);
+            });
+            list.hidden = false;
+            search.setAttribute('aria-expanded', 'true');
+            // The first row, because the directory was asked to put the exact
+            // login there: typing initials and pressing Enter is the whole
+            // point of the field.
+            highlight(0);
         }
 
         // One timer, restarted on every keystroke. Without it the field fires a
@@ -4611,43 +4713,57 @@
         }
         function run() {
             var q = search.value.trim();
-            if (q.length < 2) { datalist.textContent = ''; return; }
+            if (q.length < 2) { closeList(); say(''); return; }
             var mine = ++seq;
+            var code = 0;
             window.api('/api/deploy/auth/users?q=' + encodeURIComponent(q))
-                .then(function (r) { return readJson(r, 'directory users'); })
+                .then(function (r) { code = r.status; return readJson(r, 'directory users'); })
                 .then(function (data) {
                     // A stale answer repaints nothing.
                     if (mine !== seq) return;
-                    datalist.textContent = '';
-                    offered = {};
-                    if (!data || !data.success || !data.users) return;
-                    data.users.forEach(function (u) {
-                        // The option value is what comes back in the field, so
-                        // it has to identify one person. A login is unique in a
-                        // directory and a display name is not.
-                        var key = u.login || u.sid;
-                        offered[key] = u;
-                        var opt = document.createElement('option');
-                        opt.value = key;
-                        opt.label = u.name ? (u.name + (u.mail ? ' - ' + u.mail : '')) : key;
-                        datalist.appendChild(opt);
-                    });
+                    if (!data || !data.success) {
+                        closeList();
+                        say(data && data.error === 'ldap_not_configured'
+                            ? tr('deploy_auth_people_no_directory',
+                                'Connect the directory first, under Authentication in the side menu.')
+                            : authRefusal(data, code));
+                        return;
+                    }
+                    openList(data.users || []);
                 })
-                .catch(function (e) { console.error('[Deploy] directory search failed:', e); });
+                .catch(function (e) {
+                    if (mine !== seq) return;
+                    closeList();
+                    say(tr('deploy_auth_people_failed',
+                        'The directory did not answer. Try again in a moment.'));
+                    console.error('[Deploy] directory search failed:', e);
+                });
         }
 
-        search.addEventListener('input', function () {
-            // Picking from the datalist fires `input` with the whole value at
-            // once. Anything else is still typing.
-            var hit = offered[search.value.trim()];
-            if (hit) {
-                add(hit);
-                search.value = '';
-                datalist.textContent = '';
-                return;
+        search.addEventListener('input', schedule);
+
+        search.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                if (list.hidden || !results.length) return;
+                e.preventDefault();
+                var n = results.length;
+                highlight(e.key === 'ArrowDown' ? (active + 1) % n : (active - 1 + n) % n);
+            } else if (e.key === 'Enter') {
+                // Only when a row is on offer. Enter in a field that is not
+                // offering anything belongs to whatever else is listening.
+                if (!list.hidden && active >= 0) {
+                    e.preventDefault();
+                    pick(active);
+                }
+            } else if (e.key === 'Escape') {
+                if (!list.hidden) {
+                    e.preventDefault();
+                    closeList();
+                }
             }
-            schedule();
         });
+
+        search.addEventListener('blur', closeList);
 
         paint();
         return {
