@@ -541,6 +541,147 @@
     var repoInstallationId = null;
 
     /**
+     * A listbox this page draws itself, in place of a <select>.
+     *
+     * Two things a native select could not do here, and neither is cosmetic
+     * alone. The popup it opens is drawn by the browser, no author rule reaches
+     * inside it, and on Windows it came up as a grey slab with a blue highlight
+     * bar that owes nothing to this design -- the page around it is white and
+     * the control that lands on top of it was not. And the popup is a snapshot:
+     * options appended while it is open never appear, so branches that arrive
+     * from GitHub half a second after the click stayed invisible until the field
+     * was closed and opened again. A reader who clicked once saw one branch and
+     * concluded the repository had one.
+     *
+     * So: a button and a panel, both ordinary elements this stylesheet owns.
+     * `value` and `disabled` keep the names the select used, because the call
+     * sites read them and have no reason to care which control they hold.
+     */
+    var openDrop = null;
+
+    function closeDrop(focusButton) {
+        if (!openDrop) return;
+        var was = openDrop;
+        openDrop = null;
+        was.classList.remove('is-open');
+        was._panel.hidden = true;
+        was._button.setAttribute('aria-expanded', 'false');
+        if (focusButton) was._button.focus();
+    }
+
+    // One pair of listeners for every dropdown on the page rather than a pair
+    // per row: a repository list is thirty rows, and thirty document listeners
+    // to notice one click outside is thirty times the work for the same answer.
+    document.addEventListener('mousedown', function (ev) {
+        if (openDrop && !openDrop.contains(ev.target)) closeDrop(false);
+    });
+    document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape' && openDrop) closeDrop(true);
+    });
+
+    function dropdown(cls, ariaLabel, onOpen) {
+        var wrap = el('div', 'dep-drop' + (cls ? ' ' + cls : ''));
+        var button = el('button', 'dep-drop-btn');
+        button.type = 'button';
+        button.setAttribute('aria-haspopup', 'listbox');
+        button.setAttribute('aria-expanded', 'false');
+        if (ariaLabel) button.setAttribute('aria-label', ariaLabel);
+        var label = el('span', 'dep-drop-label');
+        button.appendChild(label);
+        button.appendChild(icon(['M6 9l6 6 6-6'], { width: '1.8' }));
+
+        var panel = el('div', 'dep-drop-panel');
+        panel.setAttribute('role', 'listbox');
+        panel.hidden = true;
+
+        wrap.appendChild(button);
+        wrap.appendChild(panel);
+        wrap._button = button;
+        wrap._panel = panel;
+
+        var names = [];
+        var current = '';
+        var note = '';
+
+        function options() {
+            return Array.prototype.slice.call(panel.querySelectorAll('.dep-drop-opt'));
+        }
+
+        function paint() {
+            label.textContent = current || '';
+            panel.textContent = '';
+            names.forEach(function (name) {
+                var opt = el('button', 'dep-drop-opt', name);
+                opt.type = 'button';
+                opt.setAttribute('role', 'option');
+                opt.setAttribute('aria-selected', name === current ? 'true' : 'false');
+                if (name === current) opt.classList.add('is-current');
+                opt.addEventListener('click', function () {
+                    current = name;
+                    closeDrop(true);
+                    paint();
+                });
+                panel.appendChild(opt);
+            });
+            // Under the options, not instead of them: "still reading" and "could
+            // not read" both have to sit beside the one branch already showing,
+            // or the field goes blank at the moment the reader is using it.
+            if (note) panel.appendChild(el('p', 'dep-drop-note', note));
+        }
+
+        function move(from, step) {
+            var list = options();
+            if (!list.length) return;
+            var at = list.indexOf(from);
+            var next = list[(at + step + list.length) % list.length];
+            if (next) next.focus();
+        }
+
+        button.addEventListener('click', function () {
+            if (openDrop === wrap) { closeDrop(true); return; }
+            closeDrop(false);
+            if (button.disabled) return;
+            openDrop = wrap;
+            wrap.classList.add('is-open');
+            panel.hidden = false;
+            button.setAttribute('aria-expanded', 'true');
+            if (onOpen) onOpen();
+        });
+
+        wrap.addEventListener('keydown', function (ev) {
+            if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+            ev.preventDefault();
+            if (openDrop !== wrap) { button.click(); return; }
+            if (ev.target === button) {
+                var list = options();
+                if (list.length) list[ev.key === 'ArrowDown' ? 0 : list.length - 1].focus();
+                return;
+            }
+            move(ev.target, ev.key === 'ArrowDown' ? 1 : -1);
+        });
+
+        Object.defineProperty(wrap, 'value', {
+            get: function () { return current; },
+            set: function (v) { current = v == null ? '' : String(v); paint(); }
+        });
+        Object.defineProperty(wrap, 'disabled', {
+            get: function () { return button.disabled; },
+            // Only this one: closeDrop() shuts whatever is open, and building a
+            // row must not close a panel the reader has open on another row.
+            set: function (v) { button.disabled = !!v; if (v && openDrop === wrap) closeDrop(false); }
+        });
+
+        /** The choice on screen survives a repaint: it may already have been made. */
+        wrap.setOptions = function (list, chosen) {
+            names = list || [];
+            if (chosen != null) current = chosen;
+            paint();
+        };
+        wrap.setNote = function (text) { note = text || ''; paint(); };
+        return wrap;
+    }
+
+    /**
      * The branch one row will deploy.
      *
      * A field with a single option to start with, the default branch, so the
@@ -554,25 +695,15 @@
      * the field may already have been read and left alone.
      */
     function branchPicker(repo) {
-        var sel = el('select', 'dep-select dep-branch');
-        sel.setAttribute('aria-label', tr('deploy_repo_branch', 'Branch to deploy'));
-        sel.disabled = !isAdmin;
-
-        function fill(names, chosen) {
-            sel.textContent = '';
-            names.forEach(function (name) {
-                var opt = el('option', '', name);
-                opt.value = name;
-                if (name === chosen) opt.selected = true;
-                sel.appendChild(opt);
-            });
-        }
-        fill([repo.defaultBranch], repo.defaultBranch);
+        var drop = dropdown('dep-branch', tr('deploy_repo_branch', 'Branch to deploy'), load);
+        drop.setOptions([repo.defaultBranch], repo.defaultBranch);
+        drop.disabled = !isAdmin;
 
         var state = 'idle';
         function load() {
             if (state !== 'idle') return;
             state = 'loading';
+            drop.setNote(tr('deploy_branch_loading', 'Reading the branches.'));
             window.api('/api/deploy/github/branches?repo=' + encodeURIComponent(repo.fullName) +
                 (repoInstallationId ? '&installation_id=' + encodeURIComponent(repoInstallationId) : ''))
                 .then(function (r) { return readJson(r, '/api/deploy/github/branches'); })
@@ -580,29 +711,36 @@
                     if (!(d && d.success) || !d.branches || !d.branches.length) {
                         // Back to idle: GitHub refusing once is not a reason to
                         // leave the field stuck on one option for the session.
+                        // And it says so, because a picker offering one branch
+                        // of a repository that has six reads as the truth about
+                        // the repository rather than as a call that failed.
                         state = 'idle';
+                        drop.setNote(tr('deploy_branch_failed',
+                            'Aegis could not read the branches of this repository. Try again, or check the App still has it.'));
                         return;
                     }
                     state = 'loaded';
-                    var keep = sel.value;
+                    var keep = drop.value;
                     var names = d.branches.map(function (b) { return b.name; });
                     if (names.indexOf(keep) === -1) names.unshift(keep);
-                    fill(names, keep);
+                    drop.setNote('');
+                    drop.setOptions(names, keep);
                 })
                 .catch(function (e) {
                     state = 'idle';
+                    drop.setNote(tr('deploy_branch_failed',
+                        'Aegis could not read the branches of this repository. Try again, or check the App still has it.'));
                     console.error('[Deploy] branches failed:', e);
                 });
         }
 
-        // Three events, one intent. A pointer gives warning by hovering, and
-        // the fetch started there is usually back before the list opens; a
-        // mouse that went straight down and a keyboard that tabbed in get the
-        // same list one moment later.
-        sel.addEventListener('mouseenter', load);
-        sel.addEventListener('mousedown', load);
-        sel.addEventListener('focus', load);
-        return sel;
+        // A pointer gives warning by hovering, and the fetch started there is
+        // usually back before the panel opens. Opening it is the other trigger,
+        // and unlike a native popup this panel repaints when the answer lands,
+        // so a slow call now fills the list under the reader's eyes instead of
+        // leaving them looking at one branch.
+        drop.addEventListener('mouseenter', load);
+        return drop;
     }
 
     /**
@@ -664,12 +802,42 @@
         });
     }
 
+    /**
+     * Same rule as the history pane: a call that failed is not an empty list.
+     *
+     * `(d && d.repos) || []` turned a refusal into "this installation cannot see
+     * a repository yet", which sends the reader to GitHub to fix an access
+     * problem they do not have. And the catch rendered nothing at all, so a
+     * network failure left the pane blank with no sentence in it.
+     */
     function loadRepos(installationId) {
         repoInstallationId = installationId;
+        var empty = document.getElementById('deploy-repo-empty');
+        var failed = function (why) {
+            repoCache = [];
+            renderRepos();
+            if (empty) {
+                empty.hidden = false;
+                empty.setAttribute('data-i18n', 'deploy_repos_unreadable');
+                empty.textContent = tr('deploy_repos_unreadable',
+                    'Aegis could not read the repositories of this installation. Reload the page, and check this server reaches github.com.');
+            }
+            console.error('[Deploy] repos failed:', why);
+        };
         return window.api('/api/deploy/github/repos?installation_id=' + encodeURIComponent(installationId))
             .then(function (r) { return readJson(r, '/api/deploy/github/repos'); })
-            .then(function (d) { repoCache = (d && d.repos) || []; renderRepos(); })
-            .catch(function (e) { console.error('[Deploy] repos failed:', e); });
+            .then(function (d) {
+                if (!(d && d.success)) return failed((d && d.error) || 'no payload');
+                if (empty) {
+                    empty.setAttribute('data-i18n', 'deploy_repos_empty');
+                    empty.textContent = tr('deploy_repos_empty',
+                        'This installation can see no repository yet. Add one from GitHub.');
+                }
+                repoCache = d.repos || [];
+                renderRepos();
+                return undefined;
+            })
+            .catch(failed);
     }
 
     // --- The deploy form and its plan -------------------------------------
@@ -1886,20 +2054,55 @@
         return btn;
     }
 
+    /**
+     * The history pane, and the difference between empty and unreadable.
+     *
+     * `(data && data.runs) || []` treated every answer as a list, so a refusal
+     * from the host opt-in gate, an expired session and a backend that threw all
+     * came out as "nothing has been deployed on this install yet" -- a sentence
+     * about the install, made from a request that never got an answer, sitting
+     * over a disk that holds sixty runs. The catch was worse: it left the pane
+     * exactly as it was and said nothing at all.
+     *
+     * So the two states are told apart, and the pane says which one it is in.
+     * The key moves with the text because core's `applyTranslations` repaints
+     * every [data-i18n] node on a language switch, and a node left carrying the
+     * other state's key would snap back to it.
+     */
+    function saysRuns(empty, key, fallback) {
+        empty.hidden = false;
+        empty.setAttribute('data-i18n', key);
+        empty.textContent = tr(key, fallback);
+    }
+
+    var RUNS_UNREADABLE = ['deploy_runs_unreadable',
+        'Aegis could not read the deployment history. This says nothing about what is deployed: reload the page, and check the backend is up.'];
+
     function loadRuns() {
         var box = document.getElementById('deploy-run-list');
         var empty = document.getElementById('deploy-runs-empty');
         return window.api('/api/deploy/runs')
             .then(function (r) { return readJson(r, 'runs'); })
             .then(function (data) {
-                var list = (data && data.runs) || [];
                 box.textContent = '';
+                if (!data || !data.success) {
+                    saysRuns(empty, RUNS_UNREADABLE[0], RUNS_UNREADABLE[1]);
+                    console.error('[Deploy] runs refused:', (data && data.error) || 'no payload');
+                    return undefined;
+                }
+                var list = data.runs || [];
+                saysRuns(empty, 'deploy_runs_empty',
+                    'Nothing has been deployed on this install yet.');
                 empty.hidden = !!list.length;
                 list.forEach(function (run) { box.appendChild(runRow(run)); });
                 reconcileRunning(list);
                 return undefined;
             })
-            .catch(function (e) { console.error('[Deploy] runs failed:', e); });
+            .catch(function (e) {
+                box.textContent = '';
+                saysRuns(empty, RUNS_UNREADABLE[0], RUNS_UNREADABLE[1]);
+                console.error('[Deploy] runs failed:', e);
+            });
     }
 
     /**

@@ -373,8 +373,8 @@ test('a repository row starts on its default branch and fills the rest when the 
     }, { timeout: 5000 });
 
     const before = await page.evaluate(function () {
-      var sel = document.querySelector('#deploy-repo-list .dep-branch');
-      return { count: sel.options.length, value: sel.value };
+      var drop = document.querySelector('#deploy-repo-list .dep-branch');
+      return { count: drop.querySelectorAll('.dep-drop-opt').length, value: drop.value };
     });
     assert.strictEqual(before.count, 1, 'the row asked GitHub for branches before anyone opened the field');
     assert.strictEqual(before.value, 'main', 'the row does not start on the default branch');
@@ -384,18 +384,110 @@ test('a repository row starts on its default branch and fills the rest when the 
         .dispatchEvent(new MouseEvent('mouseenter'));
     });
     await page.waitForFunction(function () {
-      return document.querySelector('#deploy-repo-list .dep-branch').options.length === 3;
+      return document.querySelectorAll('#deploy-repo-list .dep-branch .dep-drop-opt').length === 3;
     }, { timeout: 5000 });
 
     const after = await page.evaluate(function () {
-      var sel = document.querySelector('#deploy-repo-list .dep-branch');
+      var drop = document.querySelector('#deploy-repo-list .dep-branch');
       return {
-        names: Array.prototype.map.call(sel.options, function (o) { return o.value; }),
-        value: sel.value
+        names: Array.prototype.map.call(drop.querySelectorAll('.dep-drop-opt'),
+          function (o) { return o.textContent; }),
+        value: drop.value
       };
     });
     assert.deepStrictEqual(after.names, ['main', 'release/2', 'feat/x']);
     assert.strictEqual(after.value, 'main', 'filling the list moved the selection off what was showing');
+  } finally {
+    await close();
+  }
+});
+
+// The panel is drawn by this page and not by the browser, and that is the whole
+// point of it: a native <select> popup is a snapshot, so branches arriving after
+// the click never showed and the reader concluded the repository had one branch.
+// This pins the two halves -- the panel opens, and it repaints underneath.
+test('the branch panel opens and takes the branches that arrive while it is open', async () => {
+  // `/auth/me` has to say admin here where the tests above did not need it: the
+  // picker is disabled for a reader who cannot deploy, and a disabled button
+  // does not run its click handler. `loggedIn` and `user` come with it because
+  // overriding this route replaces the harness default whole, and auth.js sends
+  // a page with no session back to the login screen.
+  const { page, close } = await openPage(browser, server.url + '/pages/deploy.html#github',
+    Object.assign({}, GITHUB_STUBS, {
+      '/auth/me': {
+        success: true,
+        loggedIn: true,
+        role: 'admin',
+        user: { email: 'tester@example.com', role: 'admin' }
+      }
+    }));
+  try {
+    await page.waitForFunction(function () {
+      return !!document.querySelector('#deploy-repo-list .dep-branch .dep-drop-btn');
+    }, { timeout: 5000 });
+
+    // .click() on the node rather than page.click(): the repository list sits
+    // below the fold of the test viewport, and this test is about what the
+    // handler does, not about whether puppeteer can reach the pixel.
+    await page.evaluate(function () {
+      document.querySelector('#deploy-repo-list .dep-branch .dep-drop-btn').click();
+    });
+    const opened = await page.evaluate(function () {
+      var drop = document.querySelector('#deploy-repo-list .dep-branch');
+      return {
+        open: drop.classList.contains('is-open'),
+        panelShown: !drop.querySelector('.dep-drop-panel').hidden,
+        expanded: drop.querySelector('.dep-drop-btn').getAttribute('aria-expanded')
+      };
+    });
+    assert.strictEqual(opened.open, true, 'clicking the field did not open the panel');
+    assert.strictEqual(opened.panelShown, true, 'the panel stayed hidden');
+    assert.strictEqual(opened.expanded, 'true', 'aria-expanded did not follow the panel');
+
+    // Opening is itself the trigger for the fetch, so the list grows under an
+    // open panel. A <select> could not do this and that is why it is gone.
+    await page.waitForFunction(function () {
+      return document.querySelectorAll('#deploy-repo-list .dep-branch .dep-drop-opt').length === 3 &&
+        !document.querySelector('#deploy-repo-list .dep-branch .dep-drop-panel').hidden;
+    }, { timeout: 5000 });
+
+    await page.evaluate(function () {
+      document.querySelectorAll('#deploy-repo-list .dep-branch .dep-drop-opt')[1].click();
+    });
+    const picked = await page.evaluate(function () {
+      var drop = document.querySelector('#deploy-repo-list .dep-branch');
+      return { value: drop.value, open: drop.classList.contains('is-open') };
+    });
+    assert.strictEqual(picked.value, 'release/2', 'picking an option did not move the field');
+    assert.strictEqual(picked.open, false, 'the panel stayed open after a choice');
+  } finally {
+    await close();
+  }
+});
+
+// A refused history is not an empty one. The pane read `data.runs` off whatever
+// came back, so a 403 from the opt-in gate rendered as "nothing has been
+// deployed on this install yet" -- a claim about the install, made from a
+// request that never answered.
+test('a refused runs call says so instead of claiming nothing was ever deployed', async () => {
+  const { page, close } = await openPage(browser, server.url + '/pages/deploy.html#runs',
+    Object.assign({}, GITHUB_STUBS, {
+      '/api/deploy/runs': { success: false, error: 'not_enabled' }
+    }));
+  try {
+    await page.waitForFunction(function () {
+      var p = document.getElementById('deploy-runs-empty');
+      return p && !p.hidden;
+    }, { timeout: 5000 });
+
+    const said = await page.evaluate(function () {
+      var p = document.getElementById('deploy-runs-empty');
+      return { key: p.getAttribute('data-i18n'), text: p.textContent };
+    });
+    assert.strictEqual(said.key, 'deploy_runs_unreadable',
+      'a refusal still rendered as the empty state');
+    assert.ok(said.text.indexOf('could not read') !== -1 || said.text.indexOf('pas pu lire') !== -1,
+      'the pane did not say the history was unreadable: ' + said.text);
   } finally {
     await close();
   }

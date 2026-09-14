@@ -390,8 +390,11 @@
                                 recent are kept on disk, so a backend restart does not empty this list; the one
                                 still running is the one you can cancel.</p>
                             <div id="deploy-run-list" class="dep-rows"></div>
+                            <!-- Two sentences share this node: this one, and the
+                                 one saying the history could not be read at all.
+                                 loadRuns() moves the key along with the text. -->
                             <p id="deploy-runs-empty" class="dep-empty" hidden data-i18n="deploy_runs_empty">Nothing
-                                has been deployed since this backend started.</p>
+                                has been deployed on this install yet.</p>
                         </section>
 
                         <!-- ===== Host readiness and the GitHub App ===== -->

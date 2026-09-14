@@ -685,6 +685,127 @@ select.dep-input option:disabled {
 
 .dep-search::placeholder { color: var(--zinc-500); }
 
+/* --- The dropdown this page draws itself --------------------------------
+ *
+ * The paragraph above says what a <select> gives up: the popup belongs to the
+ * browser, and on Windows it opened as a grey slab with a blue highlight bar on
+ * a white page. Declaring `color-scheme` gets a light popup and no further, so
+ * the control that a reader looks at hardest on this pane was the one piece of
+ * it this stylesheet did not own. These rules are that ownership: a button that
+ * is the same field as `.dep-select`, and a panel that is the same surface as a
+ * card. Nothing here is a new colour; every value is a token already on the
+ * page.
+ */
+
+.dep-drop {
+    position: relative;
+    display: inline-block;
+}
+
+/* Same shell as `.dep-select`, down to the radius: the two are the same field
+   and only one of them is a real form control. */
+.dep-drop-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    width: 100%;
+    font-family: inherit;
+    font-size: 13px;
+    text-align: left;
+    color: var(--text-main);
+    background: var(--ag-surface, var(--dep-surface));
+    border: 1px solid var(--ag-border-strong, var(--dep-line-strong));
+    border-radius: var(--ag-r-input, 7px);
+    padding: 7px 10px 7px 12px;
+    cursor: pointer;
+}
+
+.dep-drop-btn:hover:not(:disabled) { border-color: var(--accent); }
+.dep-drop-btn:focus-visible { outline: none; border-color: var(--accent-bright); }
+.dep-drop-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* A branch name is the long half of this control and the chevron is the fixed
+   half, so the name is what gives when the row runs out of width. */
+.dep-drop-label {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.dep-drop-btn svg {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    color: var(--ag-meta, var(--zinc-400));
+    transition: transform var(--transition-fast) var(--ease-out);
+}
+
+.dep-drop.is-open .dep-drop-btn svg { transform: rotate(180deg); }
+.dep-drop.is-open .dep-drop-btn { border-color: var(--accent); }
+
+/* Absolute, so opening the panel does not push the rows below it down the
+   page. It needs to sit over the next row, hence the z-index; 20 is above the
+   list and below the platform navbar, which owns 100. */
+.dep-drop-panel {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 20;
+    min-width: 100%;
+    max-width: 22rem;
+    max-height: 15rem;
+    overflow-y: auto;
+    padding: 4px;
+    background: var(--ag-surface, var(--dep-surface));
+    border: 1px solid var(--ag-border-strong, var(--dep-line-strong));
+    border-radius: var(--ag-r-input, 7px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.dep-drop-opt {
+    display: block;
+    width: 100%;
+    font-family: inherit;
+    font-size: 13px;
+    text-align: left;
+    color: var(--text-main);
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    padding: 6px 10px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+/* Hover and keyboard focus land on the same row treatment: a panel where the
+   mouse and the arrow keys highlight differently reads as two lists. */
+.dep-drop-opt:hover,
+.dep-drop-opt:focus-visible {
+    outline: none;
+    background: var(--ag-hairline, var(--dep-sunken));
+}
+
+/* The one already chosen, named by weight and not by a fill: a filled row here
+   would be a second highlight competing with the one under the pointer. */
+.dep-drop-opt.is-current {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* "Reading the branches", or the sentence that says the call failed. Sits under
+   the options rather than replacing them, so the branch already showing stays
+   pickable while GitHub is being asked about the rest. */
+.dep-drop-note {
+    margin: 4px 0 0;
+    padding: 6px 10px;
+    border-top: 1px solid var(--ag-hairline, var(--dep-line));
+    color: var(--ag-meta, var(--zinc-400));
+    font-size: var(--text-xs);
+    line-height: 1.45;
+    white-space: normal;
+}
+
 /* Same shell as .dep-select: both are one field in the same form. */
 .dep-input {
     display: block;
@@ -1717,7 +1838,9 @@ button.dep-listrow {
 }
 
 /* Narrower than a standalone `.dep-select`: this one sits in a repository row
-   between a name that wants the width and a button that must stay reachable. */
+   between a name that wants the width and a button that must stay reachable.
+   It is a `.dep-drop` and not a select, so the flex basis governs the button;
+   the panel it opens is absolute and free to be wider than the row allows. */
 .dep-listrow .dep-branch {
     flex: 0 1 12rem;
     min-width: 8rem;
