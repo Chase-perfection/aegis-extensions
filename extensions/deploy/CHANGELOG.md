@@ -2,6 +2,14 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## Unreleased
+
+The operator contract now documents the native KPI process path: `main`, the
+Python install and start commands, SQLite data below `AEGIS_DATA_DIR`, and the
+`migrations` directory. It also records the per-start `X-Aegis-Proxy-Key`
+contract, conditional identity headers, and the existing IIS path as a
+historical alternative in the KPI repository.
+
 ## 0.2.0
 
 Who may open a site is answered on that site's own page, and what they may reach

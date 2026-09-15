@@ -62,6 +62,47 @@ and their rules and works out which subnets to deny by looking at the
 interfaces that carry the domain. Turning on application processes is a click
 on the extension card.
 
+## Native KPI site
+
+Use this configuration when adding KPI Usine as a process project. The example
+is the JSON body represented by the Deploy form; `auth` is then selected in the
+project's Authentication tab.
+
+```json
+{
+  "repoUrl": "https://github.com/SI-BRI/KPI-BRICONORD-.git",
+  "branch": "main",
+  "name": "KPI Usine",
+  "installCmd": "pip install --no-cache-dir -r packaging/api/requirements.txt --target .",
+  "buildCmd": "",
+  "outputDir": "",
+  "startCmd": "python packaging/api/kpi_api.py",
+  "dbFile": "kpi.db",
+  "migrationsDir": "migrations"
+}
+```
+
+Choose LDAP for the project's Aegis authentication. Do not add a project
+variable named `AEGIS_PROXY_KEY`; Deploy owns that internal value and generates
+it again whenever the process starts. KPI reads `AEGIS_DATA_DIR` for its
+persistent `kpi.db`, and Deploy runs the `migrations` directory before the
+process starts. KPI has no `kpi-api.json` in this mode.
+
+Checklist before handing out the site:
+
+1. Confirm the repository is on `main` and the install command completes.
+2. Confirm the process starts with `python packaging/api/kpi_api.py` and the
+   health check answers through the Deploy URL.
+3. Confirm the deployed data directory contains `kpi.db` and that a migration
+   is recorded before the application serves traffic.
+4. Sign in through the Aegis LDAP gate. Confirm KPI receives the canonical
+   `X-Aegis-User` (`sAMAccountName`) and that a client-supplied value is ignored.
+5. Confirm the application is reachable through the proxy but not through its
+   internal loopback port from another machine.
+6. Repeat one request with the project's authentication method set to `none`:
+   identity headers must be absent, while `X-Aegis-Proxy-Key` remains present
+   only between Deploy and the process.
+
 ## Where it stops
 
 The login form is not single sign-on. Site authentication is a username, a

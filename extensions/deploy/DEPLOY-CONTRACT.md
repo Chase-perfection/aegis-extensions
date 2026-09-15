@@ -890,6 +890,46 @@ The application reads `PORT` and `HOST` from its environment, plus `NODE_ENV`
 and every variable the project declared. Its output goes to the deployment
 console while it starts, which is where a crash on boot explains itself.
 
+### Native KPI pattern
+
+For the Python KPI application, the recommended Deploy project is the `main`
+branch of the KPI repository. Use these values:
+
+```json
+{
+  "branch": "main",
+  "installCmd": "pip install --no-cache-dir -r packaging/api/requirements.txt --target .",
+  "buildCmd": "",
+  "outputDir": "",
+  "startCmd": "python packaging/api/kpi_api.py",
+  "dbFile": "kpi.db",
+  "migrationsDir": "migrations"
+}
+```
+
+`kpi.db` is created under the per-project `AEGIS_DATA_DIR`. Deploy keeps that
+directory across code deployments, and plays the SQL files from `migrations`
+before it starts the new process. Configure the project's access method as
+LDAP to use the Aegis directory connection. The runtime forces the application
+to listen on `127.0.0.1`; the public site is reached through the Deploy proxy.
+
+The runtime contract has two separate parts:
+
+- At every process start, Deploy generates a new random value for
+  `X-Aegis-Proxy-Key`. It keeps that value in memory, injects it only into the
+  proxy request and the application process as `AEGIS_PROXY_KEY`, and replaces
+  it at every restart, redeploy, promote, rollback or backend restart. Deploy
+  never persists or logs the value. Project variables and build processes never
+  receive it, and a project must not define `AEGIS_PROXY_KEY` itself.
+- The proxy strips client-supplied identity and proxy-key headers before
+  forwarding. `X-Aegis-User`, `X-Aegis-Name` and `X-Aegis-Groups` are added only
+  when the project's Aegis authentication has produced an identity. The user
+  value is the canonical `sAMAccountName`, which may differ in case or form from
+  the username typed at the login form. Consumers must key authorization on the
+  SID exposed by Aegis, not on the typed string. The other two values are
+  conditional directory attributes. A project with `auth` set to `none` still receives
+  `X-Aegis-Proxy-Key`, but receives none of the identity headers.
+
 ### Who the request is from
 
 A site behind the directory (`## How a site asks who is knocking`) already knows
