@@ -339,9 +339,9 @@ function groupAllowed(allowedGroups, groups) {
 /* sessions and lockout                                                */
 /* ------------------------------------------------------------------ */
 
-/** token -> { slug, projectId, username, user, groups, expiresAt, nextCheckAt }
- *  `username` is what was typed at the form and is what the directory is asked
- *  about again later; `user` is the display name and is only ever printed. */
+/** token -> { slug, projectId, username, login, user, groups, expiresAt, nextCheckAt }
+ *  `username` is the submitted identifier used for later lookups; `login` is
+ *  the directory's canonical account name; `user` is the display name. */
 const sessions = new Map();
 /** `ip|projectId` -> { fails, until } */
 const failures = new Map();
@@ -886,8 +886,8 @@ function gate(req, res, { slug, tenantPaths, project }) {
         const body = session
             ? {
                 authenticated: true,
-                login: session.username || '',
-                name: session.user || session.username || '',
+                login: session.login || session.username || '',
+                name: session.user || session.login || session.username || '',
                 sid: session.sid || '',
                 admin: session.admin === true
             }
@@ -985,10 +985,10 @@ function identityFor(req, { slug, tenantPaths, project }) {
     if (!session) return null;
 
     return {
-        username: session.username || '',
+        username: session.login || session.username || '',
         // The directory does not always answer with a display name. Falling back
         // to the account name keeps the header meaning "a person", never empty.
-        user: session.user || session.username || '',
+        user: session.user || session.login || session.username || '',
         groups: Array.isArray(session.groups) ? session.groups : []
     };
 }
@@ -1092,11 +1092,13 @@ async function handleLogin(req, res, ctx, config) {
     clearFailures(ip, ctx.projectId);
     const token = newToken();
     const everyMs = Number(config && config.revalidateMinutes) * 60 * 1000;
+    const login = String(result.login || username);
     sessions.set(token, {
         slug: ctx.slug,
         projectId: ctx.projectId,
         username,
-        user: result.displayName || username,
+        login,
+        user: result.displayName || login,
         groups,
         sid,
         admin: verdict.admin,
@@ -1175,6 +1177,7 @@ function maybeRevalidate(session, token, ctx, config) {
             }
             session.groups = groups;
             session.sid = sid;
+            session.login = String(result.login || session.login || session.username || '');
             // Demotion takes effect on the same timer as removal. An operator
             // who unticks Administrator has said something about now, not about
             // the next eight hours.

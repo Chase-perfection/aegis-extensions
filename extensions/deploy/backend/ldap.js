@@ -1058,7 +1058,7 @@ function attributesFor(cfg) {
     // a rename and a move between OUs, and an allow list of named people is
     // matched on it. A directory that has no such attribute returns nothing,
     // which costs one name in the request and no behaviour anywhere else.
-    const wanted = [cfg.groupAttribute, 'displayName', 'cn', 'objectSid'];
+    const wanted = [cfg.groupAttribute, 'sAMAccountName', 'displayName', 'cn', 'objectSid'];
     // `primaryGroupID` means nothing on a directory that is not AD, and is read
     // only to compute the primary group the nested walk would otherwise miss.
     if (cfg.nestedGroups) wanted.push('primaryGroupID');
@@ -1214,8 +1214,10 @@ async function collectGroups(state, cfg, userDn, entry, direct) {
 function shapeUser(cfg, dn, attributes, raw) {
     const attrs = attributes || Object.create(null);
     const groups = attrs[cfg.groupAttribute.toLowerCase()] || [];
+    const login = (attrs.samaccountname && attrs.samaccountname[0]) || '';
     const displayName = (attrs.displayname && attrs.displayname[0]) || (attrs.cn && attrs.cn[0]) || '';
     const out = { ok: true, dn, groups };
+    if (login) out.login = login;
     if (displayName) out.displayName = displayName;
     // The identity an allow list of named people is matched on.
     //

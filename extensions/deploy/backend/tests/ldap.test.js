@@ -368,6 +368,7 @@ function userEntry() {
         dn: 'CN=Alice Martin,OU=Users,DC=corp,DC=local',
         attrs: {
             memberOf: [LONG_GROUP, 'CN=Deploy Readers,OU=Groups,DC=corp,DC=local', 'CN=Everyone,DC=corp,DC=local'],
+            sAMAccountName: ['PVue'],
             displayName: ['Alice Martin'],
             cn: ['Alice Martin']
         }
@@ -546,6 +547,7 @@ test('verify binds, searches, re-binds, and returns the groups it already read',
 
     assert.strictEqual(out.ok, true);
     assert.strictEqual(out.dn, 'CN=Alice Martin,OU=Users,DC=corp,DC=local');
+    assert.strictEqual(out.login, 'PVue', 'the directory account spelling is returned verbatim');
     assert.strictEqual(out.displayName, 'Alice Martin');
     assert.deepStrictEqual(out.groups, [
         LONG_GROUP,
@@ -560,6 +562,7 @@ test('verify binds, searches, re-binds, and returns the groups it already read',
     assert.strictEqual(ops[0].password, SEARCH_CONFIG.bindPassword);
     assert.strictEqual(ops[1].baseDn, 'DC=corp,DC=local');
     assert.ok(ops[1].attributes.includes('memberOf'), 'the group attribute is asked for');
+    assert.ok(ops[1].attributes.includes('sAMAccountName'), 'the canonical account name is asked for');
     assert.strictEqual(ops[2].dn, 'CN=Alice Martin,OU=Users,DC=corp,DC=local',
         'the second bind uses the DN the search returned');
     assert.strictEqual(ops[2].password, 'her-password');
@@ -1298,7 +1301,7 @@ test('objectSid is always asked for, primaryGroupID only when nestedGroups is on
     t.after(() => plain.close());
     await ldap.verify(Object.assign({ url: plain.url }, SEARCH_CONFIG), 'alice', 'her-password');
     assert.deepStrictEqual(plain.seen.find((s) => s.op === 'search').attributes,
-        ['memberOf', 'displayName', 'cn', 'objectSid'],
+        ['memberOf', 'sAMAccountName', 'displayName', 'cn', 'objectSid'],
         'the SID is what an allow list of named people is matched on, never optional');
 
     const nested = await startFake({
@@ -1307,7 +1310,7 @@ test('objectSid is always asked for, primaryGroupID only when nestedGroups is on
     t.after(() => nested.close());
     await ldap.verify(Object.assign({ url: nested.url }, SEARCH_CONFIG, { nestedGroups: true }), 'alice', 'her-password');
     assert.deepStrictEqual(nested.seen.find((s) => s.op === 'search').attributes,
-        ['memberOf', 'displayName', 'cn', 'objectSid', 'primaryGroupID'],
+        ['memberOf', 'sAMAccountName', 'displayName', 'cn', 'objectSid', 'primaryGroupID'],
         'primaryGroupID rides along on the search that is already happening');
 });
 
@@ -1380,6 +1383,7 @@ test('lookup reads the groups with the service account and never binds as the us
     assert.deepStrictEqual(fake.errors, []);
     assert.strictEqual(out.ok, true);
     assert.strictEqual(out.dn, USER_DN);
+    assert.strictEqual(out.login, 'PVue', 'lookup keeps the account spelling returned by the directory');
     assert.strictEqual(out.displayName, 'Alice Martin');
     assert.deepStrictEqual(out.groups, [
         LONG_GROUP,
@@ -1394,6 +1398,19 @@ test('lookup reads the groups with the service account and never binds as the us
     const ops = fake.seen.filter((s) => s.op !== 'unbind');
     assert.deepStrictEqual(ops.map((s) => s.op), ['bind', 'search']);
     assert.strictEqual(ops[0].dn, SEARCH_CONFIG.bindDn);
+    assert.ok(ops[1].attributes.includes('sAMAccountName'), 'lookup requests the canonical account name');
+});
+
+test('lookup omits login when the directory omits sAMAccountName', async (t) => {
+    const entry = userEntry();
+    delete entry.attrs.sAMAccountName;
+    const fake = await startFake({ entries: [entry] });
+    t.after(() => fake.close());
+
+    const out = await ldap.lookup(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'paul');
+    assert.strictEqual(out.ok, true);
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(out, 'login'), false,
+        'callers can distinguish an absent directory value from a fabricated one');
 });
 
 test('lookup resolves nested and primary groups when the flag is on', async (t) => {

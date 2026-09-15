@@ -148,10 +148,12 @@ function fakeDirectory(users, accounts) {
                         const hit = Object.keys(accounts).find((a) => raw.includes(a));
                         if (hit) {
                             const dn = accounts[hit];
-                            sock.write(entry(id, dn, {
+                            const attrs = {
                                 memberOf: users[dn].groups,
                                 displayName: [hit]
-                            }));
+                            };
+                            if (users[dn].login) attrs.sAMAccountName = [users[dn].login];
+                            sock.write(entry(id, dn, attrs));
                         }
                         sock.write(result(id, 0x65, 0));
                         return;
@@ -256,14 +258,22 @@ function tenantPathsAt(dir) {
  * A tenant with one protected project, its files on disk, its listener running,
  * and a directory the config really points at.
  */
-async function scaffold(t, { allowedGroups, protectedSite = true, configure = true, refuse = null }) {
+async function scaffold(t, {
+    allowedGroups,
+    protectedSite = true,
+    configure = true,
+    refuse = null,
+    accountName = 'alice',
+    directoryLogin = '',
+    revalidateMinutes = 0
+}) {
     const dir = fs.mkdtempSync(path.join(TMP, 'tenant-'));
     const tenantPaths = tenantPathsAt(dir);
 
     const directory = await fakeDirectory({
         'CN=svc,OU=Service,DC=corp,DC=local': { password: 'svc-pw', groups: [] },
-        [USER_DN]: { password: 'alice-pw', groups: [GROUP_DN], refuse }
-    }, { alice: USER_DN });
+        [USER_DN]: { password: 'alice-pw', groups: [GROUP_DN], refuse, login: directoryLogin }
+    }, { [accountName]: USER_DN });
 
     if (configure) {
         authStore.writeConfig(tenantPaths, {
@@ -272,7 +282,8 @@ async function scaffold(t, { allowedGroups, protectedSite = true, configure = tr
             bindPassword: 'svc-pw',
             baseDn: 'DC=corp,DC=local',
             userFilter: '(&(objectClass=user)(sAMAccountName={username}))',
-            groupAttribute: 'memberOf'
+            groupAttribute: 'memberOf',
+            revalidateMinutes
         });
     }
 
@@ -341,6 +352,61 @@ test('the whole chain: an anonymous visitor is stopped, a real directory account
     assert.ok(directory.binds.some((b) => b.dn === USER_DN && b.ok),
         'and the user was bound by their found DN');
     assert.deepStrictEqual(directory.errors, [], 'the directory parsed every message we sent');
+});
+
+test('the site session keeps the exact sAMAccountName returned by the directory', async (t) => {
+    const { port } = await scaffold(t, {
+        allowedGroups: [], accountName: 'paul', directoryLogin: 'PVue'
+    });
+
+    const { posted } = await login(port, 'paul', 'alice-pw', '/');
+    const session = cookieFrom(posted, 'aegis_site');
+    assert.ok(session);
+
+    const whoami = await request(port, {
+        path: '/__aegis/whoami', headers: { Cookie: 'aegis_site=' + session }
+    });
+    assert.strictEqual(whoami.status, 200);
+    assert.strictEqual(JSON.parse(whoami.body).login, 'PVue');
+});
+
+test('revalidation updates a canonical login and preserves it when LDAP later omits the attribute', async (t) => {
+    const { port } = await scaffold(t, {
+        allowedGroups: [], accountName: 'paul', directoryLogin: 'PVue', revalidateMinutes: 1
+    });
+    const { posted } = await login(port, 'paul', 'alice-pw', '/');
+    const session = cookieFrom(posted, 'aegis_site');
+    assert.ok(session);
+
+    const realNow = Date.now;
+    let skew = 0;
+    Date.now = () => realNow() + skew;
+    t.after(() => { Date.now = realNow; siteAuth._setLookup(null); });
+    const settle = async () => {
+        for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve));
+    };
+    const visit = () => request(port, { path: '/', headers: { Cookie: 'aegis_site=' + session } });
+    const whoami = async () => JSON.parse((await request(port, {
+        path: '/__aegis/whoami', headers: { Cookie: 'aegis_site=' + session }
+    })).body);
+
+    let lookupUsername = '';
+    siteAuth._setLookup((config, username) => {
+        lookupUsername = username;
+        return { ok: true, login: 'PVUE', groups: [] };
+    });
+    skew += 2 * 60 * 1000;
+    await visit();
+    await settle();
+    assert.strictEqual(lookupUsername, 'paul',
+        'revalidation keeps the submitted identifier in case the configured filter is not sAMAccountName');
+    assert.strictEqual((await whoami()).login, 'PVUE', 'a fresh canonical spelling replaces the old one');
+
+    siteAuth._setLookup(() => ({ ok: true, groups: [] }));
+    skew += 2 * 60 * 1000;
+    await visit();
+    await settle();
+    assert.strictEqual((await whoami()).login, 'PVUE', 'an omitted attribute does not erase a valid login');
 });
 
 test('a wrong password never reaches the site and is never echoed back', async (t) => {

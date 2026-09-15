@@ -186,7 +186,7 @@ test('protected site: the three identity headers arrive', async (t) => {
     const tenantPaths = seed(slug, 'named',
         { name: 'Named', auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
     const token = await loginToken(slug, tenantPaths, 'named',
-        { ok: true, displayName: 'Alice Martin', groups: ['CN=Viewers,DC=corp,DC=local'] });
+        { ok: true, login: 'PVue', displayName: 'Alice Martin', groups: ['CN=Viewers,DC=corp,DC=local'] });
     const app = await upstream();
     t.after(async () => { await app.close(); siteAuth.dropSessions(slug, 'named'); });
 
@@ -194,7 +194,7 @@ test('protected site: the three identity headers arrive', async (t) => {
         app.port, ctxFor(slug, tenantPaths, 'named'));
 
     const seen = app.seen();
-    assert.strictEqual(seen['x-aegis-user'], 'alice');
+    assert.strictEqual(seen['x-aegis-user'], 'PVue', 'the proxy receives the directory spelling stored in the session');
     assert.strictEqual(decodeURIComponent(seen['x-aegis-name']), 'Alice Martin');
     assert.strictEqual(seen['x-aegis-groups'], encodeURIComponent('CN=Viewers,DC=corp,DC=local'));
 });
