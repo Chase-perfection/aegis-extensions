@@ -33,6 +33,7 @@
 'use strict';
 
 const http = require('http');
+const crypto = require('crypto');
 const path = require('path');
 const { execFile, execFileSync } = require('child_process');
 
@@ -94,7 +95,7 @@ function portFor(sitePort, slot, sitesBase, range) {
     return runtimeBase() + (index * 2) + (slot === 1 ? 1 : 0);
 }
 
-/** `<slug>/<projectId>` -> { slot, port, child, account, startedAt }. */
+/** `<slug>/<projectId>` -> { slot, port, child, account, startedAt, proxyKey }. */
 const running = new Map();
 
 function key(slug, projectId) {
@@ -105,6 +106,12 @@ function key(slug, projectId) {
 function targetFor(slug, projectId) {
     const held = running.get(key(slug, projectId));
     return held ? held.port : null;
+}
+
+/** The port and shared proxy key for one active process, or null. */
+function targetForRequest(slug, projectId) {
+    const held = running.get(key(slug, projectId));
+    return held ? { port: held.port, proxyKey: held.proxyKey } : null;
 }
 
 function isRunning(slug, projectId) {
@@ -166,9 +173,9 @@ async function waitHealthy(port, { timeoutMs, intervalMs, alive, sleep } = {}) {
  * account or an application: production passes `spawnSandboxed`, the tests pass
  * a stub that starts a plain `http` server.
  */
-async function startProcess({ dir, account, startCmd, port, env, spawn, report, dataDir }) {
+async function startProcess({ dir, account, startCmd, port, env, spawn, report, dataDir, proxyKey }) {
     const say = report || { stage() { }, log() { } };
-    const child = (spawn || spawnSandboxed)({ dir, account, startCmd, port, env, dataDir });
+    const child = (spawn || spawnSandboxed)({ dir, account, startCmd, port, env, dataDir, proxyKey });
 
     let exited = false;
     let exitInfo = null;
@@ -209,10 +216,13 @@ async function restart({ slug, project, dir, startCmd, env, spawn, report, drain
     const slot = previous && previous.slot === 0 ? 1 : 0;
     const port = portFor(project.port, slot);
     const account = accountFor(slug, project.id);
+    const proxyKey = crypto.randomBytes(32).toString('base64url');
 
-    const child = await startProcess({ dir, account, startCmd, port, env, spawn, report, dataDir });
+    const child = await startProcess({
+        dir, account, startCmd, port, env, spawn, report, dataDir, proxyKey
+    });
 
-    running.set(k, { slot, port, child, account, startedAt: Date.now() });
+    running.set(k, { slot, port, child, account, startedAt: Date.now(), proxyKey });
 
     if (previous) {
         // Killed on a timer, not at once: a request the old process is halfway
@@ -303,7 +313,7 @@ function grantData(dir, account) {
     }
 }
 
-function spawnSandboxed({ dir, account, startCmd, port, env, dataDir }) {
+function spawnSandboxed({ dir, account, startCmd, port, env, dataDir, proxyKey }) {
     const secret = machineStore.getBuildAccountSecret(account);
     if (!secret) {
         throw Object.assign(
@@ -319,6 +329,7 @@ function spawnSandboxed({ dir, account, startCmd, port, env, dataDir }) {
             PORT: String(port),
             HOST: '127.0.0.1',
             NODE_ENV: (env && env.NODE_ENV) || 'production',
+            AEGIS_PROXY_KEY: proxyKey,
             // Added here and not in `projectEnv.forBuild`, which is the
             // environment a build also reads. A build is untrusted code from a
             // branch; the path to the live data is not its business. Putting the
@@ -344,7 +355,7 @@ function spawnSandboxed({ dir, account, startCmd, port, env, dataDir }) {
 }
 
 module.exports = {
-    isEnabled, accounts, portFor, targetFor, isRunning, restart, stop, health, waitHealthy,
+    isEnabled, accounts, portFor, targetFor, targetForRequest, isRunning, restart, stop, health, waitHealthy,
     accountFor, startProcess, spawnSandboxed, grantAccess, grantData,
     HEALTH_TIMEOUT_MS, DRAIN_MS, DEFAULT_RUNTIME_BASE, runtimeBase,
     // Test seam: the flip is about which process the proxy points at, and a

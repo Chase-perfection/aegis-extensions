@@ -46,6 +46,7 @@ console.warn = () => {};
 /* ------------------------------------------------------------------ */
 
 const SECRET = 'correct-horse-battery';
+const PROXY_KEY = 'runtime-only-proxy-key';
 const GOOD_CONFIG = {
     url: 'ldap://dc01.corp.local:389',
     baseDn: 'DC=corp,DC=local',
@@ -139,12 +140,12 @@ async function loginToken(slug, tenantPaths, projectId, result) {
  * A listener standing in for the application behind a site. It records the
  * headers of the last request it answered, which is the only thing under test.
  */
-function upstream() {
+function upstream(responseHeaders) {
     return new Promise((resolve) => {
         let seen = null;
         const srv = http.createServer((req, res) => {
             seen = req.headers;
-            res.writeHead(200, { 'content-type': 'text/plain' });
+            res.writeHead(200, Object.assign({ 'content-type': 'text/plain' }, responseHeaders));
             res.end('ok');
         });
         srv.listen(0, '127.0.0.1', () => {
@@ -158,16 +159,21 @@ function upstream() {
 }
 
 /** Runs one request through the real `proxyTo` and resolves once it is answered. */
-function proxied(req, port, ctx) {
+function proxied(req, port, ctx, proxyKey) {
     return new Promise((resolve, reject) => {
         const res = new Writable({ write(chunk, enc, cb) { cb(); } });
         res.headersSent = false;
-        res.writeHead = function (status) { res.statusCode = status; res.headersSent = true; };
-        res.on('finish', resolve);
+        res.headers = {};
+        res.writeHead = function (status, headers) {
+            res.statusCode = status;
+            Object.assign(res.headers, headers || {});
+            res.headersSent = true;
+        };
+        res.on('finish', () => resolve(res));
         res.on('error', reject);
         const timer = setTimeout(() => reject(new Error('the proxy did not answer')), 5000);
         timer.unref();
-        siteServer.proxyTo(req, res, port, ctx);
+        siteServer.proxyTo(req, res, { port, proxyKey: proxyKey || PROXY_KEY }, ctx);
     });
 }
 
@@ -249,7 +255,8 @@ test('forgery: an unprotected site receives none of the three', async (t) => {
         headers: {
             'x-aegis-user': 'administrateur',
             'x-aegis-name': 'Someone Important',
-            'x-aegis-groups': 'CN=Domain Admins,DC=corp,DC=local'
+            'x-aegis-groups': 'CN=Domain Admins,DC=corp,DC=local',
+            'X-Aegis-Proxy-Key': 'forged-client-key'
         }
     }), app.port, ctxFor(slug, tenantPaths, 'open'));
 
@@ -259,6 +266,22 @@ test('forgery: an unprotected site receives none of the three', async (t) => {
     for (const name of ['x-aegis-user', 'x-aegis-name', 'x-aegis-groups']) {
         assert.strictEqual(seen[name], undefined, `${name} should not have arrived`);
     }
+    assert.strictEqual(seen['x-aegis-proxy-key'], PROXY_KEY,
+        'the runtime key must replace the client value even when authentication is off');
+});
+
+test('the runtime proxy key is injected upstream and never returned to the client', async (t) => {
+    const slug = 'tenant-proxy-key';
+    const tenantPaths = seed(slug, 'key', { name: 'Key' });
+    const app = await upstream({ 'X-Aegis-Proxy-Key': PROXY_KEY });
+    t.after(async () => { await app.close(); });
+
+    const response = await proxied(fakeReq('GET', '/', {
+        headers: { 'X-Aegis-Proxy-Key': 'forged-client-key' }
+    }), app.port, ctxFor(slug, tenantPaths, 'key'));
+
+    assert.strictEqual(app.seen()['x-aegis-proxy-key'], PROXY_KEY);
+    assert.strictEqual(response.headers['x-aegis-proxy-key'], undefined);
 });
 
 test('forgery: a session for another project does not name the visitor', async (t) => {
@@ -368,6 +391,14 @@ test('stripIdentity removes every case a client might send', () => {
         'x-forwarded-for': 'keep', 'cookie': 'keep'
     };
     siteServer.stripIdentity(headers);
+    assert.deepStrictEqual(Object.keys(headers).sort(), ['cookie', 'x-forwarded-for']);
+});
+
+test('stripProxyKey removes every case a client might send', () => {
+    const headers = {
+        'X-Aegis-Proxy-Key': 'a', 'x-forwarded-for': 'keep', cookie: 'keep'
+    };
+    siteServer.stripProxyKey(headers);
     assert.deepStrictEqual(Object.keys(headers).sort(), ['cookie', 'x-forwarded-for']);
 });
 

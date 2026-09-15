@@ -19,8 +19,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
+const childProcess = require('child_process');
 const { EventEmitter } = require('events');
 
+const machineStore = require('../machineStore');
 const runtime = require('../runtime');
 
 /**
@@ -149,6 +151,9 @@ test('a new version takes over on the other slot, and the old one is dropped', a
             spawn: fakeSpawn({ body: 'v1' }), drainMs: 0
         });
         assert.strictEqual(runtime.targetFor('acme', 'app'), first.port);
+        const firstTarget = runtime.targetForRequest('acme', 'app');
+        assert.strictEqual(firstTarget.port, first.port);
+        assert.match(firstTarget.proxyKey, /^[A-Za-z0-9_-]{43}$/);
         assert.ok((await get(first.port)).startsWith('v1'));
 
         const second = await runtime.restart({
@@ -158,6 +163,9 @@ test('a new version takes over on the other slot, and the old one is dropped', a
         assert.notStrictEqual(second.port, first.port, 'the new version took the port in use');
         assert.strictEqual(second.slot, 1);
         assert.strictEqual(runtime.targetFor('acme', 'app'), second.port);
+        const secondTarget = runtime.targetForRequest('acme', 'app');
+        assert.strictEqual(secondTarget.port, second.port);
+        assert.notStrictEqual(secondTarget.proxyKey, firstTarget.proxyKey);
         assert.ok((await get(second.port)).startsWith('v2'));
 
         // Third time it comes back to the first slot, so the two ports are all
@@ -187,6 +195,7 @@ test('a version that never answers leaves the running one serving', async () => 
             slug: 'acme', project, dir: '.', startCmd: 'x',
             spawn: fakeSpawn({ body: 'live' }), drainMs: 0
         });
+        const goodTarget = runtime.targetForRequest('acme', 'app2');
 
         await assert.rejects(() => runtime.restart({
             slug: 'acme', project, dir: '.', startCmd: 'boom',
@@ -194,6 +203,8 @@ test('a version that never answers leaves the running one serving', async () => 
         }), (e) => e.code === 'start_failed' || e.code === 'unhealthy');
 
         assert.strictEqual(runtime.targetFor('acme', 'app2'), good.port, 'the proxy was moved anyway');
+        assert.deepStrictEqual(runtime.targetForRequest('acme', 'app2'), goodTarget,
+            'the proxy port and key must remain on the old process together');
         assert.ok((await get(good.port)).startsWith('live'));
     } finally {
         runtime.stop('acme', 'app2');
@@ -219,4 +230,61 @@ test('restart refuses outright when the host has not enabled the runtime', async
 
 test('health says no for a port with nothing behind it', async () => {
     assert.strictEqual(await runtime.health(3099, 300), false);
+});
+
+test('stop removes the proxy port and key together', async () => {
+    const before = [process.env.AEGIS_DEPLOY_RUNTIME, process.env.AEGIS_RUNTIME_ACCOUNTS];
+    process.env.AEGIS_DEPLOY_RUNTIME = '1';
+    process.env.AEGIS_RUNTIME_ACCOUNTS = 'run-a';
+    try {
+        await runtime.restart({
+            slug: 'stop-key', project: { id: 'app', port: 3092 }, dir: '.', startCmd: 'x',
+            spawn: fakeSpawn(), drainMs: 0
+        });
+        assert.ok(runtime.targetForRequest('stop-key', 'app'));
+        runtime.stop('stop-key', 'app');
+        assert.strictEqual(runtime.targetFor('stop-key', 'app'), null);
+        assert.strictEqual(runtime.targetForRequest('stop-key', 'app'), null);
+    } finally {
+        runtime.stop('stop-key', 'app');
+        if (before[0] === undefined) delete process.env.AEGIS_DEPLOY_RUNTIME;
+        else process.env.AEGIS_DEPLOY_RUNTIME = before[0];
+        if (before[1] === undefined) delete process.env.AEGIS_RUNTIME_ACCOUNTS;
+        else process.env.AEGIS_RUNTIME_ACCOUNTS = before[1];
+    }
+});
+
+test('the proxy key reaches only the child JSON environment and cannot be overridden', (t) => {
+    const originalExecFile = childProcess.execFile;
+    const originalExecFileSync = childProcess.execFileSync;
+    const originalSecret = machineStore.getBuildAccountSecret;
+    let launch = null;
+
+    childProcess.execFile = (file, args, options) => {
+        launch = { file, args, options };
+        return new EventEmitter();
+    };
+    childProcess.execFileSync = () => {};
+    machineStore.getBuildAccountSecret = () => 'account-password';
+    delete require.cache[require.resolve('../runtime')];
+    const isolatedRuntime = require('../runtime');
+    t.after(() => {
+        childProcess.execFile = originalExecFile;
+        childProcess.execFileSync = originalExecFileSync;
+        machineStore.getBuildAccountSecret = originalSecret;
+        delete require.cache[require.resolve('../runtime')];
+    });
+
+    const proxyKey = 'server-generated-proxy-key';
+    isolatedRuntime.spawnSandboxed({
+        dir: '.', account: 'run-a', startCmd: 'node server.js', port: 3200,
+        env: { AEGIS_PROXY_KEY: 'forged-project-value', PUBLIC_SETTING: 'visible' },
+        proxyKey
+    });
+
+    const childJson = JSON.parse(launch.options.env.AEGIS_BUILD_ENV_JSON);
+    assert.strictEqual(childJson.AEGIS_PROXY_KEY, proxyKey);
+    assert.strictEqual(childJson.PUBLIC_SETTING, 'visible');
+    assert.strictEqual(launch.options.env.AEGIS_PROXY_KEY, undefined);
+    assert.ok(!launch.args.includes(proxyKey));
 });

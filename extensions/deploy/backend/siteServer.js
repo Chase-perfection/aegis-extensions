@@ -146,6 +146,7 @@ function withoutHopByHop(headers) {
  */
 const IDENTITY_HEADERS = ['X-Aegis-User', 'X-Aegis-Name', 'X-Aegis-Groups'];
 const IDENTITY_LOWER = IDENTITY_HEADERS.map((n) => n.toLowerCase());
+const PROXY_KEY_HEADER = 'X-Aegis-Proxy-Key';
 
 /**
  * Drops every identity header the client sent, whatever case it used.
@@ -165,6 +166,12 @@ const IDENTITY_LOWER = IDENTITY_HEADERS.map((n) => n.toLowerCase());
 function stripIdentity(headers) {
     for (const name of Object.keys(headers)) {
         if (IDENTITY_LOWER.includes(name.toLowerCase())) delete headers[name];
+    }
+}
+
+function stripProxyKey(headers) {
+    for (const name of Object.keys(headers)) {
+        if (name.toLowerCase() === PROXY_KEY_HEADER.toLowerCase()) delete headers[name];
     }
 }
 
@@ -211,7 +218,9 @@ function encodeIdentity(value) {
  * ponytail: no WebSocket upgrade. `server.on('upgrade')` plus a socket pipe is
  * the addition, and no project needs it yet.
  */
-function proxyTo(req, res, port, ctx) {
+function proxyTo(req, res, target, ctx) {
+    const port = typeof target === 'object' ? target.port : target;
+    const proxyKey = typeof target === 'object' ? target.proxyKey : null;
     const headers = withoutHopByHop(req.headers);
     headers['X-Forwarded-For'] = req.socket.remoteAddress || '';
     headers['X-Forwarded-Proto'] = req.socket.encrypted ? 'https' : 'http';
@@ -220,6 +229,8 @@ function proxyTo(req, res, port, ctx) {
     // Overwritten, never appended -- see stripIdentity for why this runs even
     // when nothing is about to be written.
     stripIdentity(headers);
+    stripProxyKey(headers);
+    if (proxyKey) headers[PROXY_KEY_HEADER] = proxyKey;
     let identity = null;
     try {
         identity = siteAuth.identityFor(req, ctx);
@@ -243,7 +254,9 @@ function proxyTo(req, res, port, ctx) {
         host: '127.0.0.1', port, path: req.url, method: req.method, headers,
         timeout: PROXY_TIMEOUT_MS
     }, (up) => {
-        res.writeHead(up.statusCode || 502, withoutHopByHop(up.headers));
+        const responseHeaders = withoutHopByHop(up.headers);
+        stripProxyKey(responseHeaders);
+        res.writeHead(up.statusCode || 502, responseHeaders);
         up.pipe(res);
     });
 
@@ -284,9 +297,9 @@ function serve(req, res, ctx) {
     // through to the files: `current/` for a server-rendered application is its
     // source, and publishing that is worse than being down.
     if (ctx.runtime === 'node') {
-        const port = runtime.targetFor(ctx.slug, ctx.project.id);
-        if (!port) return send(res, 503, 'This application is not running');
-        return proxyTo(req, res, port, ctx);
+        const target = runtime.targetForRequest(ctx.slug, ctx.project.id);
+        if (!target) return send(res, 503, 'This application is not running');
+        return proxyTo(req, res, target, ctx);
     }
 
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
@@ -826,6 +839,6 @@ module.exports = {
     resolveFile, tlsOptionsFor,
     startRouter, routerPort, routerIsTls, invalidateHostIndex,
     touchSite, lastTouch, proxyTo, withoutHopByHop,
-    IDENTITY_HEADERS, stripIdentity, encodeIdentity,
+    IDENTITY_HEADERS, stripIdentity, stripProxyKey, encodeIdentity,
     normaliseHostname, hostOf, buildHostIndex, HOSTNAME_RE,
     DEFAULT_PORT_BASE, PORT_RANGE, portBase, isServing };
