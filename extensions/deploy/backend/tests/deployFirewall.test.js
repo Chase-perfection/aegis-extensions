@@ -163,8 +163,8 @@ test('firewall: an unknown profile falls back, and Public is never a default', a
 /* ------------------------------------------------------------------ */
 
 test('firewall: a rule name round-trips, and a malformed one is not ours', async () => {
-    const name = firewall._ruleName('acme', 'kpi-briconord');
-    assert.deepStrictEqual(firewall._parseRuleName(name), { slug: 'acme', projectId: 'kpi-briconord' });
+    const name = firewall._ruleName('acme', 'kpi-internal');
+    assert.deepStrictEqual(firewall._parseRuleName(name), { slug: 'acme', projectId: 'kpi-internal' });
 
     for (const other of ['', 'Aegis Dashboard (TCP 3000)', 'Aegis Deploy site: acme',
         'Aegis Deploy site: acme/kpi/extra', 'Aegis Deploy site: ACME/kpi',

@@ -165,7 +165,12 @@ test('a preview id in the hash opens the preview, not the missing-project state'
     assert.strictEqual(detail.heading, 'Preview deployment');
     // Data is there on a preview too: it writes its own folder, under its own
     // id, and reading what a branch wrote is most of why anyone deploys one.
-    assert.deepStrictEqual(detail.tabs, ['Overview', 'Deployments', 'Variables', 'Data', 'Settings']);
+    // Authentication likewise: a preview is a deployed site on its own port,
+    // and `routes.js` records an auth method against it like any other, so a
+    // branch preview of an internal application is not left open to the
+    // network because it is temporary.
+    assert.deepStrictEqual(detail.tabs,
+      ['Overview', 'Deployments', 'Variables', 'Data', 'Authentication', 'Settings']);
   } finally {
     await close();
   }

@@ -55,8 +55,8 @@ test('anything that is not a domain name is refused', () => {
 test('the domain comes from the newest audit', () => {
     const t = tenant();
     t.audit('audit(01.01.2026_09h00)', { Metadata: { TargetDomain: 'old.local' } }, 1_000_000_000_000);
-    t.audit('audit(20.08.2026_15h00)', { Metadata: { TargetDomain: 'dom2.local' } }, 1_800_000_000_000);
-    assert.strictEqual(hint.auditedDomain(t.paths.audits), 'dom2.local');
+    t.audit('audit(20.08.2026_15h00)', { Metadata: { TargetDomain: 'corp.local' } }, 1_800_000_000_000);
+    assert.strictEqual(hint.auditedDomain(t.paths.audits), 'corp.local');
 });
 
 test('a summary DomainName wins over the metadata target', () => {
@@ -81,14 +81,14 @@ test('no audits directory is not an error', () => {
 
 test('the suggestion is the four fields a domain name settles', () => {
     const t = tenant();
-    t.audit('audit(20.08.2026_15h00)', { Metadata: { TargetDomain: 'dom2.local' } });
+    t.audit('audit(20.08.2026_15h00)', { Metadata: { TargetDomain: 'corp.local' } });
     const s = hint.suggest(t.paths);
     assert.strictEqual(s.source, 'audit');
-    assert.strictEqual(s.domain, 'dom2.local');
-    assert.strictEqual(s.fields.baseDn, 'DC=dom2,DC=local');
-    assert.strictEqual(s.fields.userDnTemplate, '{username}@dom2.local');
+    assert.strictEqual(s.domain, 'corp.local');
+    assert.strictEqual(s.fields.baseDn, 'DC=corp,DC=local');
+    assert.strictEqual(s.fields.userDnTemplate, '{username}@corp.local');
     // LDAPS, because the bind password crosses this connection.
-    assert.match(s.fields.url, /^ldaps:\/\/dom2\.local:636$/);
+    assert.match(s.fields.url, /^ldaps:\/\/corp\.local:636$/);
     // Never guessed: the two fields that decide who gets in and as whom.
     assert.strictEqual(s.fields.bindDn, undefined);
     assert.strictEqual(s.fields.nestedGroups, undefined);

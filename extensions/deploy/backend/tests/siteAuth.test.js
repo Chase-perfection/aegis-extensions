@@ -119,7 +119,7 @@ test('access: the directory audience lets anyone in and still names one admin', 
     // The shape an application that manages its own roles asks for: Aegis says
     // who is reading and who may open the console, the application does the
     // rest. Opening the gate and appointing an administrator are two decisions.
-    const users = [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }];
+    const users = [{ sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true }];
     assert.deepStrictEqual(
         siteAuth._accessFor([], users, 'directory', [], 'S-1-5-21-1-2-3-1103'),
         { allowed: true, admin: true });
@@ -129,7 +129,7 @@ test('access: the directory audience lets anyone in and still names one admin', 
 });
 
 test('access: the listed audience refuses a SID that is on no list', () => {
-    const users = [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }];
+    const users = [{ sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true }];
     assert.deepStrictEqual(
         siteAuth._accessFor([], users, 'listed', [], 'S-1-5-21-1-2-3-9999'),
         { allowed: false, admin: false });
@@ -160,7 +160,7 @@ test('access: a group can never confer admin', () => {
 test('access: a SID matches whatever case it was stored in', () => {
     // An operator adding the first administrator on a machine with no picker
     // types it by hand, and Windows tools print it in mixed case.
-    const users = [{ sid: 's-1-5-21-1-2-3-1103', login: 'PV', name: '', admin: true }];
+    const users = [{ sid: 's-1-5-21-1-2-3-1103', login: 'AM', name: '', admin: true }];
     assert.deepStrictEqual(
         siteAuth._accessFor([], users, 'listed', [], 'S-1-5-21-1-2-3-1103'),
         { allowed: true, admin: true });
@@ -169,7 +169,7 @@ test('access: a SID matches whatever case it was stored in', () => {
 test('access: an empty SID matches nobody', () => {
     // The direct-bind path reads the entry best effort, so an absent SID is a
     // real state. It must never collapse onto the first entry in the list.
-    const users = [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: '', admin: true }];
+    const users = [{ sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: '', admin: true }];
     assert.deepStrictEqual(
         siteAuth._accessFor([], users, 'listed', [], ''),
         { allowed: false, admin: false });
@@ -1514,7 +1514,7 @@ test('restart: an unparseable new certificate settles the restart instead of han
 /* named people, and what the site is told about them                  */
 /* ------------------------------------------------------------------ */
 
-const PV_SID = 'S-1-5-21-1-2-3-1103';
+const AM_SID = 'S-1-5-21-1-2-3-1103';
 
 /** Signs somebody in and hands back the session cookie, or null if refused. */
 async function loginAs(slug, tenantPaths, id, username, result) {
@@ -1544,12 +1544,12 @@ test('login: a named person is let in on their SID, with no group anywhere', asy
         name: 'Named',
         auth: {
             method: 'ldap', enabled: true, audience: 'listed', allowedGroups: [],
-            allowedUsers: [{ sid: PV_SID, login: 'PV', name: 'Paul Vue', admin: true }]
+            allowedUsers: [{ sid: AM_SID, login: 'AM', name: 'Alice Martin', admin: true }]
         }
     }, GOOD_CONFIG);
 
-    const token = await loginAs(slug, tenantPaths, 'named', 'PV',
-        { ok: true, dn: 'PV@corp.local', displayName: 'Paul Vue', groups: [], sid: PV_SID });
+    const token = await loginAs(slug, tenantPaths, 'named', 'AM',
+        { ok: true, dn: 'AM@corp.local', displayName: 'Alice Martin', groups: [], sid: AM_SID });
     assert.ok(token, 'the SID alone must be enough to open a listed site');
 
     const { handled } = await getWith(slug, tenantPaths, 'named', '/', token);
@@ -1562,7 +1562,7 @@ test('login: a listed site refuses a SID nobody named', async () => {
         name: 'Named',
         auth: {
             method: 'ldap', enabled: true, audience: 'listed', allowedGroups: [],
-            allowedUsers: [{ sid: PV_SID, login: 'PV', name: 'Paul Vue', admin: true }]
+            allowedUsers: [{ sid: AM_SID, login: 'AM', name: 'Alice Martin', admin: true }]
         }
     }, GOOD_CONFIG);
 
@@ -1581,12 +1581,12 @@ test('login: people are named and the directory returns no SID, so nobody gets i
         auth: {
             method: 'ldap', enabled: true, audience: 'listed',
             allowedGroups: ['Domain Admins'],
-            allowedUsers: [{ sid: PV_SID, login: 'PV', name: 'Paul Vue', admin: true }]
+            allowedUsers: [{ sid: AM_SID, login: 'AM', name: 'Alice Martin', admin: true }]
         }
     }, GOOD_CONFIG);
 
-    const token = await loginAs(slug, tenantPaths, 'nosid', 'PV', {
-        ok: true, dn: 'PV@corp.local', displayName: 'Paul Vue',
+    const token = await loginAs(slug, tenantPaths, 'nosid', 'AM', {
+        ok: true, dn: 'AM@corp.local', displayName: 'Alice Martin',
         groups: ['CN=Domain Admins,CN=Users,DC=corp,DC=local']
         // no sid
     });
@@ -1600,12 +1600,12 @@ test('whoami: an administrator is told so, and the answer is never cached', asyn
         name: 'App',
         auth: {
             method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [],
-            allowedUsers: [{ sid: PV_SID, login: 'PV', name: 'Paul Vue', admin: true }]
+            allowedUsers: [{ sid: AM_SID, login: 'AM', name: 'Alice Martin', admin: true }]
         }
     }, GOOD_CONFIG);
 
-    const token = await loginAs(slug, tenantPaths, 'app', 'PV',
-        { ok: true, dn: 'PV@corp.local', displayName: 'Paul Vue', groups: [], sid: PV_SID });
+    const token = await loginAs(slug, tenantPaths, 'app', 'AM',
+        { ok: true, dn: 'AM@corp.local', displayName: 'Alice Martin', groups: [], sid: AM_SID });
     const { res, handled } = await getWith(slug, tenantPaths, 'app', '/__aegis/whoami', token);
 
     assert.strictEqual(handled, true);
@@ -1613,7 +1613,7 @@ test('whoami: an administrator is told so, and the answer is never cached', asyn
     assert.strictEqual(res.headers['Cache-Control'], 'no-store',
         'a cached answer is a stale role, and a shared cache would hand it to the next visitor');
     assert.deepStrictEqual(JSON.parse(res.body), {
-        authenticated: true, login: 'PV', name: 'Paul Vue', sid: PV_SID, admin: true
+        authenticated: true, login: 'AM', name: 'Alice Martin', sid: AM_SID, admin: true
     });
 });
 
@@ -1625,7 +1625,7 @@ test('whoami: someone let in by the audience is not an administrator', async () 
         name: 'App',
         auth: {
             method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [],
-            allowedUsers: [{ sid: PV_SID, login: 'PV', name: 'Paul Vue', admin: true }]
+            allowedUsers: [{ sid: AM_SID, login: 'AM', name: 'Alice Martin', admin: true }]
         }
     }, GOOD_CONFIG);
 
@@ -1677,4 +1677,134 @@ test('whoami: the site cannot serve its own file on that path', async () => {
         { slug, tenantPaths, project: { id: 'app', name: 'App' } });
     assert.strictEqual(handled, true);
     assert.strictEqual(res.statusCode, 404, 'only GET and HEAD answer here');
+});
+
+/* ------------------------------------------------------------------ */
+/* the access policy: past the door, which rooms                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Writes an access manifest into the folder the project is serving.
+ *
+ * `siteAuth` reads it from `current/`, so the rules travel with the commit and
+ * a rollback restores the rules of the commit it restores.
+ */
+function writeManifest(tenantPaths, projectId, doc) {
+    const dir = projectStore.currentDir(tenantPaths, projectId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aegis.access.json'), JSON.stringify(doc));
+}
+
+/** Signs somebody in and hands back their session cookie. */
+async function sessionFor(slug, tenantPaths, projectId, groups, sid) {
+    siteAuth._setVerifier(() => ({
+        ok: true, dn: 'CN=X,DC=corp,DC=local', displayName: 'X',
+        groups: groups || [], sid: sid || 'S-1-5-21-1-2-3-1000'
+    }));
+    try {
+        const { res } = await login(slug, tenantPaths, projectId,
+            { username: 'someone', password: SECRET, next: '/' });
+        return cookieValue(res.headers['Set-Cookie'], 'aegis_site');
+    } finally {
+        siteAuth._setVerifier(null);
+    }
+}
+
+async function knockWith(slug, tenantPaths, projectId, url, token) {
+    // `gate` answers synchronously on the authenticated path and with a promise
+    // on the ones that reach the directory, so this awaits either.
+    const res = fakeRes();
+    const handled = await siteAuth.gate(
+        fakeReq('GET', url, { headers: { cookie: `aegis_site=${token}` } }), res,
+        { slug, tenantPaths, project: { id: projectId, name: projectId } });
+    return { handled, res };
+}
+
+test('policy: a signed-in visitor with no grant is refused, and the site never serves it', async () => {
+    const slug = 'pol-deny';
+    const tenantPaths = seed(slug, 'app', {
+        name: 'App',
+        auth: { method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [], allowedUsers: [], grants: { admin: { groups: ['Site-Admins'], users: [] } } }
+    }, GOOD_CONFIG);
+    writeManifest(tenantPaths, 'app', { rules: [{ path: '/admin/*', require: 'admin' }] });
+    siteAuth.invalidate(slug, 'app');
+
+    const token = await sessionFor(slug, tenantPaths, 'app', ['CN=Domain Users,DC=corp,DC=local']);
+    const { handled, res } = await knockWith(slug, tenantPaths, 'app', '/admin/users', token);
+
+    assert.strictEqual(handled, true, 'the guard answers instead of letting the site serve');
+    assert.strictEqual(res.statusCode, 403);
+});
+
+test('policy: the same visitor is served everything no rule names', async () => {
+    const slug = 'pol-open';
+    const tenantPaths = seed(slug, 'app', {
+        name: 'App',
+        auth: { method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [], allowedUsers: [], grants: {} }
+    }, GOOD_CONFIG);
+    writeManifest(tenantPaths, 'app', { rules: [{ path: '/admin/*', require: 'admin' }] });
+    siteAuth.invalidate(slug, 'app');
+
+    const token = await sessionFor(slug, tenantPaths, 'app', []);
+    const { handled } = await knockWith(slug, tenantPaths, 'app', '/index.html', token);
+    assert.strictEqual(handled, false, 'a path outside every rule is untouched by the policy');
+});
+
+test('policy: the group named on the resource opens it', async () => {
+    const slug = 'pol-allow';
+    const tenantPaths = seed(slug, 'app', {
+        name: 'App',
+        auth: { method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [], allowedUsers: [], grants: { admin: { groups: ['Site-Admins'], users: [] } } }
+    }, GOOD_CONFIG);
+    writeManifest(tenantPaths, 'app', { rules: [{ path: '/admin/*', require: 'admin' }] });
+    siteAuth.invalidate(slug, 'app');
+
+    const token = await sessionFor(slug, tenantPaths, 'app', ['CN=Site-Admins,CN=Users,DC=corp,DC=local']);
+    const { handled } = await knockWith(slug, tenantPaths, 'app', '/admin/users', token);
+    assert.strictEqual(handled, false, 'holding the resource is what opens the path');
+});
+
+test('policy: a resource nobody is bound to closes the path for everyone', async () => {
+    const slug = 'pol-typo';
+    const tenantPaths = seed(slug, 'app', {
+        name: 'App',
+        auth: { method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [], allowedUsers: [], grants: {} }
+    }, GOOD_CONFIG);
+    writeManifest(tenantPaths, 'app', { rules: [{ path: '/secret/*', require: 'nobody-holds-this' }] });
+    siteAuth.invalidate(slug, 'app');
+
+    const token = await sessionFor(slug, tenantPaths, 'app', ['CN=Site-Admins,DC=corp,DC=local']);
+    const { res } = await knockWith(slug, tenantPaths, 'app', '/secret/x', token);
+    assert.strictEqual(res.statusCode, 403, 'a typo in the manifest locks a door, it does not open one');
+});
+
+test('policy: the refusal survives a path spelled to slip past it', async () => {
+    // The whole reason the verdict normalises. The file resolver decodes and
+    // resolves on a case-insensitive filesystem, so these all reach the same
+    // folder and all of them have to be refused.
+    const slug = 'pol-spell';
+    const tenantPaths = seed(slug, 'app', {
+        name: 'App',
+        auth: { method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [], allowedUsers: [], grants: { admin: { groups: ['Site-Admins'], users: [] } } }
+    }, GOOD_CONFIG);
+    writeManifest(tenantPaths, 'app', { rules: [{ path: '/admin/*', require: 'admin' }] });
+    siteAuth.invalidate(slug, 'app');
+
+    const token = await sessionFor(slug, tenantPaths, 'app', ['CN=Domain Users,DC=corp,DC=local']);
+    for (const url of ['/ADMIN/users', '/%61dmin/users', '/public/../admin/users', '//admin/users']) {
+        const { res } = await knockWith(slug, tenantPaths, 'app', url, token);
+        assert.strictEqual(res.statusCode, 403, `${url} must be refused`);
+    }
+});
+
+test('policy: a site with no manifest is served exactly as it was before', async () => {
+    const slug = 'pol-none';
+    const tenantPaths = seed(slug, 'app', {
+        name: 'App',
+        auth: { method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [], allowedUsers: [] }
+    }, GOOD_CONFIG);
+
+    const token = await sessionFor(slug, tenantPaths, 'app', []);
+    const { handled } = await knockWith(slug, tenantPaths, 'app', '/admin/users', token);
+    assert.strictEqual(handled, false, 'every site deployed before this feature has to keep serving');
 });

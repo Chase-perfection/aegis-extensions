@@ -1033,15 +1033,38 @@ test('inspectCertificate refuses a plaintext directory instead of pretending', a
 
 /* --------------------------------------------------------- testConnection -- */
 
-test('testConnection binds the service account and closes', async (t) => {
+test('testConnection binds the service account, proves it can read, and closes', async (t) => {
     const fake = await startFake({});
     t.after(() => fake.close());
 
     const out = await ldap.testConnection(Object.assign({ url: fake.url }, SEARCH_CONFIG));
-    assert.deepStrictEqual(out, { ok: true });
+    assert.deepStrictEqual(out, { ok: true, searchable: true });
     assert.deepStrictEqual(fake.errors, []);
-    assert.deepStrictEqual(fake.seen.filter((s) => s.op !== 'unbind').map((s) => s.op), ['bind']);
+    // The search is the second half of the test and has to be on the wire: a
+    // bind alone cannot tell a service account from an anonymous connection,
+    // because AD answers SUCCESS to both.
+    assert.deepStrictEqual(fake.seen.filter((s) => s.op !== 'unbind').map((s) => s.op),
+        ['bind', 'search']);
     assert.ok(!JSON.stringify(out).includes('service-secret'), 'no password in the answer');
+});
+
+test('testConnection reports a bind that cannot read as connected but not searchable', async (t) => {
+    // What Active Directory answers a search on a connection that bound
+    // anonymously, which is what an empty service account produces.
+    const fake = await startFake({
+        onSearch: () => ({
+            resultCode: 1,
+            diagnostic: '000004DC: LdapErr: DSID-0C090D5C, comment: In order to perform this '
+                + 'operation a successful bind must be completed on the connection., data 0'
+        })
+    });
+    t.after(() => fake.close());
+
+    const out = await ldap.testConnection(Object.assign({ url: fake.url }, SEARCH_CONFIG));
+    assert.strictEqual(out.ok, true, 'the bind itself succeeded and is reported as such');
+    assert.strictEqual(out.searchable, false);
+    assert.strictEqual(out.searchError, 'ldap_search_denied');
+    assert.match(out.searchDetail, /successful bind must be completed/);
 });
 
 test('testConnection reports the directory diagnostic without the password', async (t) => {
@@ -1449,7 +1472,7 @@ test('people search: a login, a first name, a surname, a display name or a mail,
     const fake = await startFake({ entries: [] });
     t.after(() => fake.close());
 
-    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'EG');
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'AB');
     assert.deepStrictEqual(fake.errors, []);
     assert.deepStrictEqual(out, { ok: true, users: [] });
 
@@ -1462,11 +1485,11 @@ test('people search: a login, a first name, a surname, a display name or a mail,
             {
                 type: 'or',
                 items: [
-                    prefix('sAMAccountName', 'EG'),
-                    prefix('givenName', 'EG'),
-                    prefix('sn', 'EG'),
-                    prefix('displayName', 'EG'),
-                    prefix('mail', 'EG')
+                    prefix('sAMAccountName', 'AB'),
+                    prefix('givenName', 'AB'),
+                    prefix('sn', 'AB'),
+                    prefix('displayName', 'AB'),
+                    prefix('mail', 'AB')
                 ]
             }
         ]
@@ -1494,36 +1517,88 @@ test('people search: one character never reaches the directory', async (t) => {
     const fake = await startFake({ entries: [] });
     t.after(() => fake.close());
 
-    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'E');
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'A');
     assert.deepStrictEqual(out, { ok: true, users: [] });
     assert.strictEqual(fake.connections, 0);
 });
 
 test('people search: the account whose login is exactly what was typed comes first', async (t) => {
+    // Three ways of matching "AB": a surname (ABEL), the login itself, and a
+    // first name (Abel). Alphabetically by display name the exact login sits
+    // last of the three, which is what makes hoisting it worth testing.
     const fake = await startFake({
         entries: [
-            personEntry('EGA', 'Albert EGON', 1201),
-            personEntry('EG', 'Emmanuel GENDRON', 1202),
-            personEntry('MARTE', 'Egide MARTIN', 1203)
+            personEntry('ABL', 'Alice ABEL', 1201),
+            personEntry('AB', 'Bruno ABADIE', 1202),
+            personEntry('MARTI', 'Abel MARTIN', 1203)
         ]
     });
     t.after(() => fake.close());
 
-    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'eg');
+    // Lower case on purpose: the exact-login rule is case-insensitive.
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'ab');
     assert.deepStrictEqual(fake.errors, []);
     assert.strictEqual(out.ok, true);
-    assert.deepStrictEqual(out.users.map((u) => u.login), ['EG', 'EGA', 'MARTE'],
+    assert.deepStrictEqual(out.users.map((u) => u.login), ['AB', 'MARTI', 'ABL'],
         'exact login first, then by name, case-insensitive');
-    assert.strictEqual(out.users[0].name, 'Emmanuel GENDRON');
+    assert.strictEqual(out.users[0].name, 'Bruno ABADIE');
     assert.strictEqual(out.users[0].sid, 'S-1-5-21-1111111111-2222222222-3333333333-1202');
 });
 
 test('people search: an entry without a SID is not offered', async (t) => {
-    const noSid = personEntry('EGX', 'Eric GHOST', 1);
+    const noSid = personEntry('ABX', 'Erik GHOST', 1);
     delete noSid.attrs.objectSid;
-    const fake = await startFake({ entries: [noSid, personEntry('EG', 'Emmanuel GENDRON', 1202)] });
+    const fake = await startFake({ entries: [noSid, personEntry('AB', 'Bruno ABADIE', 1202)] });
     t.after(() => fake.close());
 
-    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'EG');
-    assert.deepStrictEqual(out.users.map((u) => u.login), ['EG']);
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'AB');
+    assert.deepStrictEqual(out.users.map((u) => u.login), ['AB']);
+});
+
+/**
+ * The regression this pair exists for.
+ *
+ * `search` resolves on SearchResultDone whatever the result code, so a refusal
+ * arrived as zero entries and zero entries is indistinguishable from "no such
+ * person". An operator typing their own initials into a directory Aegis was
+ * not allowed to read was told nobody by that name existed.
+ */
+test('people search: a refused search is an error, not an empty result', async (t) => {
+    const fake = await startFake({
+        onSearch: () => ({
+            resultCode: 1,
+            diagnostic: '000004DC: LdapErr: DSID-0C090D5C, comment: In order to perform this '
+                + 'operation a successful bind must be completed on the connection., data 0'
+        })
+    });
+    t.after(() => fake.close());
+
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'AM');
+    assert.strictEqual(out.ok, false, 'a directory that refused must not read as "nobody matches"');
+    assert.strictEqual(out.error, 'ldap_search_denied');
+    assert.strictEqual(out.users, undefined);
+});
+
+test('people search: an account that may bind but not read is the same refusal', async (t) => {
+    const fake = await startFake({ onSearch: () => ({ resultCode: 50, diagnostic: 'insufficient access' }) });
+    t.after(() => fake.close());
+
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'AM');
+    assert.strictEqual(out.ok, false);
+    assert.strictEqual(out.error, 'ldap_search_denied');
+});
+
+test('people search: sizeLimitExceeded still returns the rows that arrived', async (t) => {
+    // The cap doing its job, and the one non-zero result code that is not a
+    // refusal. Pinned next to the tests above so the fix cannot be tightened
+    // into treating it as one.
+    const fake = await startFake({
+        entries: [personEntry('AB', 'Bruno ABADIE', 1202)],
+        searchResult: 4
+    });
+    t.after(() => fake.close());
+
+    const out = await ldap.searchUsers(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'AB');
+    assert.strictEqual(out.ok, true);
+    assert.deepStrictEqual(out.users.map((u) => u.login), ['AB']);
 });

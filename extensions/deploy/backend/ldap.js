@@ -81,6 +81,9 @@ const OP = {
 /** The handful of LDAP result codes whose meaning changes what we return. */
 const RESULT = {
     SUCCESS: 0,
+    // What AD answers a search on a connection that never bound as anybody:
+    // "In order to perform this operation a successful bind must be completed".
+    OPERATIONS_ERROR: 1,
     SIZE_LIMIT_EXCEEDED: 4,
     STRONGER_AUTH_REQUIRED: 8,
     NO_SUCH_OBJECT: 32,
@@ -1418,7 +1421,35 @@ async function lookup(config, username) {
  * A `sizeLimitExceeded` from the directory is not an error here. `search`
  * resolves on SearchResultDone whatever the result code, so the entries that
  * did arrive are returned and the cap does its job.
+ *
+ * Every other result code is, and has to be read: `search` resolving on any
+ * code means a refusal arrives as zero entries, and zero entries is what "no
+ * such person" looks like. An operator typing their own initials into a
+ * directory Aegis is not allowed to read was told nobody by that name exists,
+ * which is the one answer that sends them looking at the directory instead of
+ * at the configuration. `operationsError` is AD's answer to a search on an
+ * anonymous connection -- the default when no service account is filled in --
+ * and `insufficientAccess` is the same sentence about an account that bound
+ * but may not read. Both are one message: this bind cannot search.
  */
+/**
+ * Turns a SearchResultDone that refused into the error it is.
+ *
+ * Shared by the picker and by the Test button, so the two cannot disagree
+ * about whether this directory is readable -- an operator told "connected" by
+ * one and "nobody matches" by the other has been given two facts and no fault.
+ */
+function assertSearchable(result) {
+    const code = result ? result.resultCode : null;
+    if (code === RESULT.SUCCESS || code === RESULT.SIZE_LIMIT_EXCEEDED) return;
+    if (code === RESULT.OPERATIONS_ERROR || code === RESULT.INSUFFICIENT_ACCESS ||
+        code === RESULT.STRONGER_AUTH_REQUIRED) {
+        throw new LdapError('ldap_search_denied', result && result.diagnostic);
+    }
+    throw new LdapError('ldap_protocol_error',
+        (result && result.diagnostic) || `search refused with result ${code}`);
+}
+
 async function searchUsers(config, query) {
     const q = String(query === undefined || query === null ? '' : query).trim();
     if (q.length < 2 || /[\u0000-\u001f\u007f]/.test(q)) return { ok: true, users: [] };
@@ -1444,6 +1475,7 @@ async function searchUsers(config, query) {
             attributes: ['sAMAccountName', 'displayName', 'cn', 'mail', 'objectSid'],
             sizeLimit: MAX_USER_HITS
         });
+        assertSearchable(found.result);
 
         const users = [];
         for (const entry of found.entries) {
@@ -1459,9 +1491,9 @@ async function searchUsers(config, query) {
             });
         }
         // Where logins are initials, typing them is how an operator names a
-        // colleague, and "EG" must not sit below "Albert EGON" because A sorts
-        // first. This only reorders what the directory returned: it cannot
-        // rescue an exact login the size limit cut off.
+        // colleague, and the login "AB" must not sit below "Alice ABEL"
+        // because A sorts first. This only reorders what the directory
+        // returned: it cannot rescue an exact login the size limit cut off.
         const exact = q.toUpperCase();
         users.sort((a, b) => {
             const ea = a.login.toUpperCase() === exact ? 0 : 1;
@@ -1483,6 +1515,15 @@ async function searchUsers(config, query) {
  * Unlike `verify` this returns `detail`, because an admin pressing Test wants
  * the DC's own diagnostic. That string comes from the directory and never from
  * the configuration, so no secret can travel in it.
+ *
+ * The bind is half the question. AD accepts an anonymous simple bind and
+ * answers SUCCESS to it, then refuses every search on that connection, so a
+ * test that stopped at the bind reported a working directory to an operator
+ * whose people picker could never return a row. `searchable` is the other
+ * half: one entry asked for under the base DN, which is what the picker does
+ * for a living. It is reported rather than thrown, because a directory that
+ * binds but will not be read is still a directory people can log in to --
+ * `verify` binds as the user and never needs this. Only the picker does.
  */
 async function testConnection(config) {
     let state = null;
@@ -1490,7 +1531,25 @@ async function testConnection(config) {
         const cfg = normalizeConfig(config);
         state = await openSession(cfg);
         await bindService(state, cfg);
-        return { ok: true };
+
+        if (!cfg.baseDn) return { ok: true, searchable: false, searchError: 'ldap_bad_config' };
+        try {
+            const probe = await search(state, {
+                baseDn: cfg.baseDn,
+                filter: parseFilterString('(objectClass=*)'),
+                attributes: ['objectClass'],
+                sizeLimit: 1
+            });
+            assertSearchable(probe.result);
+            return { ok: true, searchable: true };
+        } catch (e) {
+            return {
+                ok: true,
+                searchable: false,
+                searchError: (e && e.ldapCode) || 'ldap_protocol_error',
+                searchDetail: (e && e.detail) || null
+            };
+        }
     } catch (e) {
         const out = { ok: false, error: (e && e.ldapCode) || 'ldap_protocol_error' };
         if (e && e.detail) out.detail = e.detail;

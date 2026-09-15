@@ -939,6 +939,70 @@ These three names are the proxy's public interface. Changing one breaks every
 deployed application reading it, so they are fixed here rather than in the code
 that writes them.
 
+### Which paths are private
+
+The gate above answers whether somebody may open the site. A site that wants
+parts of itself closed to some of the people it lets in declares them in
+`aegis.access.json`, at the root of the directory it serves:
+
+```json
+{
+  "version": 1,
+  "rules": [
+    { "path": "/admin/*",       "require": "admin" },
+    { "path": "/api/finance/*", "require": "finance" },
+    { "path": "/reports",       "require": "finance" }
+  ]
+}
+```
+
+The repository names the resources. Aegis binds them, in the project's
+Authentication tab, to directory groups and to people picked out of the
+directory. So an application that adds a permission changes the application,
+and the day it renames one, nothing in Aegis has to be edited for the rename to
+take effect.
+
+There is no list of declared resources in the file. The vocabulary is the set of
+`require` values. A typo in one names a resource nobody is bound to, and that
+closes the path rather than opening it, so a declaration list would only catch a
+mistake that already fails towards a locked door.
+
+Five rules the guard holds.
+
+**Aegis refuses, and the application is never asked.** A request matching a rule
+whose resource the visitor does not hold gets 403 from the guard. The
+application does not receive it, so it cannot serve the page by forgetting to
+check. That is the whole reason the rules live here rather than in a header the
+application reads.
+
+**A resource nobody is bound to is closed.** Not open, and not an error at
+deployment: a site may ship a rule before anybody has been named under it, and
+until somebody is, that path answers 403 for everybody.
+
+**Deny wins.** Every rule whose path matches has to be satisfied, so two rules
+over one path mean both resources are needed. There is no way to write an
+exception to a rule; a narrower path does not reopen what a wider one closed.
+
+**A manifest that will not parse refuses the deployment.** The same rule
+`vercel.json` gets and for a sharper reason: a site whose access rules were
+ignored looks exactly like a site whose access rules were wrong, and the one
+that was ignored is serving its private paths to everybody. The build console
+names the file and the fault.
+
+**The rule is matched against the path the file server will resolve, not the one
+the browser sent.** The resolver percent-decodes each segment and resolves `.`
+and `..` on a filesystem that ignores case, so `/ADMIN/x`, `/%61dmin/x`,
+`/public/../admin/x` and `//admin/x` all reach the folder that `/admin/*`
+names, and all four are refused. `backend/tests/accessPolicy.test.js` pins that
+in both directions: every spelling that must be caught, and every near miss
+(`/administration`, `/admins`, `/reports/2026`) that must stay public.
+
+A site with no manifest has no rules, which is every site deployed before this
+existed. Group membership reaches a live session on the revalidation timer like
+everything else here, except after a save: changing a binding drops that site's
+sessions, so a revoked access is gone on the next request rather than within
+`revalidateMinutes`.
+
 ### What it does not do
 
 No WebSocket upgrade: the proxy forwards requests, not socket upgrades. No

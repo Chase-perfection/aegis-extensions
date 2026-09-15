@@ -97,7 +97,7 @@ test('with no App registered, the empty state sends the reader to connect GitHub
 test('with an App registered, the empty state says how to deploy the first site', async () => {
   const { page, close } = await openPage(
     browser, server.url + '/pages/deploy.html',
-    stubs({ connected: true, appId: 123, slug: 'aegis-deploy-briconord' }));
+    stubs({ connected: true, appId: 123, slug: 'aegis-deploy-acme' }));
   try {
     await page.waitForSelector('#deploy-hero:not([hidden])');
     const hero = await readHero(page);

@@ -821,11 +821,28 @@ select.dep-input option:disabled {
     margin-bottom: var(--space-md);
 }
 
-.dep-input:focus,
+/* The background is restated, and that is the whole point of these two rules.
+   core's common.css carries a bare `input:focus, select:focus, textarea:focus`
+   that paints `rgba(3, 7, 18, 0.65)` -- a near-black wash written for the dark
+   skin. This stylesheet only ever set `border-color` on focus, so on the white
+   skin every field on this page turned to a dark slab the moment it was
+   clicked into, and the field an operator was typing in was the one field they
+   could not read. Each selector restates its own resting background rather
+   than sharing one: .dep-input is sunken, .dep-select and .dep-search sit on
+   the surface, and collapsing them would silently restyle two controls to fix
+   a third. The focus ring from common.css is left alone; it is the part of
+   that rule that was doing its job. */
+.dep-input:focus {
+    outline: none;
+    border-color: var(--accent-bright);
+    background: var(--dep-sunken);
+}
+
 .dep-select:focus,
 .dep-search:focus {
     outline: none;
     border-color: var(--accent-bright);
+    background: var(--ag-surface, var(--dep-surface));
 }
 
 /* Monospace so the line breaks in a pasted key stay visible. A PEM that lost
@@ -2042,4 +2059,30 @@ button.dep-listrow {
     color: var(--zinc-400);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
+}
+
+/* The resources a deployed site declares, one block each.
+
+   Indented behind a rule rather than boxed: these are settings of the site
+   above them and not a second card, and the operator reads the whole column
+   top to bottom. The name is the heading because the manifest carries no
+   display text, so what is on screen is the string the site wrote and the
+   string the refusal page names. */
+.dep-auth-grant {
+    margin-top: var(--space-md);
+    padding-left: var(--space-md);
+    border-left: 2px solid var(--dep-line);
+}
+
+.dep-auth-grant .dep-label {
+    font-family: var(--font-mono);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+/* The picker inside a binding sits under its groups field, not beside it, and
+   gives back the margin `.dep-auth-site-people` carries when it owns a column. */
+.dep-auth-grant .dep-auth-site-people {
+    margin-top: var(--space-xs);
+    margin-bottom: 0;
 }

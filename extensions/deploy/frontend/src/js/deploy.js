@@ -4140,6 +4140,7 @@
         certificate_changed: ['deploy_auth_err_cert_changed', 'The controller is now presenting a different certificate than the one shown, so nothing was trusted. Look at it again before deciding.'],
         bad_certificate: ['deploy_auth_err_bad_cert', 'Aegis could not read that certificate and stored nothing.'],
         ldap_bind_refused: ['deploy_auth_err_bind_refused', 'The directory refused the service account. Check the bind DN and its password.'],
+        ldap_search_denied: ['deploy_auth_err_search_denied', 'The directory refused to be searched. Searching needs a service account with read access: fill in the service account and its password under Authentication in the side menu. Without one people can still sign in, because that binds as themselves, but Aegis can look nobody up.'],
         ldap_user_not_found: ['deploy_auth_err_user_not_found', 'The directory has no account matching that name under the search base. Check the base and the user filter.'],
         ldap_invalid_credentials: ['deploy_auth_err_bad_credentials', 'The directory refused that account and password.'],
         ldap_ambiguous_user: ['deploy_auth_err_ambiguous', 'That name matches more than one account. Narrow the user filter so it can only ever match one.'],
@@ -4311,8 +4312,13 @@
      * Protection is per site rather than global because the two sites an install
      * runs are rarely the same audience: an internal dashboard and a public
      * landing page live side by side on the same server.
+     *
+     * `canSearch` says whether a service account is on file, which decides
+     * whether the people picker is a field or an explanation. It is read from
+     * the payload this card was built from rather than probed, so opening a tab
+     * costs no directory round trip.
      */
-    function buildSiteAuthCard(site) {
+    function buildSiteAuthCard(site, canSearch) {
         var wrap = el('div', 'dep-auth-site');
 
         // The method, chosen rather than switched on. A checkbox could only
@@ -4390,12 +4396,32 @@
         hint.setAttribute('data-i18n', 'deploy_auth_allowed_hint');
         groupsBlock.appendChild(hint);
 
-        var peopleBlock = buildPeopleBlock(site);
+        var peopleBlock = buildPeopleBlock(site, canSearch);
+
+        // The resources the deployed commit declares, one row each. Nothing is
+        // drawn for a site that declares none, which is every site until one
+        // carries an aegis.access.json.
+        var grantsBlock = el('div', 'dep-auth-grants');
+        var grantRows = (site.resources || []).map(function (name) {
+            return { name: name, row: buildGrantRow(site, name, (site.grants || {})[name], canSearch) };
+        });
+        if (grantRows.length) {
+            var grantsTitle = el('h5', 'dep-auth-site-sub', tr('deploy_auth_grants',
+                'Access inside this site'));
+            grantsTitle.setAttribute('data-i18n', 'deploy_auth_grants');
+            grantsBlock.appendChild(grantsTitle);
+            var grantsHint = el('p', 'dep-hint', tr('deploy_auth_grants_hint',
+                'This site names these in aegis.access.json. Each one is closed until somebody is named under it.'));
+            grantsHint.setAttribute('data-i18n', 'deploy_auth_grants_hint');
+            grantsBlock.appendChild(grantsHint);
+            grantRows.forEach(function (g) { grantsBlock.appendChild(g.row.root); });
+        }
 
         wrap.appendChild(audienceLabel);
         wrap.appendChild(audienceSelect);
         wrap.appendChild(groupsBlock);
         wrap.appendChild(peopleBlock.root);
+        wrap.appendChild(grantsBlock);
 
         // Groups belong to the directory and mean nothing under any other
         // method. Hidden rather than removed: the value stays typed, so
@@ -4406,6 +4432,10 @@
             audienceSelect.hidden = !ldap;
             groupsBlock.hidden = !ldap;
             peopleBlock.root.hidden = !ldap;
+            // A rule is enforced by the gate, and the gate only runs under a
+            // method that authenticates somebody. Under any other method these
+            // bindings decide nothing, so they are not shown deciding anything.
+            grantsBlock.hidden = !ldap;
         }
         paintGroups();
         methodSelect.addEventListener('change', paintGroups);
@@ -4422,7 +4452,12 @@
                 method: methodSelect,
                 groups: groups,
                 audience: audienceSelect,
-                people: peopleBlock.value
+                people: peopleBlock.value,
+                grants: function () {
+                    var out = {};
+                    grantRows.forEach(function (g) { out[g.name] = g.row.value(); });
+                    return out;
+                }
             }, apply, note);
         });
         wrap.appendChild(apply);
@@ -4482,7 +4517,15 @@
                     note.hidden = false;
                     return;
                 }
-                box.appendChild(buildSiteAuthCard(site));
+                // Whether naming a person is possible at all, decided here and
+                // not inside the field. A directory with no service account
+                // can authenticate a login, because that binds as the person
+                // signing in, and can answer no search whatsoever. Both facts
+                // are already in this payload, so the card knows before it is
+                // drawn rather than after somebody has typed into it.
+                var canSearch = !!(data.ldap && data.ldap.configured
+                    && data.ldap.bindDn && data.ldap.hasPassword);
+                box.appendChild(buildSiteAuthCard(site, canSearch));
             })
             .catch(function (e) {
                 note.textContent = tr('deploy_auth_load_failed',
@@ -4514,19 +4557,84 @@
      * application would live in Aegis and be edited in Aegis every time an
      * application changed its mind about roles.
      */
-    function buildPeopleBlock(site) {
-        var root = el('div', 'dep-auth-site-people');
-        var label = el('label', 'dep-label', tr('deploy_auth_people', 'Allowed people'));
-        label.setAttribute('data-i18n', 'deploy_auth_people');
+    /**
+     * One resource the deployed commit declares, and who holds it.
+     *
+     * Drawn from `site.resources`, which the backend reads out of the manifest
+     * in the commit that is live. A resource the site stopped declaring is
+     * therefore no longer offered, and a binding left pointing at it grants
+     * nothing: the safe direction, and the one a rollback needs.
+     *
+     * The name is the label. `aegis.access.json` carries no display text, so
+     * what the operator reads here is exactly the string the site wrote, which
+     * is also the string the refusal page names.
+     */
+    function buildGrantRow(site, resource, grant, canSearch) {
+        var row = el('div', 'dep-auth-grant');
+        row.setAttribute('data-resource', resource);
 
-        var listId = 'deploy-auth-people-list-' + site.id;
+        var label = el('label', 'dep-label', resource);
+        var groups = document.createElement('input');
+        groups.type = 'text';
+        groups.className = 'dep-input';
+        groups.autocomplete = 'off';
+        groups.spellcheck = false;
+        groups.value = ((grant && grant.groups) || []).join(', ');
+        groups.disabled = !isAdmin;
+        groups.id = 'deploy-grant-groups-' + site.id + '-' + resource;
+        label.htmlFor = groups.id;
+        row.appendChild(label);
+        row.appendChild(groups);
+
+        var hint = el('p', 'dep-hint', tr('deploy_auth_grant_hint',
+            'Groups separated by commas. Nobody holds this until a group or a person is named.'));
+        hint.setAttribute('data-i18n', 'deploy_auth_grant_hint');
+        row.appendChild(hint);
+
+        var picker = buildPeopleBlock(site, canSearch, {
+            slot: 'grant-' + resource,
+            chosen: (grant && grant.users) || [],
+            withAdmin: false,
+            label: tr('deploy_auth_grant_people', 'People')
+        });
+        row.appendChild(picker.root);
+
+        return {
+            root: row,
+            value: function () {
+                return {
+                    groups: groups.value.split(',').map(function (s) { return s.trim(); })
+                        .filter(Boolean),
+                    users: picker.value().map(function (u) {
+                        return { sid: u.sid, login: u.login, name: u.name };
+                    })
+                };
+            }
+        };
+    }
+
+    function buildPeopleBlock(site, canSearch, opts) {
+        // One picker, two callers. The site's own list carries the Administrator
+        // tick; a resource binding does not, because "who runs the place" is
+        // asked once about a site and never about one room inside it. Parameters
+        // rather than a second copy: the keyboard handling, the debounce and the
+        // mousedown handler below are failures already paid for once.
+        var o = opts || {};
+        var slot = o.slot || 'people';
+        var withAdmin = o.withAdmin !== false;
+
+        var root = el('div', 'dep-auth-site-people');
+        var label = el('label', 'dep-label', o.label || tr('deploy_auth_people', 'Allowed people'));
+        if (!o.label) label.setAttribute('data-i18n', 'deploy_auth_people');
+
+        var listId = 'deploy-auth-' + slot + '-list-' + site.id;
         var field = el('div', 'dep-auth-people-field');
         var search = document.createElement('input');
         search.type = 'text';
         search.className = 'dep-input';
         search.autocomplete = 'off';
         search.spellcheck = false;
-        search.id = 'deploy-auth-people-' + site.id;
+        search.id = 'deploy-auth-' + slot + '-' + site.id;
         search.placeholder = tr('deploy_auth_people_search', 'Initials, name or mail');
         search.setAttribute('data-i18n-placeholder', 'deploy_auth_people_search');
         search.setAttribute('role', 'combobox');
@@ -4551,12 +4659,36 @@
         status.hidden = true;
 
         var chips = el('div', 'dep-auth-people-list');
+        // The sentence explains the Administrator tick, so it belongs only where
+        // that tick is drawn. A resource binding has no tick to explain.
         var hint = el('p', 'dep-hint', tr('deploy_auth_people_hint',
             'Tick Administrator to let someone manage access inside the application itself.'));
         hint.setAttribute('data-i18n', 'deploy_auth_people_hint');
+        if (!withAdmin) hint.hidden = true;
+
+        // Without a service account this field cannot answer, so it is not
+        // offered. A control that takes input and then refuses to act on it
+        // teaches the operator that the input was wrong, which is the one
+        // reading that sends them to check a name that was never the problem.
+        // The sentence that replaces it carries the link to where the
+        // prerequisite is filled in, because "set up a service account" is
+        // only useful next to the page that has the fields.
+        var gate = el('p', 'dep-hint dep-auth-people-gate', '');
+        gate.hidden = true;
+        if (!canSearch) {
+            field.hidden = true;
+            gate.appendChild(document.createTextNode(tr('deploy_auth_people_gate',
+                'Naming a person means searching the directory, and that needs a service account with read access. People can already sign in without one, because that binds as themselves.') + ' '));
+            var gateLink = el('a', '', tr('deploy_auth_people_gate_link',
+                'Set up the service account'));
+            gateLink.href = '#auth';
+            gate.appendChild(gateLink);
+            gate.hidden = false;
+        }
 
         root.appendChild(label);
         root.appendChild(field);
+        root.appendChild(gate);
         root.appendChild(status);
         root.appendChild(chips);
         root.appendChild(hint);
@@ -4565,7 +4697,7 @@
         // Enter would take. The rows carry text and the person has to leave
         // with their SID, so the answer is kept here rather than read back off
         // the DOM.
-        var chosen = (site.allowedUsers || []).map(function (u) {
+        var chosen = (o.chosen || site.allowedUsers || []).map(function (u) {
             return { sid: u.sid, login: u.login || '', name: u.name || '', admin: u.admin === true };
         });
         var results = [];
@@ -4573,10 +4705,19 @@
 
         function paint() {
             chips.textContent = '';
+            // The tick is explained where it can be ticked. With no way to name
+            // anybody and nobody named, it describes a control that is not on
+            // screen, and the gate above has already said why.
+            hint.hidden = !withAdmin || (!canSearch && !chosen.length);
             if (!chosen.length) {
-                var none = el('p', 'dep-hint', tr('deploy_auth_people_none', 'Nobody named yet.'));
-                none.setAttribute('data-i18n', 'deploy_auth_people_none');
-                chips.appendChild(none);
+                // "Nobody named yet" answers why the list is empty. When the
+                // gate is up it has answered that already, and two sentences
+                // for one fact read as two faults.
+                if (canSearch) {
+                    var none = el('p', 'dep-hint', tr('deploy_auth_people_none', 'Nobody named yet.'));
+                    none.setAttribute('data-i18n', 'deploy_auth_people_none');
+                    chips.appendChild(none);
+                }
                 return;
             }
             chosen.forEach(function (person, index) {
@@ -4587,17 +4728,19 @@
                     row.appendChild(el('span', 'dep-auth-person-login', person.login));
                 }
 
-                var adminWrap = el('label', 'dep-check dep-auth-person-admin');
-                var adminBox = document.createElement('input');
-                adminBox.type = 'checkbox';
-                adminBox.checked = person.admin === true;
-                adminBox.disabled = !isAdmin;
-                adminBox.addEventListener('change', function () {
-                    chosen[index].admin = adminBox.checked;
-                });
-                adminWrap.appendChild(adminBox);
-                adminWrap.appendChild(el('span', '', tr('deploy_auth_person_admin', 'Administrator')));
-                row.appendChild(adminWrap);
+                if (withAdmin) {
+                    var adminWrap = el('label', 'dep-check dep-auth-person-admin');
+                    var adminBox = document.createElement('input');
+                    adminBox.type = 'checkbox';
+                    adminBox.checked = person.admin === true;
+                    adminBox.disabled = !isAdmin;
+                    adminBox.addEventListener('change', function () {
+                        chosen[index].admin = adminBox.checked;
+                    });
+                    adminWrap.appendChild(adminBox);
+                    adminWrap.appendChild(el('span', '', tr('deploy_auth_person_admin', 'Administrator')));
+                    row.appendChild(adminWrap);
+                }
 
                 var drop = el('button', 'dep-btn dep-btn-ghost dep-btn-small', tr('deploy_auth_person_remove', 'Remove'));
                 drop.type = 'button';
@@ -4704,7 +4847,7 @@
 
         // One timer, restarted on every keystroke. Without it the field fires a
         // directory search per character, and the answers race: the reply to
-        // "PV" can land after the reply to "P" and repaint the shorter list.
+        // "AB" can land after the reply to "A" and repaint the shorter list.
         var timer = null;
         var seq = 0;
         function schedule() {
@@ -4925,6 +5068,11 @@
             : [];
 
         var people = method === 'ldap' ? controls.people() : [];
+        // Same reason as the allow list above: a rule is enforced by the gate,
+        // and the gate only runs under a method that authenticates somebody.
+        // Sending bindings under any other method would store grants nothing
+        // reads and show them back as though they decided something.
+        var grants = method === 'ldap' && controls.grants ? controls.grants() : {};
         var audience = method === 'ldap' ? controls.audience.value : 'directory';
 
         btn.disabled = true;
@@ -4946,7 +5094,8 @@
                 enabled: method !== 'none',
                 allowedGroups: allowed,
                 allowedUsers: people,
-                audience: audience
+                audience: audience,
+                grants: grants
             })
         })
             .then(function (r) { status = r.status; return readJson(r, 'project auth'); })
@@ -4958,6 +5107,7 @@
                     site.allowedGroups = (data.project && data.project.allowedGroups) || allowed;
                     site.allowedUsers = (data.project && data.project.allowedUsers) || people;
                     site.audience = (data.project && data.project.audience) || audience;
+                    site.grants = (data.project && data.project.grants) || grants;
                     note.textContent = tr('deploy_auth_applied', 'Saved.');
                     siteAuthFlash[site.id + '/auth'] = note.textContent;
                     // The card in the project list carries the badge, so it has
@@ -5213,6 +5363,15 @@
                     showTestGroups(data.user.groups);
                     return authNote(tr('deploy_auth_test_user_ok',
                         'The directory accepted $1. Its groups are listed below.').replace('$1', user));
+                }
+                // A bind that cannot read is reported as what it is. Active
+                // Directory accepts an anonymous bind and answers SUCCESS to
+                // it, so "the service account bound" was true and useless: the
+                // people picker on every site found nobody and blamed the
+                // name being typed into it.
+                if (data.searchable === false) {
+                    return authNote(tr('deploy_auth_test_unsearchable',
+                        'The directory answered, and it will not let Aegis read it. People can sign in, because that binds as themselves, but no site can look anybody up: the Allowed people field will find nobody. Fill in the service account and its password above.'));
                 }
                 return authNote(tr('deploy_auth_test_ok',
                     'The directory answered and the service account bound.'));

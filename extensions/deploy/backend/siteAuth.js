@@ -64,6 +64,7 @@ const crypto = require('crypto');
 const projectStore = require('./projectStore');
 const authStore = require('./authStore');
 const authMethods = require('./authMethods');
+const accessPolicy = require('./accessPolicy');
 
 /** Everything under here belongs to the guard and never to the site. */
 const PREFIX = '/__aegis/';
@@ -131,8 +132,40 @@ function lookup(config, username) {
 
 /** `slug/projectId` -> { at, auth }. `auth` is the project's auth record. */
 const projectCache = new Map();
+/** `slug/projectId` -> { at, policy }. `policy` is the deployed access manifest. */
+const policyCache = new Map();
 /** `slug` -> { at, config }. `config` is null when the tenant has none. */
 const configCache = new Map();
+
+/**
+ * The access manifest of the commit a project is currently serving.
+ *
+ * Read out of `current/`, so a rollback restores the rules of the commit it
+ * restores and there is no second store to keep in step. Cached like the auth
+ * record and for the same span: a file read per request on a busy site buys
+ * nothing, and `CACHE_MS` is short enough that a deployment takes effect
+ * without anybody clearing anything.
+ *
+ * A manifest that will not parse never reaches here. `cloner` reads it at
+ * deployment and refuses the deployment, so what is on disk under `current/`
+ * has already been accepted once.
+ */
+function policyFor(slug, tenantPaths, projectId) {
+    const k = `${slug}/${projectId}`;
+    const hit = policyCache.get(k);
+    if (hit && (Date.now() - hit.at) < CACHE_MS) return hit.policy;
+
+    let policy = { ok: true, rules: [], resources: [], error: null };
+    try {
+        policy = accessPolicy.read(projectStore.currentDir(tenantPaths, projectId));
+    } catch (_) {
+        // A folder that cannot be read is a site with no rules rather than a
+        // crash. The gate above it has already decided who may be here at all.
+        policy = { ok: true, rules: [], resources: [], error: null };
+    }
+    policyCache.set(k, { at: Date.now(), policy });
+    return policy;
+}
 
 function authRecordFor(slug, tenantPaths, projectId) {
     const k = `${slug}/${projectId}`;
@@ -169,10 +202,16 @@ function invalidate(slug, projectId) {
     configCache.delete(slug);
     if (projectId) {
         projectCache.delete(`${slug}/${projectId}`);
+        // The manifest travels with the commit, so a deployment or a rollback
+        // changes it under a cache that has no other reason to notice.
+        policyCache.delete(`${slug}/${projectId}`);
         return;
     }
     for (const k of Array.from(projectCache.keys())) {
         if (k.startsWith(`${slug}/`)) projectCache.delete(k);
+    }
+    for (const k of Array.from(policyCache.keys())) {
+        if (k.startsWith(`${slug}/`)) policyCache.delete(k);
     }
 }
 
@@ -411,6 +450,8 @@ const STRINGS = {
         errAccountExpired: 'This account has expired. Ask your administrator.',
         errLogonDenied: 'This account cannot sign in at the moment.',
         errForbidden: 'Your account is not allowed to open this site.',
+        errNoGrantTitle: 'Access denied',
+        errNoGrant: 'You are signed in, and this page needs an access that has not been granted to you. Ask whoever administers this site for it.',
         errDirectory: 'The directory could not be reached. Try again later.',
         errEmpty: 'Enter a username and a password.',
         errSession: 'Your session expired. Sign in again.',
@@ -435,6 +476,8 @@ const STRINGS = {
         errAccountExpired: 'Ce compte a expiré. Voyez avec votre administrateur.',
         errLogonDenied: 'Ce compte ne peut pas se connecter en ce moment.',
         errForbidden: 'Votre compte n\'est pas autorisé à ouvrir ce site.',
+        errNoGrantTitle: 'Accès refusé',
+        errNoGrant: 'Vous êtes connecté, et cette page exige un accès qui ne vous a pas été accordé. Demandez-le à qui administre ce site.',
         errDirectory: 'L\'annuaire est injoignable. Réessayez plus tard.',
         errEmpty: 'Saisissez un identifiant et un mot de passe.',
         errSession: 'Votre session a expiré. Reconnectez-vous.',
@@ -865,7 +908,43 @@ function gate(req, res, { slug, tenantPaths, project }) {
     if (session) {
         // Fires at most once per interval and never blocks: see maybeRevalidate.
         maybeRevalidate(session, token, ctx, config);
-        return false;            // authenticated: the file server takes over
+
+        // The site's own rules, after the door and before the files. The
+        // visitor is past the gate here, so this answers the second question:
+        // not "may you be in this building" but "may you have this room".
+        //
+        // Answered here rather than handed to the application, because an
+        // application that forgets the check serves the data and the omission
+        // is invisible. This one cannot be forgotten: the request never
+        // reaches the application at all.
+        const policy = policyFor(slug, tenantPaths, projectId);
+        if (policy.rules.length) {
+            const auth = authRecordFor(slug, tenantPaths, projectId) || {};
+            const seen = accessPolicy.verdict({
+                rules: policy.rules,
+                grants: auth.grants || {},
+                groups: session.groups,
+                sid: session.sid,
+                rawUrl: req.url,
+                // The same matcher the site door uses, handed in rather than
+                // reimplemented: a directory answers full distinguished names
+                // and an operator types a plain one, and the two questions must
+                // never disagree about what counts as being in a group.
+                groupMatches: groupAllowed
+            });
+            if (!seen.allowed) {
+                // Named in the log and not on the page. The visitor is told
+                // which access they lack, because asking an administrator for
+                // it is their next move; the log carries who they are, which
+                // is the half the page has no business repeating back.
+                console.warn(`[Deploy] ${slug}/${projectId}: ${session.username} refused `
+                    + `${pathOnly} (needs ${seen.resource || 'an unreadable path'})`);
+                sendHtml(res, 403, renderError(lang,
+                    tr(lang, 'errNoGrantTitle'), tr(lang, 'errNoGrant')));
+                return true;
+            }
+        }
+        return false;            // authenticated and entitled: the file server takes over
     }
 
     // Everything else on a protected site: send them to the form, remembering

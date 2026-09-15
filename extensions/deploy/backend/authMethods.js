@@ -136,6 +136,50 @@ function usersOf(auth) {
     return out;
 }
 
+/** How many resources one site may bind, and how long a name may be. */
+const MAX_GRANT_RESOURCES = 64;
+const MAX_GRANT_NAME = 128;
+
+/**
+ * The bindings as they are stored: a resource name to the groups and the people
+ * who hold it.
+ *
+ * The resource names come from the deployed repository and never from here, so
+ * this validates the shape and keeps whatever the site declared. A name the
+ * current commit no longer declares keeps its binding rather than losing it:
+ * the operator has to see that a rename left an entry granting nothing, and a
+ * rollback has to find the binding still in place.
+ *
+ * A user without a SID is dropped, for the reason `usersOf` drops one. The SID
+ * is the only field the gate compares, so an entry without one is a grant to
+ * nobody that reads on screen as a grant to somebody.
+ */
+function grantsOf(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+
+    for (const name of Object.keys(raw).slice(0, MAX_GRANT_RESOURCES)) {
+        if (!name || name.length > MAX_GRANT_NAME) continue;
+        const entry = raw[name];
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+
+        const groups = (Array.isArray(entry.groups) ? entry.groups : [])
+            .filter((g) => typeof g === 'string' && g.trim())
+            .map((g) => g.trim().slice(0, MAX_GRANT_NAME));
+
+        const users = (Array.isArray(entry.users) ? entry.users : [])
+            .filter((u) => u && typeof u === 'object' && String(u.sid || '').trim())
+            .map((u) => ({
+                sid: String(u.sid).trim().slice(0, MAX_GRANT_NAME),
+                login: String(u.login || '').slice(0, MAX_GRANT_NAME),
+                name: String(u.name || '').slice(0, MAX_GRANT_NAME)
+            }));
+
+        out[name] = { groups, users };
+    }
+    return out;
+}
+
 /**
  * The record to store for a method and its allow lists.
  *
@@ -166,11 +210,16 @@ function record(method, allowedGroups, opts) {
         enabled: m !== NONE,
         audience,
         allowedGroups: groups,
-        allowedUsers: users
+        allowedUsers: users,
+        // Always an object, never absent: the gate reads it on every request of
+        // a site that declares rules, and `{}` means "nobody holds anything",
+        // which is the answer that closes doors rather than the one that throws.
+        grants: grantsOf(o.grants)
     };
 }
 
 module.exports = {
     NONE, LDAP, METHODS, isKnown, methodOf, isGated, record, usersOf,
-    DIRECTORY, LISTED, AUDIENCES, audienceOf
+    DIRECTORY, LISTED, AUDIENCES, audienceOf,
+    grantsOf, MAX_GRANT_RESOURCES
 };

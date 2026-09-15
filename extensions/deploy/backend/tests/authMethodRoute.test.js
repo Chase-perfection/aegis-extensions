@@ -117,7 +117,10 @@ test('route: a known method is stored with the mirror derived from it', async ()
     assert.equal(answer.body.project.protected, true);
     assert.deepEqual(storedAuth(id),
         { method: 'ldap', enabled: true, audience: 'listed',
-          allowedGroups: ['Domain Admins'], allowedUsers: [] });
+          allowedGroups: ['Domain Admins'], allowedUsers: [],
+          // A body naming no grants closes every resource the site declares,
+          // which is the answer a page predating the field has to get.
+          grants: {} });
 });
 
 test('route: a body that names no audience keeps the pre-audience meaning', async () => {
@@ -143,14 +146,14 @@ test('route: named people are stored, and the administrator flag with them', asy
             audience: 'listed',
             allowedGroups: [],
             allowedUsers: [
-                { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true },
+                { sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true },
                 { sid: 'S-1-5-21-1-2-3-1200', login: 'JD', name: 'J Doe' }
             ]
         }));
 
     assert.equal(answer.status, 200);
     assert.deepEqual(storedAuth(id).allowedUsers, [
-        { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true },
+        { sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true },
         { sid: 'S-1-5-21-1-2-3-1200', login: 'JD', name: 'J Doe', admin: false }
     ]);
     assert.equal(storedAuth(id).audience, 'listed');
@@ -191,8 +194,8 @@ test('route: the same person listed twice is stored once', async () => {
             method: 'ldap',
             allowedGroups: [],
             allowedUsers: [
-                { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', admin: true },
-                { sid: 's-1-5-21-1-2-3-1103', login: 'PV', admin: false }
+                { sid: 'S-1-5-21-1-2-3-1103', login: 'AM', admin: true },
+                { sid: 's-1-5-21-1-2-3-1103', login: 'AM', admin: false }
             ]
         }));
     assert.equal(storedAuth(id).allowedUsers.length, 1);
@@ -317,4 +320,60 @@ test('route: a site carrying an unknown method is shown as it is, not normalised
     const site = answer.body.sites.find((s) => s.id === id);
     assert.equal(site.method, 'saml');
     assert.equal(site.protected, true, 'an unknown method is a gate, never an open site');
+});
+
+/* --------------------------------------------------------------- grants -- */
+
+test('route: the auth payload carries the bindings and what the commit declares', async () => {
+    const id = makeProject('site-grants', null);
+    await call('POST /api/deploy/projects/:id/auth',
+        request(id, {
+            method: 'ldap', allowedGroups: [],
+            grants: { admin: { groups: ['Site-Admins'], users: [] } }
+        }));
+
+    const answer = await call('GET /api/deploy/auth', request(null, null));
+    const row = answer.body.sites.filter((s) => s.id === id)[0];
+    assert.deepEqual(row.grants.admin.groups, ['Site-Admins']);
+    assert.ok(Array.isArray(row.resources),
+        'the pane draws one row per resource the deployed commit declares');
+});
+
+test('route: saving grants stores them and answers with them', async () => {
+    const id = makeProject('site-save', null);
+    const answer = await call('POST /api/deploy/projects/:id/auth',
+        request(id, {
+            method: 'ldap', allowedGroups: [],
+            grants: {
+                finance: {
+                    groups: ['Finance'],
+                    users: [{ sid: 'S-1-5-21-1-2-3-1500', login: 'AM', name: 'Alice Martin' }]
+                }
+            }
+        }));
+
+    assert.equal(answer.status, 200);
+    assert.deepEqual(answer.body.project.grants.finance.groups, ['Finance']);
+    assert.equal(storedAuth(id).grants.finance.users[0].sid, 'S-1-5-21-1-2-3-1500');
+});
+
+test('route: a grants body that is not an object of entries is refused', async () => {
+    const id = makeProject('site-bad', null);
+    const answer = await call('POST /api/deploy/projects/:id/auth',
+        request(id, { method: 'ldap', allowedGroups: [], grants: 'nope' }));
+
+    assert.equal(answer.status, 400);
+    assert.equal(answer.body.error, 'bad_grants');
+});
+
+test('route: a save that mentions no grants closes every declared resource', async () => {
+    const id = makeProject('site-drop', null);
+    await call('POST /api/deploy/projects/:id/auth',
+        request(id, { method: 'ldap', allowedGroups: [], grants: { a: { groups: ['G'], users: [] } } }));
+    // A page that predates the field, or an operator clearing the list.
+    await call('POST /api/deploy/projects/:id/auth',
+        request(id, { method: 'ldap', allowedGroups: [] }));
+
+    assert.deepEqual(storedAuth(id).grants, {},
+        'the closed state is the one a silent body has to produce');
 });

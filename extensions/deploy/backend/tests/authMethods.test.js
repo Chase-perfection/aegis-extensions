@@ -127,10 +127,13 @@ test('methods: an unknown method is reported as itself and counts as gated', () 
 });
 
 test('methods: record() derives the mirror rather than taking one', () => {
+    // `grants` is in the shape on purpose. The gate reads it on every request of
+    // a site that declares rules, and an absent key would read back from JSON as
+    // undefined on the one path where the answer has to be "nobody holds this".
     assert.deepStrictEqual(authMethods.record('ldap', ['Domain Admins']),
-        { method: 'ldap', enabled: true, audience: 'listed', allowedGroups: ['Domain Admins'], allowedUsers: [] });
+        { method: 'ldap', enabled: true, audience: 'listed', allowedGroups: ['Domain Admins'], allowedUsers: [], grants: {} });
     assert.deepStrictEqual(authMethods.record('none', ['Domain Admins']),
-        { method: 'none', enabled: false, audience: 'listed', allowedGroups: ['Domain Admins'], allowedUsers: [] });
+        { method: 'none', enabled: false, audience: 'listed', allowedGroups: ['Domain Admins'], allowedUsers: [], grants: {} });
     // A caller that passes nothing gets an empty list, not undefined: the
     // record goes to JSON and a missing key reads back as "no allow list",
     // which is the widest possible rule.
@@ -163,13 +166,13 @@ test('methods: usersOf drops a person with no SID', () => {
     // The SID is the only field a login is matched on. An entry without one
     // would show in the panel as an access that can never be exercised.
     const users = authMethods.usersOf({ allowedUsers: [
-        { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true },
+        { sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true },
         { login: 'ghost', name: 'No SID' },
         { sid: '  ', login: 'blank' },
         'not-an-object'
     ] });
     assert.deepStrictEqual(users,
-        [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }]);
+        [{ sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true }]);
 });
 
 test('methods: admin is a strict boolean, never a truthy value', () => {
@@ -268,4 +271,48 @@ test('gate: switching a record from ldap to none frees the site on the next requ
     siteAuth.invalidate(slug, 'site');
 
     assert.strictEqual((await knock(slug, 'site', tenantPaths)).handled, false);
+});
+
+/* --------------------------------------------------------------- grants -- */
+
+test('record() carries grants, keyed by resource, sid and group', () => {
+    const rec = authMethods.record('ldap', [], {
+        allowedUsers: [],
+        audience: 'directory',
+        grants: {
+            finance: {
+                groups: ['Finance'],
+                users: [{ sid: 'S-1-5-21-1-2-3-1500', login: 'AM', name: 'Alice Martin' }]
+            }
+        }
+    });
+    assert.deepStrictEqual(rec.grants.finance.groups, ['Finance']);
+    assert.strictEqual(rec.grants.finance.users[0].sid, 'S-1-5-21-1-2-3-1500');
+    assert.strictEqual(rec.grants.finance.users[0].name, 'Alice Martin');
+});
+
+test('record() with no grants writes an empty object, never undefined', () => {
+    const rec = authMethods.record('ldap', [], { allowedUsers: [], audience: 'directory' });
+    assert.deepStrictEqual(rec.grants, {});
+});
+
+test('a grant entry with no sid is dropped rather than stored as a grant to nobody', () => {
+    const rec = authMethods.record('ldap', [], {
+        allowedUsers: [], audience: 'directory',
+        grants: { a: { groups: [], users: [{ login: 'no-sid' }] } }
+    });
+    assert.deepStrictEqual(rec.grants.a.users, []);
+});
+
+test('grantsOf refuses a shape that is not an object of entries', () => {
+    assert.deepStrictEqual(authMethods.grantsOf('nope'), {});
+    assert.deepStrictEqual(authMethods.grantsOf([{ a: 1 }]), {});
+    assert.deepStrictEqual(authMethods.grantsOf({ a: 'not an entry' }), {});
+});
+
+test('grantsOf keeps a binding whose resource the commit no longer declares', () => {
+    // The operator has to see that a rename left this granting nothing, and a
+    // rollback has to find it still here.
+    const out = authMethods.grantsOf({ 'renamed-away': { groups: ['G'], users: [] } });
+    assert.deepStrictEqual(out['renamed-away'].groups, ['G']);
 });

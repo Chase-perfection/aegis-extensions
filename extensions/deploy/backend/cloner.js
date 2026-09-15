@@ -225,6 +225,7 @@ const { buildInSandbox } = require('./build/builder');
 const { runLauncher } = require('./build/launcher');
 const { assertNoSymlinks } = require('./build/symlinkGuard');
 const siteConfig = require('./siteConfig');
+const accessPolicy = require('./accessPolicy');
 
 /** Where sandboxed builds happen -- fixed, machine-level, not tenant-scoped. See the design doc's "Sandbox identity" section for why. */
 function buildWorkspaceRoot() {
@@ -348,6 +349,20 @@ async function cloneToCurrent({ token, repoFullName, branch, projectDir, current
             if (config.unsupported.length) {
                 say.log(`vercel.json: Aegis does not honour ${config.unsupported.join(', ')}`);
             }
+        }
+
+        // Outside the branch above, unlike `vercel.json`: the access manifest is
+        // enforced by this server and not by the application's own routing, so a
+        // project served by a process needs it read exactly as much as a static
+        // one. Refused for the same reason the other file is: a site whose access
+        // rules were ignored looks exactly like a site whose access rules were
+        // wrong, and the one that was ignored is serving its private paths to
+        // everybody.
+        const access = accessPolicy.read(served);
+        if (!access.ok) throw new Error(access.error);
+        if (access.rules.length) {
+            say.log(`aegis.access.json: ${access.rules.length} rule(s), `
+                + `resources ${access.resources.join(', ')}`);
         }
         say.stage('check', 'done');
 

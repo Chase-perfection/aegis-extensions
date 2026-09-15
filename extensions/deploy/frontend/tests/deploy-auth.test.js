@@ -101,6 +101,8 @@ function site(overrides) {
         audience: 'directory',
         allowedGroups: [],
         allowedUsers: [],
+        grants: {},
+        resources: [],
         tls: { enabled: false, certFile: '', keyFile: '' }
     }, overrides || {});
 }
@@ -289,7 +291,10 @@ test('Apply sends the method and the enabled mirror together', async () => {
         const body = await applyAndRead(page, 'site-a');
         assert.deepStrictEqual(body, {
             method: 'ldap', enabled: true, audience: 'directory',
-            allowedGroups: ['Admins'], allowedUsers: []
+            // Always sent, even empty: an absent key would read on the backend
+            // as a page that predates the field, and the closed state has to be
+            // the one a save actually asked for.
+            allowedGroups: ['Admins'], allowedUsers: [], grants: {}
         });
         // The tab is rebuilt by the project reload that follows a save. The
         // confirmation has to survive that, or the operator sees nothing happen.
@@ -313,7 +318,7 @@ test('Apply under none sends no allow list, whatever is still typed in the box',
         const body = await applyAndRead(page, 'site-a');
         assert.deepStrictEqual(body, {
             method: 'none', enabled: false, audience: 'directory',
-            allowedGroups: [], allowedUsers: []
+            allowedGroups: [], allowedUsers: [], grants: {}
         });
     } finally {
         await close();
@@ -660,7 +665,7 @@ test('people loaded with the site are sent back untouched, admin flag included',
         protected: true,
         audience: 'listed',
         allowedUsers: [
-            { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true },
+            { sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true },
             { sid: 'S-1-5-21-1-2-3-1200', login: 'JD', name: 'J Doe', admin: false }
         ]
     })]));
@@ -673,7 +678,7 @@ test('people loaded with the site are sent back untouched, admin flag included',
         const body = await applyAndRead(page, 'site-a');
         assert.strictEqual(body.audience, 'listed');
         assert.deepStrictEqual(body.allowedUsers, [
-            { sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true },
+            { sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true },
             { sid: 'S-1-5-21-1-2-3-1200', login: 'JD', name: 'J Doe', admin: false }
         ]);
     } finally {
@@ -686,7 +691,7 @@ test('unticking Administrator is what leaves in the body', async () => {
         method: 'ldap',
         protected: true,
         audience: 'listed',
-        allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }]
+        allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true }]
     })]));
     stubs['projects/site-a/auth'] = {
         success: true,
@@ -710,7 +715,7 @@ test('Remove takes the person out of the body', async () => {
         method: 'ldap',
         protected: true,
         audience: 'listed',
-        allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }]
+        allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true }]
     })]));
     stubs['projects/site-a/auth'] = {
         success: true,
@@ -726,10 +731,99 @@ test('Remove takes the person out of the body', async () => {
     }
 });
 
+// --- The picker is not offered before it can answer -----------------------
+
+/** The search field, the sentence that replaces it, and the rows already named. */
+function readPeopleGate(page, id) {
+    return page.evaluate((siteId) => {
+        const block = document.querySelector('.dep-auth-site-people');
+        const gate = block.querySelector('.dep-auth-people-gate');
+        const link = gate ? gate.querySelector('a') : null;
+        return {
+            fieldHidden: block.querySelector('.dep-auth-people-field').hidden,
+            gateHidden: !gate || gate.hidden,
+            gateText: gate ? gate.textContent.trim() : '',
+            gateHref: link ? link.getAttribute('href') : null,
+            names: [...block.querySelectorAll('.dep-auth-person-name')].map((n) => n.textContent.trim()),
+            noneShown: [...block.querySelectorAll('.dep-hint')]
+                .some((p) => /Nobody named yet|Personne n'est encore/.test(p.textContent)),
+            searchExists: Boolean(document.getElementById('deploy-auth-people-' + siteId))
+        };
+    }, id || 'site-a');
+}
+
+const LDAP_NO_SERVICE_ACCOUNT = { bindDn: '', hasPassword: false };
+
+test('with no service account the picker is replaced by the reason and a way to fix it', async () => {
+    // The complaint this answers: the field accepted a name, searched, and only
+    // then said a prerequisite was missing. A control that cannot answer is not
+    // offered, and what replaces it carries the link to the page that has the
+    // fields.
+    const stubs = baseStubs(authPayload(
+        [site({ method: 'ldap', protected: true, audience: 'listed' })],
+        ldapConfigured(LDAP_NO_SERVICE_ACCOUNT)));
+    const { page, close } = await openSiteAuth(stubs);
+    try {
+        const seen = await readPeopleGate(page);
+        assert.strictEqual(seen.fieldHidden, true, 'the search field must not be offered');
+        assert.strictEqual(seen.gateHidden, false, 'the reason must be on screen');
+        assert.strictEqual(seen.gateHref, '#auth', 'the reason links to where the account is filled in');
+        assert.match(seen.gateText, /service account|compte de service/);
+        assert.strictEqual(seen.noneShown, false,
+            '"nobody named yet" repeats what the gate already said');
+    } finally {
+        await close();
+    }
+});
+
+test('with no service account the people already named are still listed and still removable', async () => {
+    // Hiding the field must not hide the data. Someone named before the service
+    // account was removed still holds access, and an operator has to be able to
+    // see them and take it away without a directory being readable.
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap',
+        protected: true,
+        audience: 'listed',
+        allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true }]
+    })], ldapConfigured(LDAP_NO_SERVICE_ACCOUNT)));
+    stubs['projects/site-a/auth'] = {
+        success: true,
+        project: { id: 'site-a', protected: true, method: 'ldap', audience: 'listed', allowedGroups: [], allowedUsers: [] }
+    };
+    const { page, close } = await openSiteAuth(stubs);
+    try {
+        const seen = await readPeopleGate(page);
+        assert.strictEqual(seen.fieldHidden, true);
+        assert.deepStrictEqual(seen.names, ['Alice Martin'], 'a named person stays visible');
+
+        await page.$eval('.dep-auth-person button', (b) => b.click());
+        const body = await applyAndRead(page, 'site-a');
+        assert.deepStrictEqual(body.allowedUsers, [], 'and can still be taken off');
+    } finally {
+        await close();
+    }
+});
+
+test('with a service account on file the picker is offered as before', async () => {
+    // The other half of the rule: the gate is a prerequisite, not a new
+    // obstacle. Pinned so hiding the field cannot quietly become the default.
+    const stubs = baseStubs(authPayload([site({ method: 'ldap', protected: true, audience: 'listed' })]));
+    const { page, close } = await openSiteAuth(stubs);
+    try {
+        const seen = await readPeopleGate(page);
+        assert.strictEqual(seen.fieldHidden, false);
+        assert.strictEqual(seen.gateHidden, true);
+        assert.strictEqual(seen.searchExists, true);
+        assert.strictEqual(seen.noneShown, true, 'an empty list still says it is empty');
+    } finally {
+        await close();
+    }
+});
+
 // --- Picking people from the directory ------------------------------------
 
-const EG = { sid: 'S-1-5-21-1-2-3-1202', login: 'EG', name: 'Emmanuel GENDRON', mail: 'eg@dom2.local' };
-const EGA = { sid: 'S-1-5-21-1-2-3-1201', login: 'EGA', name: 'Albert EGON', mail: '' };
+const AB = { sid: 'S-1-5-21-1-2-3-1202', login: 'AB', name: 'Bruno ABADIE', mail: 'ab@corp.local' };
+const ABL = { sid: 'S-1-5-21-1-2-3-1201', login: 'ABL', name: 'Alice ABEL', mail: '' };
 
 function peopleStubs(answer, allowedUsers) {
     const stubs = baseStubs(authPayload([site({
@@ -767,12 +861,12 @@ function readPicker(page) {
 }
 
 test('typing initials opens a list of the directory\'s answer, first row highlighted', async () => {
-    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }));
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [AB, ABL] }));
     try {
-        const list = await typeAndReadList(page, 'eg');
+        const list = await typeAndReadList(page, 'ab');
         assert.strictEqual(list.expanded, 'true');
         assert.strictEqual(list.items.length, 2);
-        assert.ok(list.items[0].text.includes('Emmanuel GENDRON') && list.items[0].text.includes('EG'));
+        assert.ok(list.items[0].text.includes('Bruno ABADIE') && list.items[0].text.includes('AB'));
         assert.strictEqual(list.items[0].selected, 'true');
         assert.strictEqual(list.active, list.items[0].id);
     } finally {
@@ -781,14 +875,14 @@ test('typing initials opens a list of the directory\'s answer, first row highlig
 });
 
 test('Enter adds the highlighted person, empties the field and closes the list', async () => {
-    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }));
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [AB, ABL] }));
     try {
-        await typeAndReadList(page, 'eg');
+        await typeAndReadList(page, 'ab');
         await page.keyboard.press('Enter');
-        assert.deepStrictEqual(await readPicker(page), { value: '', open: false, people: ['Emmanuel GENDRON'] });
+        assert.deepStrictEqual(await readPicker(page), { value: '', open: false, people: ['Bruno ABADIE'] });
         const body = await applyAndRead(page, 'site-a');
         assert.deepStrictEqual(body.allowedUsers, [
-            { sid: EG.sid, login: 'EG', name: 'Emmanuel GENDRON', admin: false }
+            { sid: AB.sid, login: 'AB', name: 'Bruno ABADIE', admin: false }
         ]);
     } finally {
         await close();
@@ -796,33 +890,33 @@ test('Enter adds the highlighted person, empties the field and closes the list',
 });
 
 test('the arrow keys move the highlight before Enter picks', async () => {
-    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }));
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [AB, ABL] }));
     try {
-        await typeAndReadList(page, 'eg');
+        await typeAndReadList(page, 'ab');
         await page.keyboard.press('ArrowDown');
         await page.keyboard.press('Enter');
-        assert.deepStrictEqual((await readPicker(page)).people, ['Albert EGON']);
+        assert.deepStrictEqual((await readPicker(page)).people, ['Alice ABEL']);
     } finally {
         await close();
     }
 });
 
 test('a click on a row adds that person', async () => {
-    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }));
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [AB, ABL] }));
     try {
-        const list = await typeAndReadList(page, 'eg');
+        const list = await typeAndReadList(page, 'ab');
         await page.$eval('#' + list.items[1].id,
             (li) => li.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })));
-        assert.deepStrictEqual((await readPicker(page)).people, ['Albert EGON']);
+        assert.deepStrictEqual((await readPicker(page)).people, ['Alice ABEL']);
     } finally {
         await close();
     }
 });
 
 test('Escape closes the list and adds nobody', async () => {
-    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }));
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [AB, ABL] }));
     try {
-        await typeAndReadList(page, 'eg');
+        await typeAndReadList(page, 'ab');
         await page.keyboard.press('Escape');
         const state = await readPicker(page);
         assert.strictEqual(state.open, false);
@@ -833,12 +927,12 @@ test('Escape closes the list and adds nobody', async () => {
 });
 
 test('a person already allowed is not offered a second time', async () => {
-    const already = [{ sid: EG.sid, login: 'EG', name: 'Emmanuel GENDRON', admin: true }];
-    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [EG, EGA] }, already));
+    const already = [{ sid: AB.sid, login: 'AB', name: 'Bruno ABADIE', admin: true }];
+    const { page, close } = await openSiteAuth(peopleStubs({ success: true, users: [AB, ABL] }, already));
     try {
-        const list = await typeAndReadList(page, 'eg');
+        const list = await typeAndReadList(page, 'ab');
         assert.strictEqual(list.items.length, 1);
-        assert.ok(list.items[0].text.includes('Albert EGON'));
+        assert.ok(list.items[0].text.includes('Alice ABEL'));
     } finally {
         await close();
     }
@@ -860,7 +954,7 @@ test('no match says so instead of opening an empty list', async () => {
 test('a tenant with no directory is told where to connect one', async () => {
     const { page, close } = await openSiteAuth(peopleStubs({ success: false, error: 'ldap_not_configured' }));
     try {
-        await page.type('#deploy-auth-people-site-a', 'eg');
+        await page.type('#deploy-auth-people-site-a', 'ab');
         await page.waitForSelector('.dep-auth-suggest-status:not([hidden])', { timeout: 5000 });
         assert.strictEqual(await page.$eval('.dep-auth-suggest-status', (p) => p.textContent.trim()),
             'Connect the directory first, under Authentication in the side menu.');
@@ -940,7 +1034,7 @@ test('under none, the people list leaves as empty like the groups do', async () 
         method: 'ldap',
         protected: true,
         audience: 'listed',
-        allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103', login: 'PV', name: 'Paul Vue', admin: true }]
+        allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103', login: 'AM', name: 'Alice Martin', admin: true }]
     })]));
     stubs['projects/site-a/auth'] = {
         success: true,
@@ -952,6 +1046,117 @@ test('under none, the people list leaves as empty like the groups do', async () 
         const body = await applyAndRead(page, 'site-a');
         assert.deepStrictEqual(body.allowedUsers, []);
         assert.strictEqual(body.audience, 'directory');
+    } finally {
+        await close();
+    }
+});
+
+// --- Bindings, one per resource the deployed commit declares ---------------
+
+function readGrants(page) {
+    return page.evaluate(() => {
+        const rows = [...document.querySelectorAll('.dep-auth-grant')];
+        return {
+            names: rows.map((r) => r.getAttribute('data-resource')),
+            blockHidden: (document.querySelector('.dep-auth-grants') || {}).hidden,
+            people: rows.map((r) =>
+                [...r.querySelectorAll('.dep-auth-person-name')].map((n) => n.textContent.trim())),
+            admins: rows.reduce((n, r) => n + r.querySelectorAll('.dep-auth-person-admin').length, 0),
+            groups: rows.map((r) => r.querySelector('input.dep-input').value)
+        };
+    });
+}
+
+test('a site declaring resources gets one binding row for each, closed to start', async () => {
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap', protected: true, audience: 'directory',
+        resources: ['admin', 'finance'], grants: {}
+    })]));
+    const { page, close } = await openSiteAuth(stubs);
+    try {
+        const seen = await readGrants(page);
+        assert.deepStrictEqual(seen.names, ['admin', 'finance']);
+        assert.deepStrictEqual(seen.people, [[], []], 'a resource starts bound to nobody');
+        assert.deepStrictEqual(seen.groups, ['', '']);
+    } finally {
+        await close();
+    }
+});
+
+test('a binding row never offers the Administrator tick', async () => {
+    // "Who runs the place" is asked once about a site. Repeating it per resource
+    // would be a second, quieter way to promote somebody.
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap', protected: true, resources: ['admin'],
+        grants: { admin: { groups: [], users: [{ sid: 'S-1-5-21-1-2-3-1', login: 'AM', name: 'Alice Martin' }] } }
+    })]));
+    const { page, close } = await openSiteAuth(stubs);
+    try {
+        const seen = await readGrants(page);
+        assert.deepStrictEqual(seen.people, [['Alice Martin']]);
+        assert.strictEqual(seen.admins, 0);
+    } finally {
+        await close();
+    }
+});
+
+test('a site declaring no resources shows no binding section at all', async () => {
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap', protected: true, resources: [], grants: {}
+    })]));
+    const { page, close } = await openSiteAuth(stubs);
+    try {
+        assert.strictEqual((await page.$$('.dep-auth-grant')).length, 0);
+    } finally {
+        await close();
+    }
+});
+
+test('bindings are hidden under a method the gate never runs for', async () => {
+    const stubs = baseStubs(authPayload([site({
+        method: 'none', protected: false, resources: ['admin'], grants: {}
+    })]));
+    const { page, close } = await openSiteAuth(stubs);
+    try {
+        assert.strictEqual((await readGrants(page)).blockHidden, true);
+    } finally {
+        await close();
+    }
+});
+
+test('Apply sends the bindings the operator built', async () => {
+    const stubs = baseStubs(authPayload([site({
+        method: 'ldap', protected: true, resources: ['admin'],
+        grants: { admin: { groups: ['Site-Admins'], users: [] } }
+    })]));
+    stubs['projects/site-a/auth'] = {
+        success: true,
+        project: { id: 'site-a', protected: true, method: 'ldap', audience: 'directory', allowedGroups: [], allowedUsers: [], grants: {} }
+    };
+    const { page, close } = await openSiteAuth(stubs);
+    try {
+        const body = await applyAndRead(page, 'site-a');
+        assert.deepStrictEqual(body.grants.admin.groups, ['Site-Admins']);
+        assert.deepStrictEqual(body.grants.admin.users, []);
+    } finally {
+        await close();
+    }
+});
+
+test('Apply under a method with no gate sends no bindings', async () => {
+    const stubs = baseStubs(authPayload([site({
+        method: 'none', protected: false, resources: ['admin'],
+        grants: { admin: { groups: ['Site-Admins'], users: [] } }
+    })]));
+    stubs['projects/site-a/auth'] = {
+        success: true,
+        project: { id: 'site-a', protected: false, method: 'none', allowedGroups: [], allowedUsers: [], grants: {} }
+    };
+    const { page, close } = await openSiteAuth(stubs);
+    try {
+        const body = await applyAndRead(page, 'site-a');
+        assert.deepStrictEqual(body.grants, {},
+            'storing a grant nothing reads would show an access that does not exist');
     } finally {
         await close();
     }

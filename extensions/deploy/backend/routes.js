@@ -51,6 +51,7 @@ const ldap = require('./ldap');
 const siteAuth = require('./siteAuth');
 const firewall = require('./firewall');
 const siteConfig = require('./siteConfig');
+const accessPolicy = require('./accessPolicy');
 const previews = require('./previews');
 const runtime = require('./runtime');
 const shots = require('./shots');
@@ -361,6 +362,26 @@ function groupsOf(project) {
         : [];
 }
 
+/** The resource bindings on a record, never the raw field. */
+function grantsOfProject(p) {
+    return authMethods.grantsOf(p && p.auth ? p.auth.grants : null);
+}
+
+/**
+ * The resource names the commit a project is serving declares.
+ *
+ * Read from disk rather than stored, so the pane cannot offer a resource the
+ * live site does not have and a rollback changes the list without a write.
+ * A folder that is not there yet is a project that has never deployed.
+ */
+function resourcesOfProject(tenantPaths, id) {
+    try {
+        return accessPolicy.read(projectStore.currentDir(tenantPaths, id)).resources;
+    } catch (_) {
+        return [];
+    }
+}
+
 function usersOfProject(project) {
     return authMethods.usersOf(project && project.auth);
 }
@@ -377,6 +398,22 @@ function audienceOfProject(project) {
  * to a protected site. `admin` is a strict boolean: a truthy string arriving
  * from a hand-written call must not promote anybody.
  */
+/**
+ * The resource bindings a save may carry, or null when the body is not usable.
+ *
+ * Shaped like the two parsers around it: the route refuses rather than repairs,
+ * so an operator who sent the wrong thing is told instead of quietly getting a
+ * different grant than the one they sent. `undefined` is an empty set, which is
+ * what a page that predates this field sends and what closes every declared
+ * resource.
+ */
+function parseGrants(value) {
+    if (value === undefined || value === null) return {};
+    if (typeof value !== 'object' || Array.isArray(value)) return null;
+    if (Object.keys(value).length > authMethods.MAX_GRANT_RESOURCES) return null;
+    return authMethods.grantsOf(value);
+}
+
 function parseAllowedUsers(value) {
     if (value === undefined || value === null) return [];
     if (!Array.isArray(value) || value.length > MAX_USERS) return null;
@@ -425,6 +462,9 @@ const LDAP_STATUS = {
     ldap_invalid_credentials: 400,
     ldap_user_not_found: 400,
     ldap_ambiguous_user: 409,
+    // The directory answered, and refused to be read. That is a service account
+    // that is missing or has no read rights, which is the operator's to fix.
+    ldap_search_denied: 400,
     // The three TLS faults the page can offer a repair for. Listed rather than
     // left to fall through to 502 so it is visible that they are answers about
     // the configuration, not about the controller being unreachable.
@@ -2369,6 +2409,11 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             method: methodOfProject(p),
             allowedGroups: groupsOf(p),
             allowedUsers: usersOfProject(p),
+            grants: grantsOfProject(p),
+            // Read from the deployed commit, so the pane offers the resources
+            // this version of the site actually declares and never one the
+            // operator would bind to nothing.
+            resources: resourcesOfProject(req.tenantPaths, p.id),
             audience: audienceOfProject(p),
             // The panel warns next to a protected site that is served in clear:
             // that is where a password is about to be typed.
@@ -2571,8 +2616,18 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 console.warn(`[Deploy] ${req.tenant.slug}: directory service bind refused (${code})`);
                 return res.status(LDAP_STATUS[code] || 502).json({ success: false, error: code });
             }
-            console.log(`[Deploy] ${req.tenant.slug}: directory service bind tested by ${req.user.email}`);
-            return res.json({ success: true, bound: true });
+            // `searchable` travels with the success, because binding and being
+            // allowed to read are two facts and the page has to be able to say
+            // "connected, but the people picker will find nobody". Reporting
+            // only the bind is what let an empty service account look healthy.
+            console.log(`[Deploy] ${req.tenant.slug}: directory service bind tested by ${req.user.email}`
+                + (result.searchable ? ', searchable' : `, not searchable (${result.searchError})`));
+            return res.json({
+                success: true,
+                bound: true,
+                searchable: result.searchable !== false,
+                searchError: result.searchable === false ? (result.searchError || 'ldap_protocol_error') : null
+            });
         }
 
         // Refused here rather than handed to `ldap.verify`, which would answer
@@ -2802,11 +2857,16 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             return res.status(400).json({ success: false, error: 'bad_audience' });
         }
 
+        const grants = parseGrants(body.grants);
+        if (!grants) {
+            return res.status(400).json({ success: false, error: 'bad_grants' });
+        }
+
         // Mutated on the record that was read, not rebuilt from the body:
         // `saveProject` replaces the row whole, so a fresh object would drop
         // every field this route does not know about -- installationId, port,
         // history, lastSha.
-        project.auth = authMethods.record(method, allowedGroups, { allowedUsers, audience });
+        project.auth = authMethods.record(method, allowedGroups, { allowedUsers, audience, grants });
 
         let stored;
         try {
@@ -2827,7 +2887,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // its own copy of the rule so the guard can read one record per
         // request; that copy is only correct if it follows the parent's.
         for (const preview of previews.listFor(req.tenantPaths, stored.id)) {
-            preview.auth = authMethods.record(method, allowedGroups, { allowedUsers, audience });
+            preview.auth = authMethods.record(method, allowedGroups, { allowedUsers, audience, grants });
             projectStore.saveProject(req.tenantPaths, preview);
             siteAuth.invalidate(req.tenant.slug, preview.id);
             siteAuth.dropSessions(req.tenant.slug, preview.id);
@@ -2842,6 +2902,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 method: methodOfProject(stored),
                 allowedGroups: groupsOf(stored),
                 allowedUsers: usersOfProject(stored),
+                grants: grantsOfProject(stored),
                 audience: audienceOfProject(stored)
             }
         });
