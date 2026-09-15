@@ -2,6 +2,63 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.0
+
+Who may open a site is answered on that site's own page, and what they may reach
+inside it is answered there too.
+
+**A site's protection moved to its project page.** It was configured in the
+directory pane, in a list of every site at once, which is the wrong place to
+decide something about one of them. `#auth` now keeps what it is actually for:
+the one directory connection every site shares. Each project has an
+Authentication tab instead.
+
+**People are picked out of the directory.** The field takes initials, a first
+name, a surname or a mail address and searches; what gets stored is the SID,
+which is what a login is matched against and what nobody can type. An exact
+login match is offered first, because typing your colleague's initials and
+pressing Enter is the whole point of the field.
+
+**A directory that refused a search no longer reads as an empty directory.**
+Active Directory accepts an anonymous bind and then refuses every search on that
+connection, and the search code returned the refusal as zero results. An
+operator typing their own initials was told nobody by that name existed, which
+sends them to check a name that was never the problem. The refusal is now
+reported, and names the repair: a service account with read access. The Test
+button was reporting the same false success and now proves it can read before it
+says the directory works.
+
+**A field that cannot answer is not offered.** Without a service account the
+picker is replaced by the reason and a link to the page that fixes it. People
+already named stay listed and can still be removed; losing the ability to search
+is not losing the ability to revoke.
+
+**Access to parts of a site, declared by the site.** A repository can carry
+`aegis.access.json` naming the paths it wants closed and the resource each one
+needs:
+
+```json
+{ "version": 1,
+  "rules": [ { "path": "/admin/*", "require": "admin" } ] }
+```
+
+The Authentication tab draws one binding per resource, and each is closed until
+a group or a person is named under it. Aegis answers 403 itself, before the
+request reaches the application, so an application cannot serve a private page
+by forgetting to check. A manifest that will not parse refuses the deployment,
+for the reason `vercel.json` already does: a site whose rules were ignored looks
+exactly like a site whose rules were wrong, and the ignored one is serving
+everything to everybody.
+
+The rule is matched against the path the file server will resolve rather than
+the one the browser sent, so `/ADMIN/x`, `/%61dmin/x` and `/public/../admin/x`
+are all refused. Sites carrying no manifest are unchanged.
+
+**A field went black when you clicked into it.** Core's stylesheet paints a
+near-black background on any focused input, written for the dark skin, and this
+page only ever restated the border. On the white skin the field an operator was
+typing in was the one field they could not read.
+
 ## 0.1.6
 
 Making a site reachable is a click on a card and a field in a pane, not two
