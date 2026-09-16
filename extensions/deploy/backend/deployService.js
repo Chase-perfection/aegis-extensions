@@ -48,7 +48,7 @@ function useWritableDb(mod) { writableDb = mod || null; }
 /** Refusals that already name what to change. Kept as they are. */
 const NAMED = [
     'needs_build', 'no_index', 'not_a_site', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink',
-    'build_failed', 'build_account_unconfigured', 'bad_site_config',
+    'build_failed', 'build_account_unconfigured', 'bad_site_config', 'bad_deploy_manifest',
     'runtime_disabled', 'no_runtime_account', 'start_failed', 'unhealthy', 'bad_site_port',
     'migration_failed', 'migrations_unsupported',
     // An App that cannot get a token for this repository. 401 and 403 are named
@@ -181,7 +181,7 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
         // No installation means a public repository, cloned with no credential.
         // `cloneToCurrent` builds a plain https URL when the token is null.
         const token = await tokenForProject(app, tenantPaths, project, report);
-        const { sha } = await cloner.cloneToCurrent({
+        const { sha, manifestChanged } = await cloner.cloneToCurrent({
             token,
             repoFullName: project.repoFullName,
             branch: project.branch,
@@ -220,6 +220,14 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
         });
 
         if (run) run.sha = sha;
+
+        if (manifestChanged && Object.keys(manifestChanged).length) {
+            // Written after the clone succeeded, never before: a manifest that
+            // broke the build must not leave the record describing a project
+            // nobody can deploy.
+            Object.assign(project, manifestChanged);
+            projectStore.saveProject(tenantPaths, project);
+        }
 
         // Le schema avant le processus. Une version dont le code attend une
         // colonne qui n'existe pas encore repondrait au health check et

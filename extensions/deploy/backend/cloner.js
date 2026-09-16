@@ -234,6 +234,8 @@ const { runLauncher } = require('./build/launcher');
 const { assertNoSymlinks } = require('./build/symlinkGuard');
 const siteConfig = require('./siteConfig');
 const accessPolicy = require('./accessPolicy');
+const manifestLive = require('./manifestLive');
+const deployManifest = require('./deployManifest');
 
 /** Where sandboxed builds happen -- fixed, machine-level, not tenant-scoped. See the design doc's "Sandbox identity" section for why. */
 function buildWorkspaceRoot() {
@@ -269,7 +271,12 @@ const SILENT = { stage() { }, log() { } };
  * plan's "failure never takes the site down", at the size this slice needs it:
  * one rename rather than a release directory and a junction.
  */
-async function cloneToCurrent({ token, repoFullName, branch, projectDir, currentDir, rootDir, installCmd, buildCmd, outputDir, buildEnvFor, currentSha, previousSha, runtime, build, report, signal }) {
+async function cloneToCurrent(args) {
+    const { token, repoFullName, branch, projectDir, currentDir, buildEnvFor,
+        currentSha, previousSha, runtime, build, report, signal } = args;
+    // These four are `let` because the manifest in the clone may replace them
+    // below, before the served directory is chosen and before the build runs.
+    let { rootDir, installCmd, buildCmd, outputDir } = args;
     const say = report || SILENT;
     const url = token
         ? `https://x-access-token:${token}@github.com/${repoFullName}.git`
@@ -290,6 +297,25 @@ async function cloneToCurrent({ token, repoFullName, branch, projectDir, current
         const head = (await run(gitExe(), ['-C', staging, 'rev-parse', 'HEAD'], { signal })).trim();
         say.log(`HEAD ${head}`);
         say.stage('clone', 'done');
+
+        // Read here, before the served directory is chosen and before the
+        // build: the keys it can change are the ones those two steps consume.
+        // `siteConfig` and `accessPolicy` are read further down for the same
+        // reason in reverse, they describe serving and not building.
+        const declared = manifestLive.read(staging);
+        if (!declared.ok) {
+            throw Object.assign(
+                new Error(`${deployManifest.FILE}: ${declared.error}`),
+                { code: 'bad_deploy_manifest' });
+        }
+        const live = manifestLive.apply(
+            { installCmd, buildCmd, outputDir, rootDir, startCmd: null, dbFile: null, migrationsDir: null },
+            declared.config);
+        if (live.say) say.log(`${live.say}\n`);
+        if (live.changed.installCmd) installCmd = live.changed.installCmd;
+        if (live.changed.buildCmd) buildCmd = live.changed.buildCmd;
+        if (live.changed.outputDir) outputDir = live.changed.outputDir;
+        if (live.changed.rootDir) rootDir = live.changed.rootDir;
 
         let served = staging;
         if (rootDir) {
@@ -385,7 +411,7 @@ async function cloneToCurrent({ token, repoFullName, branch, projectDir, current
             : 'current/ published');
         say.stage('publish', 'done');
 
-        return { sha: head };
+        return { sha: head, manifestChanged: live.changed };
     } finally {
         // A refused clone used to leave its whole tree on disk, one copy per
         // failing project. Cleared here so the only surviving copy is the one

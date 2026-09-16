@@ -58,3 +58,22 @@ test('the sentence for the console names the keys and where they came from', () 
     assert.match(r.say, /startCmd/);
     assert.match(r.say, /Settings/, 'the operator is not told where to act on the rest');
 });
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+test('read() takes the manifest out of a clone, and refuses a broken one', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-live-'));
+    assert.deepStrictEqual(live.read(dir), { ok: true, config: {}, error: null },
+        'a branch with no manifest is not a fault');
+
+    fs.writeFileSync(path.join(dir, 'aegis.deploy.json'),
+        JSON.stringify({ buildCmd: 'npm run build' }));
+    assert.deepStrictEqual(live.read(dir).config, { buildCmd: 'npm run build' });
+
+    fs.writeFileSync(path.join(dir, 'aegis.deploy.json'), '{ broken');
+    const bad = live.read(dir);
+    assert.strictEqual(bad.ok, false);
+    assert.ok(bad.error, 'a refusal with no reason');
+});

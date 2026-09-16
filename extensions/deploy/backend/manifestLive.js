@@ -16,6 +16,10 @@
  * not looking, so they are reported and the console says where to act.
  */
 
+const fs = require('fs');
+const path = require('path');
+const deployManifest = require('./deployManifest');
+
 const BUILD_KEYS = ['installCmd', 'buildCmd', 'outputDir', 'rootDir'];
 const RUNTIME_KEYS = ['startCmd', 'dbFile', 'migrationsDir'];
 
@@ -61,4 +65,21 @@ function apply(project, config) {
     return { changed, applied, reported, say };
 }
 
-module.exports = { apply, BUILD_KEYS, RUNTIME_KEYS };
+/**
+ * The manifest as the clone holds it. Reading from the clone and not from the
+ * API the create route uses: the files are already on disk, and a read that
+ * cannot disagree with what is about to be built is worth more than one that
+ * costs nothing.
+ */
+function read(dir) {
+    let text = null;
+    try {
+        text = fs.readFileSync(path.join(dir, deployManifest.FILE), 'utf8');
+    } catch {
+        return { ok: true, config: {}, error: null };
+    }
+    const parsed = deployManifest.parse(text);
+    return { ok: parsed.ok, config: parsed.config, error: parsed.error };
+}
+
+module.exports = { apply, read, BUILD_KEYS, RUNTIME_KEYS };
