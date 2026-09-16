@@ -1014,6 +1014,8 @@
             'deploy_ref_unsafe_symlink', 'A symlink or junction in what would be served'],
         bad_site_config: ['deploy_new_bad_site_config', 'The vercel.json in that branch could not be read. Aegis refuses the deployment rather than serve a site whose config it ignored.',
             'deploy_ref_bad_site_config', 'The vercel.json in that branch will not parse'],
+        bad_deploy_manifest: ['deploy_new_bad_manifest', 'The aegis.deploy.json in that branch could not be read. Aegis refuses rather than create a project whose declared settings it ignored.',
+            'deploy_ref_bad_manifest', 'The aegis.deploy.json in that branch will not parse'],
         runtime_disabled: ['deploy_new_runtime_off', 'This server does not run application processes. Set AEGIS_DEPLOY_RUNTIME=1 and the runtime accounts on the host, or leave the start command empty and deploy a built site.'],
         no_start_cmd: ['deploy_new_no_start', 'Name the command that starts the application.'],
         start_failed: ['deploy_new_start_failed', 'The start command stopped before it answered. What it printed is in the console above.'],
@@ -4181,6 +4183,7 @@
     var REFUSAL_ORDER = [
         'bad_repo_url', 'needs_install', 'repo_not_found', 'bad_branch', 'needs_build',
         'no_index', 'not_a_site', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink', 'bad_site_config',
+        'bad_deploy_manifest',
         'no_free_port', 'deploy_failed', 'build_failed', 'build_account_unconfigured',
         'tool_missing', 'github_auth_failed', 'github_unreachable', 'busy', 'branch_gone'
     ];

@@ -298,6 +298,52 @@ Those four are dropped from the rule, and the rest of the rule still applies.
 The order for one request: redirects, then the trailing-slash rule, then the
 filesystem, then rewrites, then the fallback.
 
+## What `aegis.deploy.json` can say
+
+Third file of the family, after `vercel.json` and `aegis.access.json`, and it
+answers the form instead of the file server. A branch that carries it can be
+deployed by pasting a repository URL and nothing else.
+
+| Key | Fills |
+|---|---|
+| `installCmd` | The install command |
+| `buildCmd` | The build command |
+| `outputDir` | The directory the build writes |
+| `rootDir` | The subfolder that holds the site |
+| `startCmd` | The start command, which is also what makes the project a process |
+| `dbFile` | The database file under `AEGIS_DATA_DIR` |
+| `migrationsDir` | The folder of SQL files played before the process starts |
+
+```json
+{
+  "installCmd": "pip install --no-cache-dir -r packaging/api/requirements.txt --target .",
+  "startCmd": "python packaging/api/kpi_api.py",
+  "dbFile": "kpi.db",
+  "migrationsDir": "migrations"
+}
+```
+
+**The form wins.** A field the operator filled is a field they are looking at,
+and a file overruling it from inside the repository would be a setting invisible
+from the screen it contradicts. The manifest answers what was left empty, and
+the deployment says which keys it took.
+
+Read once, at project creation, through the API rather than from the clone: the
+runtime and the port are decided before any clone exists. Keys Aegis does not
+read are named on the deployment rather than dropped, and a file that will not
+parse refuses with `bad_deploy_manifest` rather than creating a project whose
+declared settings were ignored.
+
+Nothing is guessed. A start command has no reliable convention outside
+`package.json`, and guessing one wrong starts the wrong process on a server that
+holds directory audit data. A repository that declares nothing is asked, exactly
+as before.
+
+**A start command still needs the host to allow processes.** The manifest is the
+tenant's half; `AEGIS_DEPLOY_RUNTIME` and a provisioned runtime account are the
+host's, and a file in a repository cannot grant them. A branch asking for a
+process on a host that runs none is refused with `runtime_disabled`.
+
 ## Your case: `Chase-perfection/portail-interne`
 
 The root of `main` holds `frontend/`, `infra/`, `deploy/`, `docs/`, `scripts/`,

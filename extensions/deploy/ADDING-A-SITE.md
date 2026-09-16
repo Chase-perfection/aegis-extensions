@@ -64,9 +64,13 @@ on the extension card.
 
 ## Native KPI site
 
-Use this configuration when adding KPI Usine as a process project. The example
-is the JSON body represented by the Deploy form; `auth` is then selected in the
-project's Authentication tab.
+The `aegis` branch carries `aegis.deploy.json`, so creating this project takes
+the repository URL and the branch and nothing else: the install command, the
+start command, the database file and the migrations folder are read from the
+branch. The values below are what that file declares, kept here so the record is
+readable without opening the repository, and so a field can be overridden from
+the form when someone needs to. Whatever the form leaves empty comes from the
+branch; `auth` is selected in the project's Authentication tab.
 
 ```json
 {

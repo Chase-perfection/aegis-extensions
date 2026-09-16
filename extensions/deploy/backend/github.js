@@ -370,6 +370,37 @@ async function publicRepoInfo(fullName) {
     return { defaultBranch: (r && r.default_branch) || null, private: !!(r && r.private) };
 }
 
+/** A manifest is a few hundred bytes. Anything larger is not one. */
+const MAX_REPO_FILE = 64 * 1024;
+
+/**
+ * One small text file from a branch, or `null` when the branch has none.
+ *
+ * Read through the API rather than from the clone because the caller is project
+ * creation, which decides the runtime and allocates the port before any clone
+ * exists. One call, once, for a file the repository may not even carry.
+ *
+ * A file too large to be the manifest it claims to be is `null` rather than an
+ * error: a repository is free to have a directory or a binary at that path, and
+ * that is not a reason to refuse a deployment.
+ */
+async function readRepoFile(app, installationId, repoFullName, filePath, ref) {
+    const token = installationId && app ? await installationToken(app, installationId) : null;
+    const url = `/repos/${repoFullName}/contents/${filePath}`
+        + (ref ? `?ref=${encodeURIComponent(ref)}` : '');
+    let r;
+    try {
+        r = await ghFetch(url, token ? { token } : {});
+    } catch (e) {
+        if (e.status === 404) return null;
+        throw e;
+    }
+    if (!r || r.type !== 'file' || typeof r.content !== 'string') return null;
+    if (Number(r.size) > MAX_REPO_FILE) return null;
+    if (r.encoding !== 'base64') return null;
+    return Buffer.from(r.content, 'base64').toString('utf8');
+}
+
 /**
  * The head commit of one branch, or `null` when GitHub says it has not moved.
  *
@@ -420,7 +451,7 @@ async function verifyAppCredentials(appId, privateKey) {
 
 module.exports = {
     appJwt, ghFetch, exchangeManifestCode, verifyAppCredentials, branchHead,
-    parseRepoUrl, installationForRepo, publicRepoInfo,
+    parseRepoUrl, installationForRepo, publicRepoInfo, readRepoFile,
     installationToken, forgetInstallationToken,
     manifestAction, UNREACHABLE_HOOK,
     listInstallations, listRepos, listBranches,

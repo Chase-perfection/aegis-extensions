@@ -2,6 +2,29 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## Unreleased
+
+**A branch can say how it wants to be deployed, so the form can be left empty.**
+Creating a project meant typing eight fields for a repository that already knows
+what it is, and getting one of them wrong meant deleting the project, because
+the start command cannot be changed afterwards. A branch carrying
+`aegis.deploy.json` now answers them: install and build commands, output
+directory, subfolder, start command, database file and migrations folder.
+
+Third file of the family, after `vercel.json` and `aegis.access.json`, and it
+keeps their rule: a file that will not parse refuses with
+`bad_deploy_manifest` rather than creating a project whose declared settings
+were dropped, and keys Aegis does not read are named on the deployment. It adds
+one of its own: the form wins. A field the operator filled is a field they are
+looking at, so the manifest answers only what was left empty, and the deployment
+says which keys came from the branch.
+
+Nothing is guessed. A start command has no reliable convention outside
+`package.json`, and guessing one wrong starts the wrong process on a server that
+holds directory audit data. A repository that declares nothing is asked, exactly
+as before. A start command still needs the host to allow processes: a file in a
+repository cannot grant that.
+
 ## 0.2.3
 
 **A branch that holds no site says so, instead of naming a folder that is not

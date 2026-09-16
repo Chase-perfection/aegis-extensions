@@ -32,6 +32,7 @@ const os = require('os');
 const github = require('./github');
 const { verifySignature, createDeliveryCache, parsePush, MAX_BODY_BYTES } = require('./webhook');
 const projectStore = require('./projectStore');
+const deployManifest = require('./deployManifest');
 const projectData = require('./projectData');
 const projectSettings = require('./projectSettings');
 const projectEnv = require('./projectEnv');
@@ -1216,6 +1217,47 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // Resolved, so the console names the branch it is about to clone rather
         // than staying blank on a project created without one.
         run.branch = branch;
+
+        /**
+         * What the branch says about itself, for every field left empty.
+         *
+         * Read here and not at the clone because the runtime and the port are
+         * decided below, before any clone exists. One call to GitHub, once per
+         * project, for a file most repositories will not carry.
+         *
+         * A file that will not parse refuses, the same as `vercel.json` and
+         * `aegis.access.json`: a configuration silently dropped looks exactly
+         * like a configuration that was wrong, and this one decides whether the
+         * project runs a process.
+         */
+        let fromManifest = [];
+        try {
+            const text = await github.readRepoFile(
+                app, installationId, repoFullName, deployManifest.FILE, branch);
+            const read = deployManifest.parse(text);
+            if (!read.ok) {
+                return refuse(400, { error: 'bad_deploy_manifest', detail: read.error });
+            }
+            if (read.present) {
+                const merged = deployManifest.merge(body, read.config);
+                Object.assign(body, merged.values);
+                fromManifest = merged.from;
+                if (read.unsupported.length) {
+                    runs.log(run, `${deployManifest.FILE}: Aegis does not read `
+                        + `${read.unsupported.join(', ')}`);
+                }
+                if (fromManifest.length) {
+                    runs.log(run, `${deployManifest.FILE}: took ${fromManifest.join(', ')} `
+                        + 'from the branch');
+                }
+            }
+        } catch (e) {
+            // GitHub being unreachable must not stop a project whose fields the
+            // operator filled in themselves. The manifest is a convenience, and
+            // an unreadable one leaves the form exactly as it was.
+            console.warn(`[Deploy] ${req.tenant.slug}: ${deployManifest.FILE} unreadable `
+                + `(${e.status || ''} ${e.message})`);
+        }
 
         let id;
         let port;
