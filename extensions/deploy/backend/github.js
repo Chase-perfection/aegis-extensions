@@ -402,6 +402,29 @@ async function readRepoFile(app, installationId, repoFullName, filePath, ref) {
 }
 
 /**
+ * The names at the root of a branch, for working out what the project is.
+ *
+ * The contents endpoint and not the tree one: a root listing is all detection
+ * reads, and the tree endpoint would fetch every path in the repository to
+ * answer the same question. An empty list on any failure, because detection is
+ * a convenience and a repository nobody can list is one the operator fills in
+ * by hand.
+ */
+async function listRootEntries(app, installationId, repoFullName, ref) {
+    const token = installationId && app ? await installationToken(app, installationId) : null;
+    const url = `/repos/${repoFullName}/contents`
+        + (ref ? `?ref=${encodeURIComponent(ref)}` : '');
+    let r;
+    try {
+        r = await ghFetch(url, token ? { token } : {});
+    } catch (e) {
+        if (e.status === 404) return [];
+        throw e;
+    }
+    return Array.isArray(r) ? r.map((x) => String(x && x.name || '')).filter(Boolean) : [];
+}
+
+/**
  * The head commit of one branch, or `null` when GitHub says it has not moved.
  *
  * `etag` is the value from the previous call, stored on the project. Passing it
@@ -451,7 +474,7 @@ async function verifyAppCredentials(appId, privateKey) {
 
 module.exports = {
     appJwt, ghFetch, exchangeManifestCode, verifyAppCredentials, branchHead,
-    parseRepoUrl, installationForRepo, publicRepoInfo, readRepoFile,
+    parseRepoUrl, installationForRepo, publicRepoInfo, readRepoFile, listRootEntries,
     installationToken, forgetInstallationToken,
     manifestAction, UNREACHABLE_HOOK,
     listInstallations, listRepos, listBranches,

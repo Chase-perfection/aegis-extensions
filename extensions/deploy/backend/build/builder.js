@@ -92,6 +92,45 @@ function tailLogs({ workspace, installCmd, buildCmd, report }) {
 }
 
 /**
+ * Where a build put its output, when the project did not say.
+ *
+ * The names every bundler writes into, most specific first. `public/` is last
+ * and is the one that needs the second test: it is as often a source folder
+ * committed beside the build as it is the build's own output.
+ */
+const OUTPUT_CANDIDATES = ['dist', 'build', 'out', '_site', 'public'];
+
+/**
+ * The directory this build produced, or null to serve the workspace as before.
+ *
+ * Two conditions, and the second is what keeps this from being a guess. A
+ * candidate has to hold an `index.html`, and that file has to have been written
+ * by the build that just ran. A repository that commits `public/index.html` and
+ * builds into `dist/` would otherwise be served from its source, which looks
+ * like a stale deployment rather than a misread.
+ *
+ * Nothing found means nothing changes: the workspace is served exactly as it was
+ * before this existed, and the acceptance test says what it thinks of it.
+ */
+function discoverOutput(workspace, buildCmd, startedAt, say) {
+    if (!buildCmd) return null;
+    for (const name of OUTPUT_CANDIDATES) {
+        const index = path.join(workspace, name, 'index.html');
+        let stat;
+        try {
+            stat = fs.statSync(index);
+        } catch {
+            continue;
+        }
+        if (!stat.isFile() || stat.mtimeMs < startedAt) continue;
+        say.log(`output directory: ${name}/, which this build wrote. `
+            + 'Set it on the project to pin it.\n');
+        return name;
+    }
+    return null;
+}
+
+/**
  * Runs install/build for `staging` inside a borrowed sandbox slot, and
  * resolves to the absolute path of the built output (inside that slot's
  * workspace).
@@ -127,6 +166,10 @@ async function buildInSandbox({ pool, workspaceRoot, staging, installCmd, buildC
         // read the install output that no longer mentions it.
         applyAutofixes({ workspace, installCmd, buildCmd, report: say });
 
+        // Taken before the launcher, so `discoverOutput` can tell a directory
+        // this build produced from one that was committed beside it.
+        const startedAt = Date.now();
+
         stopTail = tailLogs({ workspace, installCmd, buildCmd, report: say });
         try {
             await runLauncher({ workspace, account, installCmd: installCmd || '', buildCmd, timeoutMs, signal, buildEnv });
@@ -141,7 +184,11 @@ async function buildInSandbox({ pool, workspaceRoot, staging, installCmd, buildC
         stopTail();
         stopTail = null;
 
-        const built = path.resolve(workspace, outputDir || '.');
+        // Nothing to declare when the build says where it put things. An empty
+        // outputDir used to mean "serve the whole workspace", which for a build
+        // that writes into dist/ serves the source next to it.
+        const resolved = outputDir || discoverOutput(workspace, buildCmd, startedAt, say);
+        const built = path.resolve(workspace, resolved || '.');
         const inside = path.relative(workspace, built);
         if (inside.startsWith('..') || path.isAbsolute(inside)) {
             throw Object.assign(new Error('output directory escapes the workspace'), { code: 'bad_root_dir' });

@@ -4,6 +4,21 @@ Clones a git branch and serves it as a site, with an optional sandboxed build.
 
 ## Unreleased
 
+**Aegis works out the install and build commands from the branch.** A lockfile
+names its package manager and `package.json` names its own build script, so both
+are read rather than typed: `pnpm-lock.yaml` means pnpm, `package-lock.json`
+means `npm ci`, `requirements.txt` means pip. The deployment prints what it read
+and why. Nothing is inferred from a framework, and no start command is ever
+detected.
+
+**The build's output directory is found after the build, not guessed before it.**
+An empty output directory used to mean "serve the whole workspace", which for a
+build writing into `dist/` serves the source sitting beside it. Aegis now takes
+the first of `dist`, `build`, `out`, `_site`, `public` holding an `index.html`
+that this build wrote. A `public/index.html` committed in the repository carries
+the timestamp of the clone and is passed over, so a source folder is never
+mistaken for a build. Nothing found serves the workspace, exactly as before.
+
 **A branch can say how it wants to be deployed, so the form can be left empty.**
 Creating a project meant typing eight fields for a repository that already knows
 what it is, and getting one of them wrong meant deleting the project, because

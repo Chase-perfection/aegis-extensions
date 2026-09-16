@@ -344,6 +344,43 @@ tenant's half; `AEGIS_DEPLOY_RUNTIME` and a provisioned runtime account are the
 host's, and a file in a repository cannot grant them. A branch asking for a
 process on a host that runs none is refused with `runtime_disabled`.
 
+## What Aegis works out on its own
+
+Under the form and under the manifest, and read from the root of the branch. It
+exists so that a repository which declares nothing still deploys without eight
+fields being typed at it.
+
+| Signal at the root | What it settles |
+|---|---|
+| `pnpm-lock.yaml` | `pnpm install --frozen-lockfile`, build `pnpm run build` |
+| `yarn.lock` | `yarn install --frozen-lockfile`, build `yarn build` |
+| `bun.lockb` | `bun install --frozen-lockfile`, build `bun run build` |
+| `package-lock.json` | `npm ci`, build `npm run build` |
+| `package.json` with no lockfile | `npm install`, because `npm ci` needs a lockfile |
+| `requirements.txt` | `pip install --no-cache-dir -r requirements.txt --target .` |
+
+The build command appears only when `package.json` declares a `build` script,
+and it is that script that is run. Nothing here is inferred from a framework: a
+lockfile names its package manager and can name nothing else, and a build script
+is read rather than guessed at. The deployment prints what was read and why.
+
+**No output directory is proposed.** That is the one a wrong answer uses to
+serve a site's source instead of the site, and no signal at the root of a branch
+settles it. It is found after the build instead, in `build/builder.js`: the
+first of `dist`, `build`, `out`, `_site`, `public` that holds an `index.html`
+**written by the build that just ran**. A `public/index.html` committed beside
+the source has the timestamp of the clone and is passed over, which is the case
+that makes the timestamp part of the rule rather than a detail. Nothing found
+serves the workspace, exactly as before this existed.
+
+**No start command, ever.** Outside `package.json` there is no convention for
+one, and starting the wrong process on a server holding directory audit data is
+worse than asking. A branch that needs one declares it in `aegis.deploy.json`.
+
+The three layers, in the order they are consulted: what the operator typed,
+then `aegis.deploy.json`, then this. Each fills only what the one before it left
+empty, so nothing ever overwrites a decision somebody made.
+
 ## Your case: `Chase-perfection/portail-interne`
 
 The root of `main` holds `frontend/`, `infra/`, `deploy/`, `docs/`, `scripts/`,

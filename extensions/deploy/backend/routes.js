@@ -33,6 +33,7 @@ const github = require('./github');
 const { verifySignature, createDeliveryCache, parsePush, MAX_BODY_BYTES } = require('./webhook');
 const projectStore = require('./projectStore');
 const deployManifest = require('./deployManifest');
+const detectProject = require('./detectProject');
 const projectData = require('./projectData');
 const projectSettings = require('./projectSettings');
 const projectEnv = require('./projectEnv');
@@ -1256,6 +1257,40 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             // operator filled in themselves. The manifest is a convenience, and
             // an unreadable one leaves the form exactly as it was.
             console.warn(`[Deploy] ${req.tenant.slug}: ${deployManifest.FILE} unreadable `
+                + `(${e.status || ''} ${e.message})`);
+        }
+
+        // Last of the three, under the form and under the manifest: what the
+        // root of the branch says on its own. A lockfile names its package
+        // manager and package.json names its own build script, so neither is
+        // inferred. No output directory is proposed here, because that is the
+        // one a wrong answer serves the source with; `build/builder.js` finds it
+        // after the build instead, from the directory the build wrote.
+        try {
+            const stillEmpty = ['installCmd', 'buildCmd']
+                .some((k) => !String(body[k] || '').trim());
+            if (stillEmpty) {
+                const names = await github.listRootEntries(app, installationId, repoFullName, branch);
+                let pkg = null;
+                if (names.includes('package.json')) {
+                    const text = await github.readRepoFile(
+                        app, installationId, repoFullName, 'package.json', branch);
+                    try {
+                        pkg = text ? JSON.parse(text) : null;
+                    } catch (_) {
+                        pkg = null;     // unreadable is a repository detection stays out of
+                    }
+                }
+                const guess = detectProject.detect(names, pkg);
+                const merged = detectProject.merge(body, guess);
+                Object.assign(body, merged.values);
+                if (merged.from.length) {
+                    runs.log(run, `detected: ${guess.why}`);
+                    runs.log(run, `detected: ${merged.from.map((k) => `${k}=${body[k]}`).join(', ')}`);
+                }
+            }
+        } catch (e) {
+            console.warn(`[Deploy] ${req.tenant.slug}: detection skipped `
                 + `(${e.status || ''} ${e.message})`);
         }
 
