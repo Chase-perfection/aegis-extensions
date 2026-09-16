@@ -1331,9 +1331,38 @@
         }, 4000);
     }
 
+    /**
+     * Says on the deploy form itself that there are no repositories to offer.
+     *
+     * `renderGrantStep` puts this on the GitHub pane, which is not the pane
+     * anyone is reading when they are trying to deploy something: they land on
+     * the form, the repository list is hidden because the App is installed
+     * nowhere, and nothing on the page says so. A bare URL field looked like the
+     * only way Deploy works.
+     */
+    function renderNoInstallNotice(none) {
+        var block = document.getElementById('deploy-new-noinstall');
+        if (!block) return;
+        block.hidden = !none;
+        if (!none) return;
+        var link = document.getElementById('deploy-noinstall-link');
+        if (!link) return;
+        // No slug means no App registered at all, and the sentence to read then
+        // is the one on the GitHub pane about registering one, not a link to
+        // install something that does not exist.
+        if (appInfo && appInfo.slug) {
+            link.hidden = false;
+            link.href = 'https://github.com/apps/' + encodeURIComponent(appInfo.slug) + '/installations/new';
+        } else {
+            link.hidden = true;
+        }
+    }
+
     function renderInstallations(installs) {
         var select = document.getElementById('deploy-installation');
-        if (!installs || !installs.length) return renderGrantStep();
+        var none = !installs || !installs.length;
+        renderNoInstallNotice(none);
+        if (none) return renderGrantStep();
         document.getElementById('deploy-repos').hidden = false;
         select.textContent = '';
         installs.forEach(function (i) {

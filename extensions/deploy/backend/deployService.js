@@ -50,7 +50,11 @@ const NAMED = [
     'needs_build', 'no_index', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink',
     'build_failed', 'build_account_unconfigured', 'bad_site_config',
     'runtime_disabled', 'no_runtime_account', 'start_failed', 'unhealthy', 'bad_site_port',
-    'migration_failed', 'migrations_unsupported'
+    'migration_failed', 'migrations_unsupported',
+    // An App that cannot get a token for this repository. 401 and 403 are named
+    // below, but GitHub answers 404 for an installation that is not this App's,
+    // and that landed in deploy_failed, which is the sentence about the branch.
+    'needs_install'
 ];
 
 /**
@@ -100,6 +104,64 @@ function isDeploying(slug, projectId) {
  * failure gets filed under, so the sweep can stop redeploying a commit that has
  * already failed its attempts -- see `decide` in poller.js.
  */
+/**
+ * A clone token for this project, resolving the installation again when the
+ * stored one is refused.
+ *
+ * `project.installationId` is written when the project is created and never
+ * checked against GitHub afterwards, so it outlives the App that issued it.
+ * Registering a new App, or uninstalling and installing again, mints a
+ * different installation, and GitHub answers 404 for the old one. That reached
+ * the operator as "the clone failed, check the branch exists", which sends them
+ * to look at the one thing that was fine.
+ *
+ * So a refusal costs one more call, the id it finds is written back, and the
+ * next deployment is one call again. A project that never had an installation
+ * is looked up too, which is what makes installing the App after creating the
+ * project work without recreating it.
+ *
+ * Nothing found and nothing stored means a public repository cloned with no
+ * credential, which is the existing behaviour. Nothing found where there used
+ * to be something is `needs_install`, because a private repository about to
+ * fail on git authentication should say which thing to fix.
+ */
+async function tokenForProject(app, tenantPaths, project, say) {
+    if (!app || !app.privateKey) return null;
+    const stored = project.installationId;
+
+    if (stored) {
+        try {
+            return await github.installationToken(app, stored);
+        } catch (e) {
+            if (e.status !== 404 && e.status !== 401) throw e;
+            github.forgetInstallationToken(stored);
+            if (say) {
+                say.log(`The GitHub installation this project was created with (${stored}) is not this App's `
+                    + 'any more. Looking the repository up again.\n');
+            }
+        }
+    }
+
+    const found = await github.installationForRepo(app, project.repoFullName);
+
+    if (stored && (!found || String(found) === String(stored))) {
+        // Either no installation covers the repository now, or GitHub still
+        // names the one it just refused. Re-minting would fail identically, and
+        // a second 404 explains nothing the first did not.
+        throw Object.assign(
+            new Error(`no usable App installation for ${project.repoFullName}`),
+            { code: 'needs_install' });
+    }
+
+    if (String(found || '') !== String(stored || '')) {
+        project.installationId = found || null;
+        projectStore.saveProject(tenantPaths, project);
+    }
+    if (!found) return null;
+    if (say) say.log(`GitHub installation ${found} covers ${project.repoFullName}.\n`);
+    return github.installationToken(app, found);
+}
+
 async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run, headSha }) {
     const k = key(slug, project.id);
     if (inFlight.has(k)) return { deployed: false, reason: 'busy' };
@@ -118,9 +180,7 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
     try {
         // No installation means a public repository, cloned with no credential.
         // `cloneToCurrent` builds a plain https URL when the token is null.
-        const token = project.installationId
-            ? await github.installationToken(app, project.installationId)
-            : null;
+        const token = await tokenForProject(app, tenantPaths, project, report);
         const { sha } = await cloner.cloneToCurrent({
             token,
             repoFullName: project.repoFullName,
@@ -512,6 +572,9 @@ function startAllRuntimes({ pathsFor, tenantsRoot }) {
 module.exports = {
     deployNow, promoteNow, releasesFor, isDeploying, reasonFor, startAllRuntimes,
     useWritableDb,
+    // Test seam. Reaching this through deployNow would mean a real clone, a
+    // real build and a real runtime for a decision made before any of them.
+    _tokenForProject: tokenForProject,
     // Test seam. `inFlight` is what stops a project being deleted while its
     // folders are being renamed, and a test cannot reach that state without a
     // real deployment running. Nothing outside tests/ should touch it.

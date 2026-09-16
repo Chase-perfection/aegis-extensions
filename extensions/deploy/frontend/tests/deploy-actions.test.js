@@ -508,3 +508,67 @@ test('the refusals reference pane renders the pinned table of codes and meanings
         await close();
     }
 });
+
+// The repository picker lives on this pane, above the form, and hides itself
+// when the App is installed on no account. What explained that hid on the
+// GitHub pane, so the operator landed on a bare URL field with no reason given
+// and read it as the only way Deploy works.
+
+test('with no installation, the deploy form says why it offers no repositories', async () => {
+    const stubs = baseStubs([]);
+    const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#new`, stubs);
+    try {
+        await page.waitForFunction(() => {
+            const b = document.getElementById('deploy-new-noinstall');
+            return !!b && !b.hidden;
+        }, { timeout: 5000 });
+
+        const seen = await page.evaluate(() => ({
+            noticeHidden: document.getElementById('deploy-new-noinstall').hidden,
+            reposHidden: document.getElementById('deploy-repos').hidden,
+            href: document.getElementById('deploy-noinstall-link').getAttribute('href'),
+            linkHidden: document.getElementById('deploy-noinstall-link').hidden,
+            urlField: !!document.getElementById('deploy-new-url')
+        }));
+
+        assert.strictEqual(seen.noticeHidden, false, 'nothing explains the missing repository list');
+        assert.strictEqual(seen.reposHidden, true, 'the repository list cannot be shown without an installation');
+        assert.strictEqual(seen.href, 'https://github.com/apps/acme/installations/new',
+            'the notice does not lead to the page that installs the App');
+        assert.strictEqual(seen.linkHidden, false);
+        assert.strictEqual(seen.urlField, true,
+            'pasting a public repository URL must stay possible');
+    } finally {
+        await close();
+    }
+});
+
+test('with an installation, the repositories are offered and the notice stays away', async () => {
+    const stubs = Object.assign(baseStubs([]), {
+        'deploy/github/installations': {
+            success: true,
+            installations: [{ installationId: 42, accountLogin: 'acme', accountType: 'Organization', repositorySelection: 'all' }]
+        },
+        'deploy/github/repos': {
+            success: true,
+            repos: [{ fullName: 'acme/site', private: false, defaultBranch: 'main' }]
+        }
+    });
+    const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#new`, stubs);
+    try {
+        await page.waitForFunction(() => {
+            const b = document.getElementById('deploy-repos');
+            return !!b && !b.hidden;
+        }, { timeout: 5000 });
+
+        const seen = await page.evaluate(() => ({
+            noticeHidden: document.getElementById('deploy-new-noinstall').hidden,
+            accounts: [...document.querySelectorAll('#deploy-installation option')].map((o) => o.textContent.trim())
+        }));
+
+        assert.strictEqual(seen.noticeHidden, true, 'the notice outstayed the problem it describes');
+        assert.deepStrictEqual(seen.accounts, ['acme (Organization)']);
+    } finally {
+        await close();
+    }
+});

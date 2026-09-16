@@ -2,6 +2,25 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## Unreleased
+
+**A project survives the App being registered again.** `installationId` was
+written when the project was created and never checked against GitHub, so
+registering a new App, or uninstalling and installing again, left every project
+pointing at an installation the App no longer owns. GitHub answers 404 there,
+404 was not a named reason, and the page said the clone had failed and the
+branch was worth checking, which is the one thing that was fine. A refused
+installation is now looked up again, the id found is written back, and a
+repository no installation covers is called `needs_install`. Installing the App
+after creating a project works too, without recreating it.
+
+**The deploy form says why it offers no repositories.** The repository picker
+sits on that pane, above the URL field, and hides itself when the App is
+installed on no account. What explained that was rendered on the GitHub pane,
+which nobody is reading while they are trying to deploy something, so the form
+showed a bare URL field and no reason for it. The sentence and the install link
+are now on the form itself, and pasting a public URL still works.
+
 ## 0.2.1
 
 **A branch field shows the branches instead of waiting to be guessed.** The

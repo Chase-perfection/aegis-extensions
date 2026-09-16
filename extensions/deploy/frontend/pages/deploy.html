@@ -255,6 +255,20 @@
                                     This installation can see no repository yet. Add one from GitHub.</p>
                             </div>
 
+                            <!-- Why the repository list above is not there. It used to be
+                                 explained on the GitHub pane, which is not the pane anyone
+                                 reads when they are trying to deploy something, so this
+                                 page showed a bare URL field and no reason for it. -->
+                            <div id="deploy-new-noinstall" class="dep-block" hidden>
+                                <h1 class="dep-pane-title" data-i18n="deploy_noinstall_title">No repositories to offer
+                                    yet</h1>
+                                <p class="dep-body" data-i18n="deploy_noinstall_body">The GitHub App is registered on
+                                    this server but installed on no account, so Aegis cannot list your repositories or
+                                    read a private one. Install it, or paste a public repository URL below.</p>
+                                <a id="deploy-noinstall-link" class="dep-btn dep-btn-link" target="_blank"
+                                    rel="noopener" data-i18n="deploy_noinstall_cta">Install the App on GitHub</a>
+                            </div>
+
                             <!-- Deploying is one form rather than a wizard: for a static site
                                  the only answers Aegis cannot work out itself are which
                                  repository, which branch, and what to call it. -->
