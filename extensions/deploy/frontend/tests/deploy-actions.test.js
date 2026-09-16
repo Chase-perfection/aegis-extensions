@@ -623,3 +623,51 @@ test('with no App registered the block stays away and connecting is offered inst
         await close();
     }
 });
+
+/**
+ * A registered App is not a working connection until something installed it.
+ *
+ * `machineStore.publicStatus` cannot answer this: it is synchronous and reads
+ * the local store, while the count of installations is a call to GitHub. So the
+ * row was drawn green from the registration alone, on a page whose repository
+ * list was empty for the one reason the row said was fine.
+ */
+test('an App installed nowhere is not reported as a connection that works', async () => {
+    // `baseStubs` leaves /api/deploy/github/installations on the harness
+    // default, which carries no `installations` array: the page sees none.
+    const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#github`, baseStubs([]));
+    try {
+        await page.waitForFunction(() => {
+            const row = document.querySelector('#deploy-readiness .dep-row.dep-todo');
+            return !!row && /install/i.test(row.textContent);
+        }, { timeout: 5000 });
+    } finally {
+        await close();
+    }
+});
+
+test('an App with an installation keeps the green row it earned', async () => {
+    const stubs = Object.assign(baseStubs([]), {
+        'deploy/github/installations': {
+            success: true,
+            installations: [{ installationId: 42, accountLogin: 'acme', accountType: 'Organization', repositorySelection: 'all' }]
+        }
+    });
+    const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#github`, stubs);
+    try {
+        await page.waitForSelector('#deploy-readiness-github', { timeout: 5000 });
+        // The installations call is answered on the same load, so waiting for
+        // the repository list is waiting for the correction to have had its
+        // chance to run.
+        await page.waitForFunction(() => {
+            const el = document.getElementById('deploy-repos');
+            return !!el && !el.hidden;
+        }, { timeout: 5000 });
+
+        const className = await page.$eval('#deploy-readiness-github', (r) => r.className);
+        assert.strictEqual(className, 'dep-row dep-ok',
+            'a connection that works was marked as something left to do');
+    } finally {
+        await close();
+    }
+});

@@ -350,12 +350,17 @@
         ));
 
         if (s.github && s.github.connected) {
-            readinessEl.appendChild(row(
+            // Kept rather than appended and forgotten: `markGithubRow` turns it
+            // amber when the installations call comes back empty, which is the
+            // one thing this status cannot know on its own.
+            var ghRow = row(
                 'ok',
                 tr('deploy_gh_label', 'GitHub App registered'),
                 s.github.slug || ('app ' + s.github.appId),
                 ''
-            ));
+            );
+            ghRow.id = 'deploy-readiness-github';
+            readinessEl.appendChild(ghRow);
         } else {
             readinessEl.appendChild(row(
                 'todo',
@@ -1419,10 +1424,30 @@
         }
     }
 
+    /**
+     * A registered App is not a working connection until something installed it.
+     *
+     * `publicStatus` cannot answer this: it is synchronous and reads the local
+     * store, while the count of installations is a call to GitHub. The page
+     * already makes that call, so the row is corrected when the answer arrives
+     * rather than guessed at render, and stays green in the case that is fine.
+     */
+    function markGithubRow(none) {
+        var rowEl = document.getElementById('deploy-readiness-github');
+        if (!rowEl || !none) return;
+        rowEl.className = 'dep-row dep-todo';
+        var detail = rowEl.querySelector('.dep-row-detail');
+        if (detail) {
+            detail.textContent = tr('deploy_gh_no_install',
+                'Registered, but installed on no account, so Aegis can list no repository.');
+        }
+    }
+
     function renderInstallations(installs) {
         var select = document.getElementById('deploy-installation');
         var none = !installs || !installs.length;
         renderNoInstallNotice(none);
+        markGithubRow(none);
         if (none) return renderGrantStep();
         document.getElementById('deploy-repos').hidden = false;
         select.textContent = '';
