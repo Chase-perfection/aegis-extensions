@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## Unreleased
+## 0.2.3
 
 **A branch that holds no site says so, instead of naming a folder that is not
 there.** One refusal covered two different problems. When a subfolder holds the
