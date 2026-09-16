@@ -15,10 +15,10 @@
   "channel": "stable",
   "minAppVersion": "1.0.5",
   "latest": {
-    "version": "0.2.3",
-    "publishedAt": "2026-09-16T11:42:08Z",
-    "size": 332524,
-    "sha256": "b9168f07bbd1a21941771858e47e30fcf281dc5b183e1829bb3211cd4b6da604"
+    "version": "0.2.4",
+    "publishedAt": "2026-09-16T13:13:42Z",
+    "size": 347287,
+    "sha256": "c4d10824565dc03c4965d8c4d03bb722a1de8c880acc47523af8fc8eda9e2893"
   },
   "releases": [
     "0.0.0",
@@ -31,6 +31,7 @@
     "0.2.0",
     "0.2.1",
     "0.2.2",
-    "0.2.3"
+    "0.2.3",
+    "0.2.4"
   ]
 }
