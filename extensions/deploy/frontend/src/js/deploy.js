@@ -2680,13 +2680,11 @@
         }
 
         wrap.appendChild(el('h2', 'dep-subtitle', tr('deploy_settings_build', 'Build and deployment')));
+
+        // What this project is, rather than what it runs: none of it is typed,
+        // all of it is read back from the last deployment.
         var meta = el('aside', 'dep-meta');
         metaRow(meta, 'dep-meta-row', tr('deploy_meta_repo', 'Repository'), project.repoFullName);
-        metaRow(meta, 'dep-meta-row', tr('deploy_meta_root', 'Subfolder'), project.rootDir);
-        metaRow(meta, 'dep-meta-row', tr('deploy_meta_install', 'Install command'), project.installCmd);
-        metaRow(meta, 'dep-meta-row', tr('deploy_meta_build', 'Build command'), project.buildCmd);
-        metaRow(meta, 'dep-meta-row', tr('deploy_meta_output', 'Output directory'), project.outputDir);
-        metaRow(meta, 'dep-meta-row', tr('deploy_meta_start', 'Start command'), project.startCmd);
         if (project.runtime === 'node') {
             metaRow(meta, 'dep-meta-row', tr('deploy_meta_process', 'Process'), project.running
                 ? tr('deploy_meta_process_up', 'answering')
@@ -2696,8 +2694,67 @@
         metaRow(meta, 'dep-meta-row', tr('deploy_meta_commit', 'Commit'), project.lastSha ? project.lastSha.slice(0, 8) : '');
         metaRow(meta, 'dep-meta-row', tr('deploy_meta_published', 'Published'), project.deployedAt ? ago(project.deployedAt) : '');
         wrap.appendChild(meta);
-        wrap.appendChild(el('p', 'dep-hint', tr('deploy_settings_immutable',
-            'These are read when the project is created. The branch above is the one that can be changed afterwards; changing any of the others is a new project today.')));
+
+        if (project.parentId) {
+            // A preview is built the way its parent is built, and the route
+            // refuses it here. Shown rather than hidden: the operator still has
+            // to be able to read what this branch is being built with.
+            var pmeta = el('aside', 'dep-meta');
+            metaRow(pmeta, 'dep-meta-row', tr('deploy_meta_root', 'Subfolder'), project.rootDir);
+            metaRow(pmeta, 'dep-meta-row', tr('deploy_meta_install', 'Install command'), project.installCmd);
+            metaRow(pmeta, 'dep-meta-row', tr('deploy_meta_build', 'Build command'), project.buildCmd);
+            metaRow(pmeta, 'dep-meta-row', tr('deploy_meta_output', 'Output directory'), project.outputDir);
+            metaRow(pmeta, 'dep-meta-row', tr('deploy_meta_start', 'Start command'), project.startCmd);
+            wrap.appendChild(pmeta);
+            wrap.appendChild(el('p', 'dep-hint', tr('deploy_settings_preview_fixed',
+                'A preview is built the way the project it branches from is built. Change these on that project.')));
+        } else {
+            wrap.appendChild(el('p', 'dep-hint', tr('deploy_settings_body',
+                'Read on every deployment, so a correction here takes effect on the next one and nothing has to be recreated. An aegis.deploy.json in the branch fills the build fields the same way; a start command declared there is reported and set here, where the consequence is visible.')));
+
+            // The grid the directory form already uses: seven fields in one
+            // column scroll past their own Save button.
+            var form = el('div', 'dep-fields');
+            var fields = {};
+            fields.rootDir = settingsField(form, 'deploy-settings-root',
+                tr('deploy_meta_root', 'Subfolder'), project.rootDir);
+            fields.installCmd = settingsField(form, 'deploy-settings-install',
+                tr('deploy_meta_install', 'Install command'), project.installCmd);
+            fields.buildCmd = settingsField(form, 'deploy-settings-build',
+                tr('deploy_meta_build', 'Build command'), project.buildCmd);
+            fields.outputDir = settingsField(form, 'deploy-settings-output',
+                tr('deploy_meta_output', 'Output directory'), project.outputDir);
+            fields.startCmd = settingsField(form, 'deploy-settings-startcmd',
+                tr('deploy_meta_start', 'Start command'), project.startCmd);
+            fields.dbFile = settingsField(form, 'deploy-settings-dbfile',
+                tr('deploy_meta_db', 'Database file'), project.dbFile);
+            fields.migrationsDir = settingsField(form, 'deploy-settings-migrations',
+                tr('deploy_meta_migrations', 'Migrations folder'), project.migrationsDir);
+            wrap.appendChild(form);
+
+            // Said before the click and not after the refusal: emptying the
+            // start command is how a process becomes a static site again, and
+            // that is not obvious from an empty field.
+            wrap.appendChild(el('p', 'dep-hint', tr('deploy_settings_start_note',
+                'A start command makes this project a process. Emptying it serves the files as they are, and stops the process on the next deployment.')));
+
+            var srow = el('div', 'dep-branch-form');
+            var ssave = el('button', 'dep-btn dep-btn-small', tr('deploy_settings_save', 'Save'));
+            ssave.type = 'button';
+            ssave.id = 'deploy-settings-save';
+            ssave.disabled = !isAdmin;
+            srow.appendChild(ssave);
+            wrap.appendChild(srow);
+
+            var snote = el('p', 'dep-note', '');
+            snote.id = 'deploy-settings-note';
+            snote.hidden = true;
+            wrap.appendChild(snote);
+
+            ssave.addEventListener('click', function () {
+                saveProjectSettings(project, fields, ssave, snote);
+            });
+        }
 
         wrap.appendChild(el('h2', 'dep-subtitle', tr('deploy_nav_auth', 'Authentication')));
         wrap.appendChild(el('p', 'dep-hint', project.protected
@@ -2776,6 +2833,109 @@
             });
     }
 
+
+    /**
+     * One labelled field of the build form.
+     *
+     * The id is what the label points at and what the tests look for, so it is
+     * passed in rather than derived: a field renamed here without its test
+     * renamed with it would leave the test asserting on a field that no longer
+     * exists, and passing.
+     */
+    function settingsField(container, id, label, value) {
+        var row = el('label', 'dep-field');
+        row.setAttribute('for', id);
+        row.appendChild(el('span', 'dep-label', label));
+        var input = el('input', 'dep-input');
+        input.type = 'text';
+        input.id = id;
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+        input.value = value == null ? '' : String(value);
+        input.disabled = !isAdmin;
+        row.appendChild(input);
+        container.appendChild(row);
+        return input;
+    }
+
+    /** What the settings route refused, in the words the rest of the page uses. */
+    function settingsRefusal(reason) {
+        if (reason === 'runtime_disabled') {
+            return tr('deploy_settings_runtime_off',
+                'This server runs no application process. The files can be served as they are; a start command needs the host to allow processes.');
+        }
+        if (reason === 'bad_db_file') {
+            return tr('deploy_settings_bad_db',
+                'That is not a database file name. One name, no folder, ending in .db or .sqlite.');
+        }
+        if (reason === 'bad_migrations_dir') {
+            return tr('deploy_settings_bad_migrations',
+                'That is not a folder inside the repository. One relative path, no ..');
+        }
+        if (reason === 'preview_settings_fixed') {
+            return tr('deploy_settings_preview_fixed',
+                'A preview is built the way the project it branches from is built. Change these on that project.');
+        }
+        return tr('deploy_settings_failed', 'Aegis could not save those settings.');
+    }
+
+    /**
+     * Sends the fields that changed, and nothing else.
+     *
+     * The difference and not the whole form, because the record can move under
+     * an open page: a manifest in the branch writes the build keys onto it at
+     * every deployment, and a form that posted all seven would put back what
+     * the page read before that happened.
+     */
+    function saveProjectSettings(project, fields, btn, note) {
+        var patch = {};
+        var keys = Object.keys(fields);
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            var was = project[key] == null ? '' : String(project[key]);
+            var now = fields[key].value.trim();
+            if (now !== was) patch[key] = now;
+        }
+
+        note.hidden = false;
+        if (!Object.keys(patch).length) {
+            note.textContent = tr('deploy_settings_nochange', 'Nothing to save.');
+            return;
+        }
+
+        btn.disabled = true;
+        note.textContent = tr('deploy_auth_working', 'Saving.');
+        window.api('/api/deploy/projects/' + encodeURIComponent(project.id) + '/settings', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch)
+        })
+            .then(function (r) { return readJson(r, 'settings'); })
+            .then(function (data) {
+                btn.disabled = !isAdmin;
+                if (!(data && data.success)) {
+                    note.textContent = settingsRefusal(data && data.error);
+                    return;
+                }
+                // The record this page holds, brought level with the one on
+                // disk. Without it a second click sends the same field again as
+                // if it had just been typed.
+                Object.keys(patch).forEach(function (key) {
+                    project[key] = patch[key] || null;
+                });
+                if ('startCmd' in patch) {
+                    project.runtime = patch.startCmd ? 'node' : 'static';
+                }
+                note.textContent = tr('deploy_settings_saved',
+                    'Saved. The next deployment uses them.');
+            })
+            .catch(function (e) {
+                btn.disabled = !isAdmin;
+                note.textContent = tr('deploy_auth_unreachable',
+                    'Aegis did not answer. Check the backend is running, then reload this page.');
+                console.error('[Deploy] settings failed:', e);
+            });
+    }
 
     /**
      * Saves the fallback switch, straight from the checkbox.

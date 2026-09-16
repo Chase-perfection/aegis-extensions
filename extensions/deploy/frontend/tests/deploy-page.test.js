@@ -746,3 +746,81 @@ test('the data tab walks files to tables to rows, and renders each kind of cell'
     await close();
   }
 });
+
+// The build settings used to be seven read-only rows under a sentence saying
+// that changing any of them was a new project. A typo in a start command was
+// therefore repaired by deleting the project, which is the instruction the
+// PATCH route and this form exist to withdraw.
+
+const SETTINGS_FIELDS = {
+  '#deploy-settings-root': '',
+  '#deploy-settings-install': 'npm ci',
+  '#deploy-settings-build': 'npm run build',
+  '#deploy-settings-output': 'dist',
+  '#deploy-settings-startcmd': ''
+};
+
+test('the settings tab offers the build fields, prefilled from the project', async () => {
+  const { page, close } = await openPage(browser, detailUrl('project/site-a/settings'),
+    Object.assign(stubs([PROJECT]), { '/auth/me': ME_ADMIN }));
+  try {
+    const seen = await page.evaluate(function (selectors) {
+      var out = {};
+      selectors.forEach(function (sel) {
+        var input = document.querySelector(sel);
+        out[sel] = input ? input.value : null;
+      });
+      out.save = !!document.querySelector('#deploy-settings-save');
+      return out;
+    }, Object.keys(SETTINGS_FIELDS));
+
+    Object.keys(SETTINGS_FIELDS).forEach(function (sel) {
+      assert.notStrictEqual(seen[sel], null,
+        sel + ' is missing, so correcting it still means deleting the project');
+      assert.strictEqual(seen[sel], SETTINGS_FIELDS[sel],
+        sel + ' does not show what the project actually runs');
+    });
+    assert.strictEqual(seen.save, true, 'the fields cannot be saved');
+  } finally {
+    await close();
+  }
+});
+
+test('saving sends only the fields that changed, and says so', async () => {
+  const { page, close } = await openPage(browser, detailUrl('project/site-a/settings'),
+    Object.assign(stubs([PROJECT]), {
+      '/auth/me': ME_ADMIN,
+      '/settings': { success: true, changed: ['buildCmd'] }
+    }));
+  try {
+    const sent = [];
+    page.on('request', function (r) {
+      if (r.method() === 'PATCH') {
+        try { sent.push(JSON.parse(r.postData() || '{}')); } catch (e) { sent.push(null); }
+      }
+    });
+
+    await page.focus('#deploy-settings-build');
+    await page.keyboard.down('Control');
+    await page.keyboard.press('KeyA');
+    await page.keyboard.up('Control');
+    await page.type('#deploy-settings-build', 'npm run compile');
+    await page.click('#deploy-settings-save');
+
+    // Past the "Saving." the click puts there, to whatever the answer left.
+    await page.waitForFunction(function () {
+      var n = document.querySelector('#deploy-settings-note');
+      return !!n && !n.hidden && n.textContent.trim().length > 0 &&
+        n.textContent.indexOf('Saving') === -1;
+    }, { timeout: 5000 });
+
+    assert.strictEqual(sent.length, 1, 'the form did not send exactly one request');
+    assert.deepStrictEqual(sent[0], { buildCmd: 'npm run compile' },
+      'a field nobody touched was sent, so a form left open overwrites what a branch declared');
+
+    const note = await page.$eval('#deploy-settings-note', (n) => n.textContent);
+    assert.match(note, /deployment/i, 'the note does not say when the change takes effect');
+  } finally {
+    await close();
+  }
+});
