@@ -33,6 +33,16 @@ const runs = require('../runs');
 const projectStore = require('../projectStore');
 const siteAuth = require('../siteAuth');
 
+// The route reads `aegis.deploy.json` and the root of the branch to fill the
+// fields nobody typed, and both are GitHub calls. Stubbed for the whole file
+// rather than per test, because the docstring above promises no network, and a
+// refusal reached through a real request to api.github.com is a slow test that
+// also fails on a laptop with no internet. Individual tests below replace these
+// when the branch is what they are about.
+const github = require('../github');
+github.readRepoFile = async () => null;
+github.listRootEntries = async () => [];
+
 console.log = () => { };
 
 const TENANTS_ROOT = path.join(DATA_ROOT, 'tenants');
@@ -279,5 +289,57 @@ test('a project being deployed is not deleted underneath the deployment', async 
         assert.ok(projectStore.getProject(paths, id), 'and so is the record');
     } finally {
         inFlight.delete(`acme/${id}`);
+    }
+});
+
+// The manifest has to be read before the route reads the fields, and the two
+// were interleaved: `rootDir` was taken where the URL was parsed, well above the
+// block that fills it, so it was the one key a branch could declare and never
+// get. Nothing failed, the value was simply dropped.
+//
+// `runtime_disabled` is the cheapest refusal that fires after those reads: it
+// needs a start command, and a start command reaching it can only have come
+// from the branch here, because the request below carries none.
+test('a start command declared by the branch reaches the route that reads it', async () => {
+    const real = github.readRepoFile;
+    github.readRepoFile = async (app, installationId, repo, file) =>
+        file === 'aegis.deploy.json'
+            ? JSON.stringify({
+                startCmd: 'python packaging/api/kpi_api.py',
+                rootDir: 'site',
+                installCmd: 'pip install -r r.txt --target .'
+            })
+            : null;
+    try {
+        const answer = await call('POST /api/deploy/projects', request({
+            runId: 'manifeststartcmd1',
+            repoUrl: 'https://github.com/acme/site',
+            branch: 'main'
+            // No startCmd, no installCmd, no rootDir: the branch answers them.
+        }));
+
+        assert.equal(answer.status, 403,
+            'the branch asked for a process and the route did not notice');
+        assert.equal(answer.body.error, 'runtime_disabled');
+    } finally {
+        github.readRepoFile = real;
+    }
+});
+
+test('a manifest that will not parse refuses instead of being ignored', async () => {
+    const real = github.readRepoFile;
+    github.readRepoFile = async (app, installationId, repo, file) =>
+        file === 'aegis.deploy.json' ? '{ this is not json' : null;
+    try {
+        const answer = await call('POST /api/deploy/projects', request({
+            runId: 'manifestbadjson01',
+            repoUrl: 'https://github.com/acme/site',
+            branch: 'main'
+        }));
+
+        assert.equal(answer.status, 400);
+        assert.equal(answer.body.error, 'bad_deploy_manifest');
+    } finally {
+        github.readRepoFile = real;
     }
 });

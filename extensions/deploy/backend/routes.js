@@ -1172,7 +1172,6 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             return refuse(400, { error: 'bad_repo_url' });
         }
         const repoFullName = parsed.fullName;
-        const rootDir = body.rootDir ? String(body.rootDir) : '';
 
         // Resolution order matters. An installation is tried first because it is
         // the only way into a private repository; a public one then works with no
@@ -1305,6 +1304,11 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 detail: e.message
             });
         }
+
+        // Read here and not where the URL was parsed: the manifest above may
+        // have supplied it, and a value taken before that block would be the one
+        // field the branch could not answer.
+        const rootDir = body.rootDir ? String(body.rootDir) : '';
 
         // Inferred from the start command rather than asked for separately. A
         // project is served by a process because there is a command to run; a
