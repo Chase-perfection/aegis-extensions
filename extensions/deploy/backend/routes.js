@@ -1955,6 +1955,91 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         });
     });
 
+    /**
+     * The settings a project can change without being recreated.
+     *
+     * `startCmd` was written at creation and never again, so a project created
+     * without one was a static site for ever and the only repair was deleting
+     * it. That is the instruction an operator was given for a typo.
+     *
+     * Clearing it is allowed and stops the process on the next deployment;
+     * setting it needs the host to allow processes, which is the same refusal
+     * creation gives and for the same reason. Nothing here restarts anything:
+     * the next deployment reads the record, which keeps one path into the
+     * runtime instead of two.
+     *
+     * PATCH and not the POST above: that one carries the serving switches a
+     * page ticks, this one carries the build a deployment reads, and a key
+     * absent from the body means "leave it" rather than "clear it".
+     */
+    router.patch('/api/deploy/projects/:id/settings', requireOptIn, requireRole('admin'), (req, res) => {
+        if (!projectStore.PROJECT_ID_RE.test(req.params.id || '')) {
+            return res.status(404).json({ success: false, error: 'unknown_project' });
+        }
+        const project = projectStore.getProject(req.tenantPaths, req.params.id);
+        if (!project) return res.status(404).json({ success: false, error: 'unknown_project' });
+        if (project.parentId) {
+            // A preview is built the way its parent is built. Correcting it
+            // here would leave the two disagreeing until the branch is removed.
+            return res.status(400).json({ success: false, error: 'preview_settings_fixed' });
+        }
+
+        const body = req.body || {};
+        const patch = {};
+
+        for (const key of ['installCmd', 'buildCmd', 'startCmd']) {
+            if (!(key in body)) continue;
+            patch[key] = String(body[key] || '').trim().slice(0, 500) || null;
+        }
+        for (const key of ['outputDir', 'rootDir']) {
+            if (!(key in body)) continue;
+            patch[key] = String(body[key] || '').trim().slice(0, 200) || null;
+        }
+        if ('dbFile' in body) {
+            try {
+                patch.dbFile = projectSettings.resolveDbFile(body.dbFile);
+            } catch (e) {
+                return res.status(400).json({ success: false, error: 'bad_db_file' });
+            }
+        }
+        if ('migrationsDir' in body) {
+            try {
+                patch.migrationsDir = projectSettings.resolveMigrationsDir(body.migrationsDir);
+            } catch (e) {
+                return res.status(400).json({ success: false, error: 'bad_migrations_dir' });
+            }
+        }
+
+        if ('startCmd' in patch) {
+            const wantsProcess = !!patch.startCmd;
+            if (wantsProcess && !runtime.isEnabled()) {
+                // The host, not the tenant, exactly as at creation.
+                return res.status(403).json({ success: false, error: 'runtime_disabled' });
+            }
+            patch.runtime = wantsProcess ? 'node' : 'static';
+        }
+
+        if (!Object.keys(patch).length) {
+            return res.status(400).json({ success: false, error: 'no_settings' });
+        }
+
+        // Mutated on the record that was read: `saveProject` replaces the row
+        // whole, so a fresh object would drop every field this route does not
+        // know about.
+        Object.assign(project, patch);
+        let stored;
+        try {
+            stored = projectStore.saveProject(req.tenantPaths, project);
+        } catch (e) {
+            console.error(`[Deploy] ${req.tenant.slug}: ${req.params.id} settings write failed: ${e.message}`);
+            return res.status(500).json({ success: false, error: 'settings_write_failed' });
+        }
+
+        console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} settings changed `
+            + `(${Object.keys(patch).join(', ')}) by ${req.user.email}`);
+        return res.json({ success: true, changed: Object.keys(patch) });
+    });
+
     // --- The project's own data (see docs/superpowers/specs/
     //     2026-08-24-deploy-project-data-design.md) ------------------------
 

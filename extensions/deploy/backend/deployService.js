@@ -351,6 +351,13 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
                 }
                 throw e;
             }
+        } else {
+            // The record says static and something may still be running from
+            // when it did not. Stopping here and not in the route keeps one
+            // path into the runtime. `stop` returns false when nothing was
+            // running, which is the ordinary case: every static deployment
+            // reaches this line.
+            runtime.stop(slug, project.id);
         }
 
         projectStore.saveProject(tenantPaths, Object.assign({}, project, {
