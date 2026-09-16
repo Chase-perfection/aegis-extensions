@@ -2569,7 +2569,6 @@
             bin.disabled = !isAdmin;
             bin.setAttribute('aria-label', tr('deploy_branch_title', 'Tracked branch'));
             bform.appendChild(bin);
-            bform.appendChild(branchSuggestions(bin, project.repoFullName));
 
             var bgo = el('button', 'dep-btn dep-btn-small',
                 tr('deploy_branch_cta', 'Change and deploy'));
@@ -2577,6 +2576,8 @@
             bgo.disabled = !isAdmin;
             bform.appendChild(bgo);
             wrap.appendChild(bform);
+            // Under the row, for the reason the previews form puts it there.
+            wrap.appendChild(branchSuggestions(bin, project.repoFullName));
 
             var bnote = el('p', 'dep-note', '');
             bnote.hidden = true;
@@ -2848,7 +2849,7 @@
         branchIn.spellcheck = false;
         branchIn.placeholder = tr('deploy_previews_branch', 'Branch');
         branchIn.setAttribute('aria-label', tr('deploy_previews_branch', 'Branch'));
-        form.appendChild(branchSuggestions(branchIn, project.repoFullName));
+        branchIn.disabled = !isAdmin;
 
         var add = el('button', 'dep-btn dep-btn-small', tr('deploy_previews_add', 'Deploy this branch'));
         add.type = 'button';
@@ -2857,6 +2858,9 @@
         form.appendChild(branchIn);
         form.appendChild(add);
         block.appendChild(form);
+        // Under the row rather than inside it: the branch buttons wrap onto
+        // their own lines, and the form is one line of input and button.
+        block.appendChild(branchSuggestions(branchIn, project.repoFullName));
         block.appendChild(note);
 
         function create() {
@@ -2899,49 +2903,118 @@
     /**
      * Suggestions for a branch field whose repository is already known.
      *
-     * Returns the datalist to append; the caller decides where it sits, because
-     * a datalist is not rendered and only has to be in the document. Loaded on
-     * first reach rather than on render, for the same reason the repository
-     * rows do it: a project page must not spend a call to GitHub on a field
-     * nobody opened.
+     * Returns a box to append after the field. It holds three things: the
+     * datalist the field autocompletes from, the branches as buttons, and one
+     * line of state. Loaded on first reach rather than on render, for the same
+     * reason the repository rows do it: a project page must not spend a call to
+     * GitHub on a field nobody opened.
+     *
+     * The buttons are the point. A datalist is invisible until someone types,
+     * so a field backed by one alone reads as a box you have to guess the
+     * answer to, which is what an operator reported it as. Clicking a name
+     * fills the field.
      *
      * A datalist and not a select here too. The field has to keep accepting a
      * branch that GitHub refuses to list, which is what a repository the App
      * lost access to looks like, and a select would leave that operator with no
-     * way to type the name they know is right.
+     * way to type the name they know is right. That case is also the one the
+     * state line is for: a call that failed says so and points at the GitHub
+     * connection, rather than leaving an empty field that looks like a
+     * repository with no branches.
      */
     var branchListSeq = 0;
 
+    /** Past this, the buttons stop being a picker and start being a wall. */
+    var BRANCH_BUTTONS_MAX = 8;
+
     function branchSuggestions(input, repoFullName) {
+        var box = el('div', 'dep-branch-suggest');
         var list = el('datalist', '');
         branchListSeq += 1;
         list.id = 'deploy-branches-' + branchListSeq;
         input.setAttribute('list', list.id);
+        box.appendChild(list);
+
+        var picks = el('div', 'dep-branch-picks');
+        picks.hidden = true;
+        box.appendChild(picks);
+
+        var note = el('p', 'dep-hint');
+        note.hidden = true;
+        box.appendChild(note);
+
+        function show(names, defaultBranch) {
+            list.textContent = '';
+            picks.textContent = '';
+            names.forEach(function (n) {
+                var opt = el('option', '', '');
+                opt.value = n;
+                list.appendChild(opt);
+            });
+            // The default first: it is the branch the operator means most of
+            // the time, and scrolling past it to find it reads as an oversight.
+            var ordered = names.slice().sort(function (a, b) {
+                if (a === defaultBranch) return -1;
+                if (b === defaultBranch) return 1;
+                return 0;
+            });
+            ordered.slice(0, BRANCH_BUTTONS_MAX).forEach(function (n) {
+                var pick = el('button', 'dep-chip dep-chip-pick', n);
+                pick.type = 'button';
+                pick.disabled = input.disabled;
+                pick.addEventListener('click', function () {
+                    input.value = n;
+                    input.focus();
+                });
+                picks.appendChild(pick);
+            });
+            picks.hidden = !picks.childNodes.length;
+            note.hidden = false;
+            note.textContent = names.length > BRANCH_BUTTONS_MAX
+                ? tr('deploy_branch_more', 'and $1 more, type to filter')
+                    .replace('$1', names.length - BRANCH_BUTTONS_MAX)
+                : tr('deploy_branch_count', '$1 branches on GitHub').replace('$1', names.length);
+        }
+
+        function fail(code) {
+            picks.hidden = true;
+            var entry = DEPLOY_ERRORS[code];
+            note.textContent = (entry ? tr(entry[0], entry[1]) : tr('deploy_branch_list_failed',
+                'Aegis could not read the branches of this repository. Try again, or check the App still has it.')) + ' ';
+            var link = el('a', 'dep-card-link', tr('deploy_branch_fix_link', 'Check the GitHub connection'));
+            link.href = '#github';
+            note.appendChild(link);
+            note.hidden = false;
+        }
 
         var state = repoFullName ? 'idle' : 'loaded';
         function load() {
             if (state !== 'idle') return;
             state = 'loading';
+            note.hidden = false;
+            note.textContent = tr('deploy_branch_loading', 'Reading the branches.');
             window.api('/api/deploy/github/branches?repo=' + encodeURIComponent(repoFullName))
                 .then(function (r) { return readJson(r, '/api/deploy/github/branches'); })
                 .then(function (d) {
-                    if (!(d && d.success)) { state = 'idle'; return; }
+                    if (!(d && d.success)) {
+                        // Back to idle so focusing again retries: GitHub
+                        // refusing once is not a verdict on the repository.
+                        state = 'idle';
+                        fail(d && d.error);
+                        return;
+                    }
                     state = 'loaded';
-                    list.textContent = '';
-                    (d.branches || []).forEach(function (b) {
-                        var opt = el('option', '', '');
-                        opt.value = b.name;
-                        list.appendChild(opt);
-                    });
+                    show((d.branches || []).map(function (b) { return b.name; }), d.defaultBranch);
                 })
                 .catch(function (e) {
                     state = 'idle';
+                    fail(null);
                     console.error('[Deploy] branches failed:', e);
                 });
         }
         input.addEventListener('mouseenter', load);
         input.addEventListener('focus', load);
-        return list;
+        return box;
     }
 
     /** The refusals only this form can produce, then the shared table. */

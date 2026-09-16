@@ -294,12 +294,17 @@ test('settings offers the tracked branch as a field, prefilled, with its suggest
       var box = document.querySelector('#deploy-detail-body .dep-branch-form');
       if (!box) return null;
       var input = box.querySelector('.dep-input');
-      var list = box.querySelector('datalist');
+      // Looked up by the attribute rather than inside the form: the datalist
+      // sits beside the row with the branch buttons, and a datalist only has
+      // to be in the document for the field to autocomplete from it.
+      var attr = input && input.getAttribute('list');
+      var list = attr && document.getElementById(attr);
       var btn = box.querySelector('button');
       return {
         value: input && input.value,
-        listAttr: input && input.getAttribute('list'),
+        listAttr: attr,
         listId: list && list.id,
+        listIsDatalist: !!list && list.tagName.toLowerCase() === 'datalist',
         button: btn && btn.textContent.trim()
       };
     });
@@ -307,7 +312,8 @@ test('settings offers the tracked branch as a field, prefilled, with its suggest
     assert.ok(form, 'the settings panel rendered no branch form at all');
     assert.strictEqual(form.value, PROJECT.branch, 'the field does not start on the branch being served');
     assert.ok(form.listAttr, 'the field is not wired to a datalist');
-    assert.strictEqual(form.listAttr, form.listId, 'the list attribute names a datalist that is not the one rendered');
+    assert.strictEqual(form.listAttr, form.listId, 'the list attribute names a datalist that is not in the document');
+    assert.ok(form.listIsDatalist, 'the list attribute names an element that is not a datalist');
     assert.strictEqual(form.button, 'Change and deploy');
 
     // It moved out of the read-only block rather than being duplicated into
@@ -318,6 +324,86 @@ test('settings offers the tracked branch as a field, prefilled, with its suggest
         .map(function (k) { return k.textContent.trim(); });
     });
     assert.ok(!keys.includes('Branch'), 'the branch is still a read-only row as well as a field');
+  } finally {
+    await close();
+  }
+});
+
+// The field used to be backed by a datalist and nothing else, which is
+// invisible until someone types: an operator reported it as a box you have to
+// guess the answer to. The branches are offered as buttons now, and a list the
+// App cannot read says so instead of rendering as a repository with no
+// branches.
+
+const BRANCH_FIELD = '#deploy-detail-body .dep-branch-form .dep-input';
+const BRANCH_HINT = '#deploy-detail-body .dep-branch-suggest .dep-hint';
+
+// The field is disabled for anyone who cannot deploy, and a disabled input
+// takes neither focus nor hover, which is what loads the branches. So these
+// two run as the operator the feature is for.
+const ME_ADMIN = {
+  success: true,
+  loggedIn: true,
+  role: 'admin',
+  user: { email: 'tester@example.com', role: 'admin' }
+};
+
+test('the branch field offers the branches it can read, default first, and clicking one fills it', async () => {
+  const { page, close } = await openPage(browser, detailUrl('project/site-a/settings'),
+    Object.assign(stubs([PROJECT]), {
+      '/auth/me': ME_ADMIN,
+      '/api/deploy/github/branches': {
+        success: true,
+        repoFullName: PROJECT.repoFullName,
+        defaultBranch: 'main',
+        // Deliberately not in the order the picker should show them.
+        branches: [{ name: 'wip' }, { name: 'aegis' }, { name: 'main' }]
+      }
+    }));
+  try {
+    await page.focus(BRANCH_FIELD);
+    await page.waitForSelector('#deploy-detail-body .dep-chip-pick', { timeout: 5000 });
+
+    const picks = await page.$$eval('#deploy-detail-body .dep-chip-pick',
+      (els) => els.map((e) => e.textContent.trim()));
+    assert.deepStrictEqual(picks, ['main', 'wip', 'aegis'],
+      'the default branch is not offered first, or the rest lost their order');
+
+    const handles = await page.$$('#deploy-detail-body .dep-chip-pick');
+    await handles[2].click();
+    assert.strictEqual(await page.$eval(BRANCH_FIELD, (i) => i.value), 'aegis',
+      'clicking a branch did not put it in the field');
+  } finally {
+    await close();
+  }
+});
+
+test('a branch list Aegis cannot read says why and points at the GitHub connection', async () => {
+  const { page, close } = await openPage(browser, detailUrl('project/site-a/settings'),
+    Object.assign(stubs([PROJECT]), {
+      '/auth/me': ME_ADMIN,
+      '/api/deploy/github/branches': { success: false, error: 'needs_install' }
+    }));
+  try {
+    await page.focus(BRANCH_FIELD);
+    await page.waitForFunction((sel) => {
+      const n = document.querySelector(sel);
+      return !!(n && !n.hidden && n.querySelector('a'));
+    }, { timeout: 5000 }, BRANCH_HINT);
+
+    const out = await page.evaluate((sel) => {
+      const n = document.querySelector(sel);
+      return { text: n.textContent, href: n.querySelector('a').getAttribute('href') };
+    }, BRANCH_HINT);
+
+    assert.match(out.text, /cannot see that repository/,
+      'the refusal is not said in the words the rest of the page uses for it');
+    assert.strictEqual(out.href, '#github',
+      'the message leads nowhere, so the operator has nothing to act on');
+    assert.strictEqual(await page.$('#deploy-detail-body .dep-chip-pick'), null,
+      'a list that failed must not leave branch buttons behind');
+    assert.strictEqual(await page.$eval(BRANCH_FIELD, (i) => i.disabled), false,
+      'the field must still take a branch name typed by hand');
   } finally {
     await close();
   }

@@ -71,7 +71,7 @@ project's Authentication tab.
 ```json
 {
   "repoUrl": "https://github.com/SI-BRI/KPI-BRICONORD-.git",
-  "branch": "main",
+  "branch": "aegis",
   "name": "KPI Usine",
   "installCmd": "pip install --no-cache-dir -r packaging/api/requirements.txt --target .",
   "buildCmd": "",
@@ -88,9 +88,14 @@ it again whenever the process starts. KPI reads `AEGIS_DATA_DIR` for its
 persistent `kpi.db`, and Deploy runs the `migrations` directory before the
 process starts. KPI has no `kpi-api.json` in this mode.
 
+The requirements file also names PyInstaller, which builds `KPI.exe` and has no
+part in a project served as a process. The build skips it on its own and says so
+in the console, so the install command above needs no editing. See
+**Dependencies the build skips** in `DEPLOY-CONTRACT.md`.
+
 Checklist before handing out the site:
 
-1. Confirm the repository is on `main` and the install command completes.
+1. Confirm the repository is on `aegis` and the install command completes.
 2. Confirm the process starts with `python packaging/api/kpi_api.py` and the
    health check answers through the Deploy URL.
 3. Confirm the deployed data directory contains `kpi.db` and that a migration

@@ -415,6 +415,41 @@ why `bad_repo_url` reads on the console rather than only in the response.
 browser mints it before it sends the request, because those routes answer only
 when the deployment is over and the console has to open before that.
 
+## Dependencies the build skips
+
+A Python project that ships as an executable keeps its packaging tool in the
+same requirements file as everything else. Deploy serves that project as a
+process instead, so it never runs the packaging step, and installing the tool
+downloads tens of megabytes on every deployment for nothing.
+
+Before install starts, `build/autofix.js` reads the requirements file your
+install command names, and comments out the lines that name a tool whose only
+job is to produce an executable: `pyinstaller`, `cx-freeze`, `py2exe`,
+`py2app`, `nuitka`, `auto-py-to-exe`, `pyoxidizer`. The build console says which
+lines it skipped and why, before the install output that no longer mentions
+them.
+
+Two rules keep this from breaking a project that means it:
+
+- A dependency stays if your build command invokes it. `buildCmd` of
+  `pyinstaller --onefile app.py` needs PyInstaller installed, so the line is
+  left alone. Both the distribution name and the command it installs are
+  checked, since the two often differ.
+- Only the file your install command reads with `-r` or `--requirement` is
+  touched. A repository may carry several requirements files, and one nobody
+  installs is left as it is. A path that points outside the workspace is
+  ignored rather than followed.
+
+The rewrite happens in the throwaway copy the sandbox builds from, never in
+your repository, never in the staging clone, and never in the directory being
+served. That copy is wiped before the next build of any project, so the
+decision is recomputed from your real files every time. Add the tool to your
+build command and the next deployment installs it again, with nothing to undo.
+
+The list holds packaging tools only. Test runners, linters and type checkers
+stay installed: a project is allowed to run its own tests as its build step,
+and guessing wrong there breaks the build instead of saving a download.
+
 ## Removing a project
 
 The bin on a project's card, and the Remove button on its page, both run the
@@ -892,12 +927,14 @@ console while it starts, which is where a crash on boot explains itself.
 
 ### Native KPI pattern
 
-For the Python KPI application, the recommended Deploy project is the `main`
-branch of the KPI repository. Use these values:
+For the Python KPI application, the Deploy project is the `aegis` branch of the
+KPI repository, not `main`. `main` serves the production install under IIS, and
+merging the native code into it would move the hosting under the users on a day
+nobody chose. The two run side by side until the switch. Use these values:
 
 ```json
 {
-  "branch": "main",
+  "branch": "aegis",
   "installCmd": "pip install --no-cache-dir -r packaging/api/requirements.txt --target .",
   "buildCmd": "",
   "outputDir": "",

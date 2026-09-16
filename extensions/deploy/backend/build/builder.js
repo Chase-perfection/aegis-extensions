@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { assertNoSymlinks } = require('./symlinkGuard');
+const { applyAutofixes } = require('./autofix');
 
 /** How often the console catches up with what the sandbox has written. */
 const TAIL_INTERVAL_MS = 400;
@@ -119,6 +120,12 @@ async function buildInSandbox({ pool, workspaceRoot, staging, installCmd, buildC
         fs.rmSync(workspace, { recursive: true, force: true });
         fs.mkdirSync(workspace, { recursive: true });
         fs.cpSync(staging, workspace, { recursive: true });
+
+        // On the copy, never on the clone: a dependency this build has no use
+        // for is dropped here rather than downloaded again on every deployment.
+        // Runs before the tail starts so the operator reads why before they
+        // read the install output that no longer mentions it.
+        applyAutofixes({ workspace, installCmd, buildCmd, report: say });
 
         stopTail = tailLogs({ workspace, installCmd, buildCmd, report: say });
         try {

@@ -2,13 +2,40 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## Unreleased
+## 0.2.1
 
-The operator contract now documents the native KPI process path: `main`, the
-Python install and start commands, SQLite data below `AEGIS_DATA_DIR`, and the
-`migrations` directory. It also records the per-start `X-Aegis-Proxy-Key`
-contract, conditional identity headers, and the existing IIS path as a
-historical alternative in the KPI repository.
+**A branch field shows the branches instead of waiting to be guessed.** The
+field was backed by a datalist alone, which stays invisible until someone types,
+so it read as a box you had to know the answer to. The branches now appear as
+buttons under the field, default first, and clicking one fills it. Typing still
+works, because a branch the App cannot list is exactly the one an operator needs
+to type. This covers the tracked branch in Settings and the branch a preview
+deploys.
+
+**A branch list Aegis cannot read says so.** The call was made and its refusal
+was dropped into the console, leaving an empty field that looked like a
+repository with no branches. The reason is now on the page, in the words the
+rest of Deploy uses for it, with a link to the GitHub connection where the App
+is registered again.
+
+**A build no longer installs the tool that builds an executable.** A Python
+project that also ships as an `.exe` keeps PyInstaller in the requirements file
+Deploy installs, so every deployment downloaded it and nothing ever ran it. The
+build now comments those lines out in its own copy of the project before pip
+starts, and says in the console which ones it skipped. A dependency stays if the
+build command invokes it, and only the requirements file the install command
+names is read. The copy is wiped after the build, so the repository, the clone
+and the served directory are untouched, and the decision is made again from the
+real files on the next deployment. Packaging tools only: test runners and
+linters stay installed, because a project may run its tests as its build step.
+
+The operator contract now documents the native KPI process path: the `aegis`
+branch, the Python install and start commands, SQLite data below
+`AEGIS_DATA_DIR`, and the `migrations` directory. It also records the per-start
+`X-Aegis-Proxy-Key` contract, conditional identity headers, and the existing IIS
+path as a historical alternative in the KPI repository. KPI deploys from `aegis`
+rather than `main`: `main` serves the production install under IIS until the
+switch, and the two run side by side.
 
 ## 0.2.0
 

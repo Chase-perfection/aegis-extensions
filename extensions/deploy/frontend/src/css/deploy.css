@@ -1167,6 +1167,35 @@ select.dep-input option:disabled {
     white-space: nowrap;
 }
 
+/* The branches of a repository, offered under the field that takes one. A
+   button and not a chip alone: clicking a name is what the field is for. */
+.dep-branch-suggest {
+    margin-top: var(--space-sm);
+}
+
+.dep-branch-picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-xs);
+}
+
+.dep-chip-pick {
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.dep-chip-pick:hover:not(:disabled),
+.dep-chip-pick:focus-visible {
+    border-color: var(--accent);
+    color: var(--text-main);
+}
+
+.dep-chip-pick:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
 /* --- Rows: repositories, deployments, refusal codes -------------------- */
 
 .dep-rows {
