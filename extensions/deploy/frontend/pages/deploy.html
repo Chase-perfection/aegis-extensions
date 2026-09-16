@@ -159,15 +159,17 @@
                                      then, because the answer before that is the one thing the
                                      buttons below already say. `paintHero` fills it in. -->
                                 <ol id="deploy-hero-steps" class="dep-hero-steps" hidden>
-                                    <li data-i18n="deploy_hero_step1">Have the repository to hand. It needs a site at
-                                        its root, or a build command that produces one. Nothing else is required of
-                                        it.</li>
+                                    <li data-i18n="deploy_hero_step1">Have the repository to hand. It can be a site at
+                                        its root, sources a build turns into one, or an application Aegis starts and
+                                        serves through. Nothing else is required of it.</li>
                                     <li data-i18n="deploy_hero_step2">Click Deploy a repository and paste its URL.
                                         Aegis reads the default branch from GitHub, so that is the only field you have
                                         to fill.</li>
-                                    <li data-i18n="deploy_hero_step3">If it needs a build, give the install and build
-                                        commands, for instance npm ci and npm run build, and the folder they produce.
-                                        Leave all three empty for a site that is already static.</li>
+                                    <li data-i18n="deploy_hero_step3">Leave the rest empty. Aegis reads the lockfile
+                                        and the build script the branch declares, and looks for the folder the build
+                                        wrote. Fill the fields in only when a build writes somewhere unusual, and add
+                                        an aegis.deploy.json to the branch when it is an application, because a start
+                                        command is the one thing never guessed.</li>
                                     <li data-i18n="deploy_hero_step4">Deploy. The console opens on the clone, the
                                         build and the acceptance test, and the site is live on its own port when they
                                         pass. Every later commit on that branch republishes on its own.</li>
