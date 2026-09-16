@@ -117,3 +117,24 @@ test('a declared empty string declares nothing, and does not blank the form', ()
     const { values } = manifest.merge({ startCmd: 'python keep.py' }, r.config);
     assert.strictEqual(values.startCmd, 'python keep.py');
 });
+
+const authMethods = require('../authMethods');
+
+test('a branch may declare the authentication method, and only the method', () => {
+    const r = manifest.parse(JSON.stringify({ auth: authMethods.LDAP }));
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.config.auth, authMethods.LDAP);
+});
+
+test('a method nobody implements refuses rather than opening the site', () => {
+    const r = manifest.parse(JSON.stringify({ auth: 'saml' }));
+    assert.strictEqual(r.ok, false);
+    assert.match(r.error, /auth/);
+});
+
+test('a branch cannot name who is allowed in', () => {
+    const r = manifest.parse(JSON.stringify({ auth: 'ldap', allowedGroups: ['Domain Admins'] }));
+    assert.strictEqual(r.ok, true);
+    assert.ok(r.unsupported.includes('allowedGroups'),
+        'a repository named the people who may read its site, and nobody was told');
+});

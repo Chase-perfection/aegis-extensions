@@ -29,6 +29,8 @@
  * ```
  */
 
+const authMethods = require('./authMethods');
+
 const FILE = 'aegis.deploy.json';
 
 /** Long enough for a real pip or npm line, short enough not to be a payload. */
@@ -38,7 +40,14 @@ const MAX_PATH = 200;
 /** Everything a project record takes from the repository, and nothing else. */
 const COMMAND_KEYS = ['installCmd', 'buildCmd', 'startCmd'];
 const PATH_KEYS = ['rootDir', 'outputDir', 'dbFile', 'migrationsDir'];
-const KNOWN = COMMAND_KEYS.concat(PATH_KEYS);
+/**
+ * The method, and nothing about the people. A repository declaring that its
+ * site asks the directory is describing itself; a repository naming the
+ * colleagues who may read it is a decision taken in the wrong place, and it
+ * stays in the Authentication tab.
+ */
+const ENUM_KEYS = ['auth'];
+const KNOWN = COMMAND_KEYS.concat(PATH_KEYS).concat(ENUM_KEYS);
 
 /**
  * A path a repository may name: inside the clone, and no traversal.
@@ -93,6 +102,12 @@ function parse(text) {
             return {
                 ok: false, present: true, config: {}, unsupported: [],
                 error: `${key} is longer than ${MAX_CMD} characters`
+            };
+        }
+        if (ENUM_KEYS.includes(key) && !authMethods.isKnown(value)) {
+            return {
+                ok: false, present: true, config: {}, unsupported: [],
+                error: `auth must be one of ${authMethods.METHODS.join(', ')}`
             };
         }
         if (PATH_KEYS.includes(key)) {

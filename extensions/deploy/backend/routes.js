@@ -1360,6 +1360,14 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             createdBy: req.user.email
         };
 
+        // The branch may name the method, and only the method. Who is allowed
+        // in is left empty on purpose: that list belongs to the Authentication
+        // tab, and a repository naming the colleagues who may read the site it
+        // produces would be a grant written by whoever can push to it.
+        if (body.auth && !draft.auth) {
+            draft.auth = authMethods.record(body.auth, [], {});
+        }
+
         // The run has been recording since the top of this handler; now that the
         // project has an id it moves under it, so the project's detail view and
         // `dropProject` both see it.
