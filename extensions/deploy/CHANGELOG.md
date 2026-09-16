@@ -2,6 +2,18 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## Unreleased
+
+**A branch that holds no site says so, instead of naming a folder that is not
+there.** One refusal covered two different problems. When a subfolder holds the
+site, the refusal knows which one and always did; when there is no page anywhere,
+it said the same sentence and sent the operator looking for a subfolder field to
+point at nothing. That is what deploying a Python application looked like. The
+second case is now `not_a_site`, and it says what it is: no page to serve, so if
+this is an application give it a start command and Aegis runs it instead of
+serving files. `no_index` keeps the first case and now says the subfolder is
+named in the build log.
+
 ## 0.2.2
 
 **A registered App can be replaced.** Both registration routes refuse once one

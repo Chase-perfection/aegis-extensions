@@ -1002,8 +1002,10 @@
             'deploy_ref_github_unreachable', 'Aegis could not reach github.com'],
         needs_build: ['deploy_new_needs_build', 'That branch holds source, not a built site. Fill in an install and build command above, or publish the build output to a branch or a subfolder whose root has index.html, then point Aegis at it.',
             'deploy_ref_needs_build', 'The branch holds source, not a site'],
-        no_index: ['deploy_new_no_index', 'No index.html at the root of that branch. Point the subfolder field at the folder holding it.',
-            'deploy_ref_no_index', 'No index.html in the served directory'],
+        no_index: ['deploy_new_no_index', 'No index.html at the root of that branch, but a subfolder has one. The build log above names it. Put that folder in the subfolder field and deploy again.',
+            'deploy_ref_no_index', 'The site is in a subfolder, not at the root'],
+        not_a_site: ['deploy_new_not_a_site', 'This branch holds no web page anywhere, so there is nothing to serve as files. If it is an application, give it a start command and Aegis runs it instead. If its pages are built from source, fill in the build command and the output directory.',
+            'deploy_ref_not_a_site', 'The branch holds no site and no source to build'],
         no_root_dir: ['deploy_new_no_root', 'That subfolder does not exist in this branch.',
             'deploy_ref_no_root_dir', 'That subfolder is not in this branch'],
         bad_root_dir: ['deploy_new_bad_root', 'That subfolder leaves the repository.',
@@ -4178,7 +4180,7 @@
      */
     var REFUSAL_ORDER = [
         'bad_repo_url', 'needs_install', 'repo_not_found', 'bad_branch', 'needs_build',
-        'no_index', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink', 'bad_site_config',
+        'no_index', 'not_a_site', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink', 'bad_site_config',
         'no_free_port', 'deploy_failed', 'build_failed', 'build_account_unconfigured',
         'tool_missing', 'github_auth_failed', 'github_unreachable', 'busy', 'branch_gone'
     ];

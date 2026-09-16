@@ -188,7 +188,8 @@ root unless you named a subfolder.
 ```
 index.html present            -> accept
 no index.html, source found   -> refuse, needs_build
-no index.html, no source      -> refuse, no_index
+no index.html, subfolder has  -> refuse, no_index (names the subfolder)
+no index.html anywhere        -> refuse, not_a_site
 ```
 
 "Source found" means a `package.json`, `Dockerfile`, or `dockerfile` at the root
@@ -196,10 +197,17 @@ of the served directory or one level below it. One level, not deeper, so a stati
 site that vendors a `package.json` somewhere is not misread as a project needing
 a build.
 
-The two refusals differ in what you can do about them. `needs_build` means no
+The three refusals differ in what you can do about them. `needs_build` means no
 folder in that branch holds a finished site, so naming a subfolder will not help.
-`no_index` means the branch looks static and is missing its entry point, where
-naming a subfolder often is the fix.
+`no_index` means a subfolder does hold the site, and the refusal names it:
+naming that folder is the fix. `not_a_site` means there is no page anywhere and
+nothing that looks like source to build, which is what an application
+repository looks like: give it a start command and Aegis runs it instead of
+serving files.
+
+They were one code until an operator deploying a Python application was told to
+point the subfolder field at the folder holding the index, for a branch that had
+no index in any folder.
 
 ## Every refusal, and its fix
 
@@ -210,7 +218,8 @@ naming a subfolder often is the fix.
 | `repo_not_found` | GitHub has no such repository | Check the spelling |
 | `bad_branch` | Branch name Aegis will not pass to git | Avoid a leading dash and `..` |
 | `needs_build` | The branch holds source, not a site | Publish build output, see below |
-| `no_index` | No `index.html` in the served directory | Name the subfolder that holds it |
+| `no_index` | The site is in a subfolder, not at the root | Name the subfolder, which the refusal prints |
+| `not_a_site` | The branch holds no site and no source to build | Give a start command if it is an application |
 | `no_root_dir` | That subfolder is not in this branch | Check the path, case included |
 | `bad_root_dir` | The subfolder path leaves the repository | Use a path inside the repository |
 | `no_free_port` | All 100 site ports are taken | Delete a project or move the range |

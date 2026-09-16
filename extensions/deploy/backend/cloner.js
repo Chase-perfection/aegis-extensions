@@ -217,7 +217,15 @@ function assertServableAsIs(dir) {
     if (looksLikeSource(dir)) {
         throw needsBuild('this branch holds source that has to be built before it can be served');
     }
-    throw Object.assign(new Error('no index.html at the root of this branch'), { code: 'no_index' });
+    // Its own code, not `no_index` again. The two are different problems and
+    // only one of them has a subfolder to name: telling an operator whose branch
+    // holds no page anywhere to point the subfolder field at the folder holding
+    // it sends them looking for something that is not there. This branch is
+    // usually an application, which is served by a start command rather than by
+    // files, and that is the sentence worth showing.
+    throw Object.assign(
+        new Error('no index.html anywhere in this branch, and nothing here looks like a site to build'),
+        { code: 'not_a_site' });
 }
 
 const accountPool = require('./build/accountPool');

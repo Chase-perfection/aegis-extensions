@@ -145,11 +145,27 @@ test('assertServableAsIs still refuses source with no site under it', () => {
     assert.throws(() => assertServableAsIs(repo), (e) => e.code === 'needs_build');
 });
 
-test('assertServableAsIs refuses a tree with no entry point', () => {
+// Its own code, and not `no_index`: that one means a subfolder has the site and
+// carries its name, so reusing it here told an operator to point the subfolder
+// field at a folder that does not exist. This tree has no page anywhere, which
+// is what an application repository looks like.
+test('assertServableAsIs calls a tree with no entry point anywhere not_a_site', () => {
     const { root } = tmpTree();
     const empty = path.join(root, 'empty');
     fs.mkdirSync(empty);
-    assert.throws(() => assertServableAsIs(empty), (e) => e.code === 'no_index');
+    assert.throws(() => assertServableAsIs(empty), (e) =>
+        e.code === 'not_a_site' && e.rootDir === undefined);
+});
+
+// The shape of the KPI repository: a Python application, no index.html at the
+// root and none one level down either.
+test('assertServableAsIs calls an application repository not_a_site, not no_index', () => {
+    const { root } = tmpTree();
+    const repo = path.join(root, 'pyapp');
+    fs.mkdirSync(path.join(repo, 'packaging', 'api'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'packaging', 'api', 'app.py'), 'print(1)');
+    fs.writeFileSync(path.join(repo, 'README.md'), '# app');
+    assert.throws(() => assertServableAsIs(repo), (e) => e.code === 'not_a_site');
 });
 
 // A project id becomes a directory name and a URL segment.

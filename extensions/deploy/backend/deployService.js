@@ -47,7 +47,7 @@ function useWritableDb(mod) { writableDb = mod || null; }
 
 /** Refusals that already name what to change. Kept as they are. */
 const NAMED = [
-    'needs_build', 'no_index', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink',
+    'needs_build', 'no_index', 'not_a_site', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink',
     'build_failed', 'build_account_unconfigured', 'bad_site_config',
     'runtime_disabled', 'no_runtime_account', 'start_failed', 'unhealthy', 'bad_site_port',
     'migration_failed', 'migrations_unsupported',
