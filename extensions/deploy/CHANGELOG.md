@@ -2,7 +2,51 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## Unreleased
+## 0.2.4
+
+**A project is corrected instead of being deleted.** Everything a project was
+created with, except the repository itself, is a field on its Settings tab: the
+subfolder, the install, build and start commands, the output directory, the
+database file and the migrations folder. The page saved them through a new
+`PATCH /api/deploy/projects/:id/settings`, and the next deployment uses them.
+The start command is the one that mattered: it decided at creation whether the
+project was a set of files or a process, and it could never be changed, so the
+documented repair for a typo was to delete the project and make another.
+
+Emptying it now turns a process back into a static site, and the deployment that
+follows stops the process. Filling it needs the host to allow processes, which
+is the same refusal creation gives and the host's decision, not the tenant's.
+Nothing here restarts anything: the record is what the next deployment reads,
+which keeps one path into the runtime rather than two. A preview refuses its own
+settings with `preview_settings_fixed`, because it is built the way the project
+it branches from is built.
+
+**`aegis.deploy.json` is read on every deployment, not only at creation.** It
+was read once, through the GitHub API, before the first clone existed. So
+correcting the file in the branch corrected nothing: every deployment after the
+first ignored it. It is now read out of the clone as well, beside `vercel.json`
+and `aegis.access.json`, and what it may change is deliberately split. The build
+keys -- `installCmd`, `buildCmd`, `outputDir`, `rootDir` -- are applied and take
+effect on that deployment. The ones that decide whether there is a process at
+all, or which database holds the data, are reported on the console and left
+alone: a file in a branch must not turn a static site into a process under an
+operator who is not looking. The console names them and says to set them on the
+Settings tab, where the consequence is visible. A file that will not parse
+refuses the deployment with `bad_deploy_manifest` rather than being ignored.
+
+**A branch may declare its authentication method.** `auth` in
+`aegis.deploy.json` says `none` or `ldap`, and it settles the method for a
+project being created that has no authentication record yet. Only the method: a
+repository naming the colleagues who may read the site it produces would be a
+grant written by whoever can push to it, so who is allowed in stays in the
+Authentication tab. A method this build does not implement refuses the file
+rather than serving the site to everyone.
+
+**A GitHub App installed on no account stops reading as a working connection.**
+The readiness list turned green on the registration alone, while the repository
+list below it was empty for exactly the reason the green line said was fine. The
+count of installations is a call to GitHub and the page already makes it, so the
+row is corrected when that answer arrives and says what is missing.
 
 **Aegis works out the install and build commands from the branch.** A lockfile
 names its package manager and `package.json` names its own build script, so both
@@ -21,8 +65,7 @@ mistaken for a build. Nothing found serves the workspace, exactly as before.
 
 **A branch can say how it wants to be deployed, so the form can be left empty.**
 Creating a project meant typing eight fields for a repository that already knows
-what it is, and getting one of them wrong meant deleting the project, because
-the start command cannot be changed afterwards. A branch carrying
+what it is. A branch carrying
 `aegis.deploy.json` now answers them: install and build commands, output
 directory, subfolder, start command, database file and migrations folder.
 

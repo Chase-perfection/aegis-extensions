@@ -70,7 +70,10 @@ start command, the database file and the migrations folder are read from the
 branch. The values below are what that file declares, kept here so the record is
 readable without opening the repository, and so a field can be overridden from
 the form when someone needs to. Whatever the form leaves empty comes from the
-branch; `auth` is selected in the project's Authentication tab.
+branch, and the branch is read again on every deployment: the build keys are
+applied, the ones that decide the process are reported on the console and set on
+the Settings tab. The branch may also declare `auth`, which settles the method
+for a project being created; who may enter is the Authentication tab's, always.
 
 ```json
 {
@@ -153,6 +156,17 @@ job there.
 Deliberately absent, and not on the roadmap: object storage, image
 optimisation, a CDN, a WAF, and a marketplace. Those refusals are argued in
 `docs/plans/0002-deploy-vercel-parity.md` in the Aegis repository.
+
+## Correcting a project
+
+Nothing in the list above is a reason to delete a project any more. The Settings
+tab carries the subfolder, the install, build and start commands, the output
+directory, the database file and the migrations folder, and the next deployment
+uses what was saved. Emptying the start command turns a process back into a
+static site and stops the process on that deployment; filling one needs the host
+to allow processes. The repository is the exception: that is what the project
+is, so changing it is still a new project. A preview follows its parent and
+refuses its own settings.
 
 ## Choosing between static and a process
 

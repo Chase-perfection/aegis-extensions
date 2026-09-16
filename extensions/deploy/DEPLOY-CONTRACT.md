@@ -234,6 +234,8 @@ no index in any folder.
 | `busy` | A deployment of this project is already running | Wait for it, or cancel it from its console |
 | `github_unreachable` | Aegis could not reach github.com | Check outbound HTTPS from the host |
 | `branch_gone` | The branch or repository disappeared | Recreate it or point the project elsewhere |
+| `bad_deploy_manifest` | The `aegis.deploy.json` in that branch will not parse | Fix the JSON, or remove the file |
+| `preview_settings_fixed` | A preview's build settings are its parent's | Change them on the project it branches from |
 
 ## What the served directory must contain
 
@@ -313,6 +315,7 @@ deployed by pasting a repository URL and nothing else.
 | `startCmd` | The start command, which is also what makes the project a process |
 | `dbFile` | The database file under `AEGIS_DATA_DIR` |
 | `migrationsDir` | The folder of SQL files played before the process starts |
+| `auth` | The method a site asks for, `none` or `ldap`, and nothing about who may enter |
 
 ```json
 {
@@ -328,16 +331,43 @@ and a file overruling it from inside the repository would be a setting invisible
 from the screen it contradicts. The manifest answers what was left empty, and
 the deployment says which keys it took.
 
-Read once, at project creation, through the API rather than from the clone: the
-runtime and the port are decided before any clone exists. Keys Aegis does not
-read are named on the deployment rather than dropped, and a file that will not
-parse refuses with `bad_deploy_manifest` rather than creating a project whose
-declared settings were ignored.
+**Read twice, and the second time is the one that keeps working.** At creation,
+through the API rather than from the clone, because the runtime and the port are
+decided before any clone exists. Then out of the clone itself, on every
+deployment after that: until 0.2.4 the file was read once and never again, so
+correcting a branch corrected nothing and the operator was left deleting the
+project.
+
+What the second read may change is deliberately not everything:
+
+| Keys | On a project that already exists |
+|---|---|
+| `installCmd`, `buildCmd`, `outputDir`, `rootDir` | Applied. They describe how this deployment is built and served, and the new value costs nothing to honour |
+| `startCmd`, `dbFile`, `migrationsDir` | Reported on the console, never applied. They decide whether there is a process at all and which database holds the data |
+| `auth` | Read at creation only. An existing project's method is the Authentication tab's |
+
+The split is where it is because a file in a branch must not turn a static site
+into a process, or move a database, under an operator who is not looking. The
+console names the keys that differ and says to set them on the project's
+Settings tab, which is the screen where the consequence is visible.
+
+Keys Aegis does not read are named on the deployment rather than dropped, and a
+file that will not parse refuses with `bad_deploy_manifest` rather than creating
+-- or deploying -- a project whose declared settings were ignored.
 
 Nothing is guessed. A start command has no reliable convention outside
 `package.json`, and guessing one wrong starts the wrong process on a server that
 holds directory audit data. A repository that declares nothing is asked, exactly
 as before.
+
+**A branch may name the method, never the people.** `auth` says `none` or
+`ldap`, and it is honoured at creation only, for a project that has no
+authentication record yet. Who is allowed in -- the groups, the named people,
+the resource grants -- stays in the Authentication tab: a repository naming the
+colleagues who may read the site it produces would be a grant written by
+whoever can push to it. `aegis.access.json` already draws that line, and this
+follows it. A method this build does not implement refuses the file rather than
+serving the site open.
 
 **A start command still needs the host to allow processes.** The manifest is the
 tenant's half; `AEGIS_DEPLOY_RUNTIME` and a provisioned runtime account are the
@@ -870,6 +900,14 @@ plain HTTP ones.
 `POST /api/deploy/projects/:id/settings` takes `hostname` and `spaFallback`,
 either or both. An empty `hostname` clears it, which frees the name.
 
+`PATCH` on the same path carries the other half, the build: `rootDir`,
+`installCmd`, `buildCmd`, `outputDir`, `startCmd`, `dbFile`, `migrationsDir`. A
+key absent from the body is left alone, an empty one is cleared, and nothing is
+restarted -- the next deployment reads the record, which keeps one path into the
+runtime instead of two. Setting a start command on a host that runs no process
+is `runtime_disabled`; clearing one is always allowed and turns the project back
+into a static site.
+
 ## Preview deployments
 
 Another branch of the same repository, deployed alongside the live one. A
@@ -1212,10 +1250,14 @@ it, then the active branches. The thumbnail is a gradient seeded from the projec
 name and not a screenshot: taking one means running a headless browser against a
 repository's page on the audit server, which is a lot of machinery for a picture.
 
-Settings is where the immutable facts are listed and where Remove lives. What a
-project was created with -- repository, branch, subfolder, commands -- is read at
-creation, so changing one is a new project today. That is a limitation, and the
-page says so rather than offering fields that would not take effect.
+Settings is where a project is corrected and where Remove lives. The branch it
+tracks, the subfolder, the install, build and start commands, the output
+directory, the database file and the migrations folder are all fields, saved
+through `PATCH /api/deploy/projects/:id/settings` and read by the next
+deployment. Emptying the start command turns a process back into a static site,
+and filling one needs the host to allow processes -- the same refusal creation
+gives. Two things are still not fields: the repository, which is what the
+project is, and a preview's build, which is its parent's.
 
 ## Not built yet
 
