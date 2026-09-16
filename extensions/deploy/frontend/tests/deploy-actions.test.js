@@ -572,3 +572,50 @@ test('with an installation, the repositories are offered and the notice stays aw
         await close();
     }
 });
+
+// Registering refuses once an App exists, and nothing undid that, so an App
+// created under the wrong account was permanent. The pane has to name the App
+// it is stuck with and offer the way out.
+
+test('the GitHub pane names the registered App and offers to forget it', async () => {
+    const stubs = baseStubs([]);
+    const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#github`, stubs);
+    try {
+        await page.waitForFunction(() => {
+            const b = document.getElementById('deploy-registered');
+            return !!b && !b.hidden;
+        }, { timeout: 5000 });
+
+        const seen = await page.evaluate(() => ({
+            which: document.getElementById('deploy-registered-which').textContent.trim(),
+            forgetDisabled: document.getElementById('deploy-registered-forget').disabled,
+            connectHidden: document.getElementById('deploy-connect').hidden
+        }));
+
+        assert.match(seen.which, /acme/, 'the pane does not say which App it is registered with');
+        assert.strictEqual(seen.forgetDisabled, false, 'an admin cannot reach the way out');
+        assert.strictEqual(seen.connectHidden, true,
+            'registering is still offered, which is the refusal this block explains');
+    } finally {
+        await close();
+    }
+});
+
+test('with no App registered the block stays away and connecting is offered instead', async () => {
+    const stubs = Object.assign(baseStubs([]), {
+        'deploy/status': Object.assign({}, STATUS_OK, { github: { connected: false } })
+    });
+    const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#github`, stubs);
+    try {
+        await page.waitForFunction(() => {
+            const c = document.getElementById('deploy-connect');
+            return !!c && !c.hidden;
+        }, { timeout: 5000 });
+
+        assert.strictEqual(
+            await page.$eval('#deploy-registered', (b) => b.hidden), true,
+            'a tenant with no App is told about one it does not have');
+    } finally {
+        await close();
+    }
+});

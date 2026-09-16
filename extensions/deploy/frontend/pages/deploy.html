@@ -422,6 +422,23 @@
                                 <p class="dep-loading" data-i18n="deploy_loading">Checking this install...</p>
                             </div>
 
+                            <!-- The App that is registered, and the way out of it. An App
+                                 belongs to one account and installs only there while it is
+                                 private, so an App registered under the wrong account is not
+                                 a setting to correct: it is a different App. Without this
+                                 block both registration routes refuse for ever. -->
+                            <div id="deploy-registered" class="dep-card-block" hidden>
+                                <h2 data-i18n="deploy_registered_title">The App this tenant uses</h2>
+                                <p id="deploy-registered-which" class="dep-body"></p>
+                                <p class="dep-body" data-i18n="deploy_registered_body">An App belongs to the account
+                                    that created it, and while it is private it installs only there. To read
+                                    repositories owned by another account, either make this App public in its GitHub
+                                    settings, or forget it here and register one under that account.</p>
+                                <button type="button" id="deploy-registered-forget" class="dep-btn dep-btn-ghost"
+                                    data-i18n="deploy_registered_forget">Forget this App</button>
+                                <p id="deploy-registered-note" class="dep-note" hidden></p>
+                            </div>
+
                             <!-- Registering the App is a GitHub-side action: the operator has
                                  to confirm it while signed in there. The button submits a
                                  manifest form, it does not call an Aegis endpoint that does

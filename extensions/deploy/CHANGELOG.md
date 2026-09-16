@@ -4,6 +4,15 @@ Clones a git branch and serves it as a site, with an optional sandboxed build.
 
 ## Unreleased
 
+**A registered App can be replaced.** Both registration routes refuse once one
+exists, and nothing undid that, so an App created under the wrong account was
+permanent. It is not a setting to correct either: an App belongs to the account
+that created it and, while it is private, installs only there, so reading
+another account's repositories means a different App. The GitHub pane now names
+the App it is registered with and offers to forget it, which drops the key Aegis
+holds and leaves the App on GitHub. The answer says how many projects stop
+deploying, so the click is informed.
+
 **A project survives the App being registered again.** `installationId` was
 written when the project was created and never checked against GitHub, so
 registering a new App, or uninstalling and installing again, left every project

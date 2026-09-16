@@ -901,6 +901,36 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         }
     });
 
+    /**
+     * Forgets this tenant's App registration, so another one can be registered.
+     *
+     * Both registration routes refuse with `github_already_connected` once one
+     * exists, and nothing undid that. An operator whose App is wrong -- deleted
+     * on GitHub, owned by the wrong account, or unable to install where the
+     * repositories are -- had no way forward from the page, because a private
+     * App belongs to one account and the only fix is a different App.
+     *
+     * The App on GitHub is not touched. This drops the key Aegis holds, which is
+     * the half Aegis owns; deleting the App itself is done on github.com, and
+     * saying so is why the count of projects rides along: they keep their
+     * records and stop deploying until something is registered again, and the
+     * operator should know that before they click.
+     */
+    router.delete('/api/deploy/github/app', requireOptIn, requireRole('admin'), (req, res) => {
+        const had = !!machineStore.getGitHubApp(req.tenant.slug);
+        const forgotten = machineStore.clearGitHubApp(req.tenant.slug);
+        let projects = 0;
+        try {
+            projects = projectStore.listProjects(pathsFor(req.tenant.slug)).length;
+        } catch (_) {
+            // A tenant with no deploy folder yet has no projects to warn about.
+        }
+        if (had) {
+            console.log(`[Deploy] ${req.tenant.slug}: GitHub App registration forgotten by ${req.user.email}`);
+        }
+        res.json({ success: true, forgotten, projects });
+    });
+
     // --- Reading what the App can see ------------------------------------
 
     router.get('/api/deploy/github/installations', requireOptIn, async (req, res) => {

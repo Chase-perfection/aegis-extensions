@@ -1277,6 +1277,63 @@
      * polling costs one request every few seconds against a page someone is
      * actively looking at.
      */
+    /**
+     * The App this tenant is registered with, and the way out of it.
+     *
+     * Registering refuses once one exists, and nothing undid that, so an App
+     * created under the wrong account was permanent. It is not a setting to
+     * correct either: a private App installs only on the account that owns it,
+     * so reading another account's repositories means a different App.
+     *
+     * Forgetting drops the key Aegis holds and leaves the App on GitHub, which
+     * is why the confirmation says how many projects stop deploying rather than
+     * asking whether the operator is sure.
+     */
+    var registeredWired = false;
+
+    function paintRegistered(gh) {
+        var block = document.getElementById('deploy-registered');
+        if (!block) return;
+        var on = !!(gh && gh.connected);
+        block.hidden = !on;
+        if (!on) return;
+
+        var which = document.getElementById('deploy-registered-which');
+        if (which) {
+            which.textContent = tr('deploy_registered_which', 'Registered: $1')
+                .replace('$1', gh.slug || ('app ' + gh.appId));
+        }
+
+        var btn = document.getElementById('deploy-registered-forget');
+        if (!btn) return;
+        btn.disabled = !isAdmin;
+        if (registeredWired) return;
+        registeredWired = true;
+
+        btn.addEventListener('click', function () {
+            var note = document.getElementById('deploy-registered-note');
+            btn.disabled = true;
+            window.api('/api/deploy/github/app', { method: 'DELETE' })
+                .then(function (r) { return readJson(r, 'forget app'); })
+                .then(function (d) {
+                    if (!(d && d.success)) throw new Error('refused');
+                    // Reloaded rather than repainted: registration decides which
+                    // of four blocks on this pane is the next step, and load()
+                    // is the one place that works that out.
+                    window.location.reload();
+                })
+                .catch(function (e) {
+                    btn.disabled = !isAdmin;
+                    if (note) {
+                        note.hidden = false;
+                        note.textContent = tr('deploy_registered_failed',
+                            'Aegis could not forget the App. Reload and try again.');
+                    }
+                    console.error('[Deploy] forget app failed:', e);
+                });
+        });
+    }
+
     function renderGrantStep() {
         var wrap = document.getElementById('deploy-install');
         var link = document.getElementById('deploy-install-link');
@@ -5741,6 +5798,7 @@
                 if (runtimeRow) {
                     runtimeRow.hidden = !(data.capabilities && data.capabilities.runtimes);
                 }
+                paintRegistered(data.github);
                 if (data.github && data.github.connected) {
                     return loadProjects().then(loadGithub);
                 }
