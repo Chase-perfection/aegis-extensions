@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## Unreleased
+## 0.2.2
 
 **A registered App can be replaced.** Both registration routes refuse once one
 exists, and nothing undid that, so an App created under the wrong account was
