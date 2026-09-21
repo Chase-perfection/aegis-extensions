@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <!-- Boot mask: sets html.booting before the first paint so the app never
+         flashes white behind the splash. Must stay inline and blocking, and
+         must stay ahead of the stylesheets. Paired with html.booting in
+         base.css and cleared by handlePreloader() in common.js. -->
+    <script>
+        try {
+            if (sessionStorage.getItem('aegis_show_preloader') === '1') {
+                document.documentElement.classList.add('booting');
+                /* Safety net: if common.js never runs, reveal the page anyway. */
+                setTimeout(function () {
+                    document.documentElement.classList.remove('booting');
+                }, 6000);
+            }
+        } catch (e) { }
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis - Network Inventory</title>
+    <link rel="icon" type="image/svg+xml" href="../public/assets/favicon.svg">
+    <!-- Fonts: Archivo (UI/headings) + Archivo Black (logo) + JetBrains Mono (code, IDs, logs).
+         One canonical set for the whole app - see the note at the top of src/css/base.css. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Archivo:wght@400;500;600;700;800&family=Archivo+Black&family=JetBrains+Mono:wght@400;500&display=swap">
+    <link rel="stylesheet" href="../src/css/base.css">
+    <link rel="stylesheet" href="../src/css/common.css">
+    <link rel="stylesheet" href="../src/css/navbar.css">
+    <link rel="stylesheet" href="../src/css/index.css">
+    <link rel="stylesheet" href="../src/css/network-inventory.css">
+    <script defer src="../src/js/translations.js"></script>
+    <script defer src="../src/js/tenant.js"></script>
+    <script defer src="../src/js/auth.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" integrity="sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/atom-one-dark.min.css" integrity="sha384-oaMLBGEzBOJx3UHwac0cVndtX5fxGQIfnAeFZ35RTgqPcYlbprH9o9PUV/F8Le07" crossorigin="anonymous">
+    <link rel="stylesheet" href="../src/css/aegis-white.css">
+    <script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/highlight.min.js" integrity="sha384-GdEWAbCjn+ghjX0gLx7/N1hyTVmPAjdC2OvoAA0RyNcAOhqwtT8qnbCxWle2+uJX" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/languages/powershell.min.js" integrity="sha384-0u0NM3ve01ej9h9zRzZ/ztDGe1h07d6TStpNoJ4f/50I/vtoCsDHI2PfzDZSYz8q" crossorigin="anonymous"></script>
+    <!-- Last, deliberately: ag-tag.css is the canonical tag and has to win
+         the cascade over the per-page stylesheets that used to draw their own. -->
+    <link rel="stylesheet" href="../src/css/ag-tag.css">
+</head>
+
+<body class="aegis-white">
+    <div id="aegis-preloader" class="aegis-preloader">
+        <div class="preloader-content">
+            <div class="preloader-logo">
+                <img src="../public/assets/aegis-mark.svg" alt="Aegis Logo">
+            </div>
+            <div class="preloader-brand">A E G I S</div>
+            <div class="preloader-tagline" data-i18n="preloader_tagline">Cybersecurity & Active Directory Monitoring
+            </div>
+        </div>
+    </div>
+
+    <div class="app-shell">
+        <nav id="aegis-navbar" class="aegis-navbar"></nav>
+
+        <main class="main-content">
+            <section id="network-inventory-view" class="content-area active">
+                <!-- ── Sidebar : subnet explorer ── -->
+                <aside class="ni-sidebar">
+                    <div class="ni-sb-head">
+                        <span class="ni-sb-label" data-i18n="ni_networks">RÉSEAUX</span>
+                        <input id="ni-sidebar-search" class="ni-input" type="text" data-i18n="ni_sidebar_search_ph"
+                            placeholder="Filtrer : CIDR, VLAN, nom…">
+                    </div>
+                    <div id="ni-net-list" class="ni-net-list"></div>
+                    <div class="ni-sb-foot">
+                        <span id="ni-foot-meta" class="ni-foot-meta"></span>
+                        <button class="ni-text-btn" disabled title="bientôt" data-i18n="ni_declare">+ Déclarer</button>
+                    </div>
+                </aside>
+
+                <!-- ── Main column ── -->
+                <div class="ni-main">
+                    <div class="ni-main-head">
+                        <div class="ni-eyebrow" data-i18n="inventory_eyebrow">Gestion du Parc · Inventaire Réseau</div>
+                        <div class="ni-title-row">
+                            <h1 id="ni-title" class="ni-title">…</h1>
+                            <span id="ni-subtitle" class="ni-subtitle"></span>
+                            <div class="ni-actions">
+                                <button id="ni-export" class="ni-btn ni-btn-secondary" data-i18n="ni_export_csv">Exporter
+                                    CSV</button>
+                                <button id="ni-scan" class="ni-btn ni-btn-primary">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2.2">
+                                        <path d="M21 12a9 9 0 1 1-3-6.7" />
+                                        <path d="M21 3v6h-6" />
+                                    </svg>
+                                    <span data-i18n="inventory_run_scan">Relancer le scan</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="ni-cards" class="ni-cards"></div>
+                        <div class="ni-filter-row">
+                            <div id="ni-segment" class="ni-segment"></div>
+                            <input id="ni-table-search" class="ni-input ni-table-search" type="text"
+                                data-i18n="ni_table_search_ph" placeholder="IP, hôte, MAC…">
+                        </div>
+                    </div>
+
+                    <!-- Diagnostic banner: shown when a scan finished but a source
+                         failed (DHCP unreachable, RSAT missing, a zone refused).
+                         Opens the copyable report below. Hidden on a clean scan. -->
+                    <div id="ni-diag-banner" class="ni-diag-banner" hidden>
+                        <span class="ni-diag-icon" aria-hidden="true">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.2">
+                                <path d="M12 9v4" />
+                                <path d="M12 17h.01" />
+                                <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                            </svg>
+                        </span>
+                        <span id="ni-diag-banner-text" class="ni-diag-banner-text"></span>
+                        <button id="ni-diag-open" class="ni-diag-banner-btn" type="button"
+                            data-i18n="ni_diag_see">Voir le détail</button>
+                    </div>
+
+                    <div id="ni-progress" class="ni-progress" style="display: none;">
+                        <div class="ni-progress-top">
+                            <span id="ni-progress-label" class="ni-progress-label" data-i18n="inventory_scanning">Scan en
+                                cours…</span>
+                            <span id="ni-progress-pct" class="ni-progress-pct">0%</span>
+                        </div>
+                        <div class="ni-progress-track">
+                            <div id="ni-progress-fill" class="ni-progress-fill"></div>
+                        </div>
+                    </div>
+
+                    <div class="ni-table-card">
+                        <div class="ni-grid ni-thead">
+                            <span data-i18n="inventory_ip">ADRESSE IP</span>
+                            <span data-i18n="inventory_status">STATUT</span>
+                            <span data-i18n="inventory_hostname">NOM D'HÔTE</span>
+                            <span data-i18n="inventory_mac">MAC</span>
+                            <span data-i18n="ni_col_dns">DNS</span>
+                            <span data-i18n="ni_col_dhcp">DHCP</span>
+                            <span data-i18n="ni_col_seen">VU</span>
+                        </div>
+                        <div id="ni-tbody" class="ni-tbody"></div>
+                        <div class="ni-table-foot">
+                            <span id="ni-table-foot-count"></span>
+                            <span id="ni-table-foot-note"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── IP detail drawer (read-only v1) ── -->
+                <div id="ni-scrim" class="ni-scrim"></div>
+                <aside id="ni-drawer" class="ni-drawer" aria-hidden="true"></aside>
+
+                <!-- ── Diagnostic report ──
+                     Populated by renderDiagModal(). The <textarea> holds the plain-text
+                     report: it is what the copy button copies, and it stays selectable
+                     so the report survives a browser with no clipboard permission. -->
+                <div id="ni-diag-modal" class="ni-diag-modal" hidden role="dialog" aria-modal="true"
+                    aria-labelledby="ni-diag-title">
+                    <div id="ni-diag-backdrop" class="ni-diag-backdrop"></div>
+                    <div class="ni-diag-panel">
+                        <div class="ni-diag-head">
+                            <h2 id="ni-diag-title" class="ni-diag-title" data-i18n="ni_diag_title">Rapport de
+                                diagnostic</h2>
+                            <button id="ni-diag-close" class="ni-close" type="button"
+                                aria-label="Fermer">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                            </button>
+                        </div>
+                        <p class="ni-diag-lede" data-i18n="ni_diag_lede">Copiez ce rapport et transmettez-le à
+                            l'administrateur du serveur concerné : il contient la commande en cause, l'erreur exacte et
+                            le contexte du scan.</p>
+                        <div id="ni-diag-list" class="ni-diag-list"></div>
+                        <label class="ni-diag-raw-label" for="ni-diag-raw" data-i18n="ni_diag_raw">Rapport
+                            complet</label>
+                        <textarea id="ni-diag-raw" class="ni-diag-raw" readonly spellcheck="false"></textarea>
+                        <div class="ni-diag-foot">
+                            <span id="ni-diag-copied" class="ni-diag-copied" hidden
+                                data-i18n="ni_diag_copied">Copié</span>
+                            <button id="ni-diag-copy" class="ni-btn ni-btn-primary" type="button"
+                                data-i18n="ni_diag_copy">Copier le rapport</button>
+                            <button id="ni-diag-close-foot" class="ni-btn ni-btn-secondary" type="button"
+                                data-i18n="ni_close">Fermer</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script defer src="../src/js/common.js"></script>
+    <script defer src="../src/js/navbar.js"></script>
+    <script defer src="../src/js/module-guard.js"></script>
+    <script defer src="../src/js/findings-shared.js"></script>
+    <script defer src="../src/js/glossary_data.js"></script>
+    <script defer src="../src/js/app.js"></script>
+    <script defer src="../src/js/network-inventory.js"></script>
+</body>
+
+</html>

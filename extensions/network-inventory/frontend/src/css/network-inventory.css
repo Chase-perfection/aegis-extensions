@@ -1,0 +1,621 @@
+/*
+ * Network Inventory — subnet explorer (read-only IP drawer).
+ * Everything is scoped under #network-inventory-view so it can't leak into other pages.
+ *
+ * Repainted onto the 4.0 white theme (aegis-white.css). The --ni-* names below
+ * are kept and pointed at the --ag-* ramp, the way aegis-white.css keeps the
+ * --wf-* names alive: nothing downstream in this file has to be rewritten, and
+ * a colour decision is made once at the top instead of per component. Every
+ * value in this file resolves to an --ag-* token; a raw hex here would be a
+ * colour the theme does not know about.
+ *
+ * Two pairs collapse on the way across. The dark ramp carried two dim greys
+ * under its body colour (--ni-muted #6a6a6a, --ni-empty #4a4a4a) because a dark
+ * canvas has room below its text; white has almost none, and #b0b0b0 measures
+ * 2.2:1 against it, so both land on --ag-meta, the palest ink this theme will
+ * read as text. And --ni-accent / --ni-accent-light both become --ag-accent:
+ * the lighter blue existed only to stay legible on black, and the theme ships
+ * exactly one blue.
+ */
+
+#network-inventory-view {
+    --ni-canvas: var(--ag-surface);
+    --ni-panel: var(--ag-surface);
+    --ni-control: var(--ag-surface);
+    --ni-drawer: var(--ag-surface);
+    --ni-rowcard: var(--ag-sunken);
+    --ni-selected: var(--ag-accent-wash);
+
+    /* A hairline divides rows inside one card; a border is where the card ends;
+       an input or chip edge is one step stronger than either. */
+    --ni-border: var(--ag-border);
+    --ni-divider: var(--ag-hairline);
+    --ni-card-border: var(--ag-border);
+    --ni-control-border: var(--ag-border-strong);
+    --ni-ghost-border: var(--ag-border-strong);
+
+    --ni-ink: var(--ag-ink);
+    --ni-body: var(--ag-body);
+    --ni-label: var(--ag-body-muted);
+    --ni-secondary: var(--ag-body-muted);
+    --ni-muted: var(--ag-meta);
+    --ni-mono-val: var(--ag-meta);
+    --ni-empty: var(--ag-meta);
+
+    --ni-accent: var(--ag-accent);
+    --ni-accent-light: var(--ag-accent);
+    --ni-success: var(--ag-sev-low);
+    --ni-warning: var(--ag-warning);
+    --ni-danger: var(--ag-sev-critical);
+
+    --ni-sans: var(--font-body);
+    --ni-mono: var(--font-mono);
+
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    /* index.css .content-area.active sets flex-direction:column — force row for the
+       sidebar + main split (id overrides display but NOT an undeclared direction). */
+    flex-direction: row;
+    overflow: hidden;
+    background: var(--ni-canvas);
+    color: var(--ni-body);
+    font-family: var(--ni-sans);
+    font-feature-settings: 'ss01';
+    /* neutralize index.css .content-area padding/max-width */
+    padding: 0;
+    max-width: none;
+    margin: 0;
+}
+
+/* The global status-bar footer is injected into every .content-area (app.js
+   injectTerminus). The explorer is a full-height, self-contained view — hide it
+   here (this file only loads on network-inventory.html, so the scope is the page). */
+#network-inventory-view .aegis-terminus { display: none; }
+
+#network-inventory-view * { box-sizing: border-box; }
+
+/* ── Sidebar ─────────────────────────────────────────────── */
+.ni-sidebar {
+    width: 292px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--ni-border);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.ni-sb-head {
+    padding: 20px 18px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.ni-sb-label {
+    font: 500 11px var(--ni-mono);
+    letter-spacing: 0.6px;
+    color: var(--ni-label);
+}
+.ni-input {
+    width: 100%;
+    background: var(--ni-control);
+    border: 1px solid var(--ni-control-border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font: 500 12px var(--ni-mono);
+    color: var(--ag-ink);
+    outline: none;
+}
+.ni-input::placeholder { color: var(--ni-muted); }
+.ni-input:focus { border-color: var(--ag-accent); }
+
+.ni-net-list {
+    flex: 1;
+    padding: 4px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+}
+.ni-net {
+    padding: 11px 12px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    cursor: pointer;
+}
+.ni-net:hover { background: var(--ag-sunken); }
+.ni-net.selected {
+    background: var(--ni-selected);
+    border-color: var(--ag-accent);
+}
+.ni-net-row1 { display: flex; justify-content: space-between; align-items: baseline; }
+.ni-cidr { font: 400 13px var(--ni-mono); color: var(--ni-body); }
+.ni-net.selected .ni-cidr { font-weight: 500; color: var(--ni-ink); }
+.ni-net-count { font: 400 11px var(--ni-mono); color: var(--ni-muted); }
+.ni-net.selected .ni-net-count { font-weight: 500; color: var(--ni-accent-light); }
+.ni-net-row2 {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 6px;
+    gap: 10px;
+}
+.ni-desc { font-size: 11px; color: var(--ni-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ni-net.selected .ni-desc { color: var(--ni-label); }
+.ni-occ { flex: none; width: 74px; height: 4px; border-radius: 2px; background: var(--ag-hairline); overflow: hidden; }
+.ni-occ-fill { display: block; height: 100%; background: var(--ni-accent); }
+.ni-occ-fill.high { background: var(--ni-warning); }
+.ni-net-chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.ni-chip {
+    font: 500 9px var(--ni-mono);
+    letter-spacing: 0.08em;
+    padding: 3px 7px;
+    border-radius: 4px;
+}
+.ni-chip.amber { color: var(--ni-warning); background: var(--ag-warning-wash); }
+.ni-chip.red { color: var(--ni-danger); background: var(--ag-danger-wash); }
+
+.ni-sb-foot {
+    padding: 14px 18px;
+    border-top: 1px solid var(--ni-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.ni-foot-meta { font: 500 11px var(--ni-mono); color: var(--ni-muted); }
+.ni-text-btn {
+    font: 500 11px var(--ni-mono);
+    color: var(--ni-accent-light);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+}
+
+/* ── Main column ─────────────────────────────────────────── */
+.ni-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+}
+.ni-main-head { padding: 24px 32px 0; }
+.ni-eyebrow {
+    /* Match the dashboard .ds-header-subtitle: Inter 15px, line 22.4px, white. */
+    font: 400 15px/22.4px var(--ni-sans);
+    letter-spacing: normal;
+    text-transform: none;
+    color: var(--ni-ink);
+    margin-bottom: 8px;
+}
+.ni-title-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.ni-title {
+    font: 600 28px var(--ni-sans);
+    letter-spacing: -0.4px;
+    color: var(--ni-ink);
+    margin: 0;
+}
+.ni-subtitle { font-size: 14px; color: var(--ni-secondary); }
+.ni-actions { margin-left: auto; display: flex; gap: 8px; }
+.ni-btn {
+    height: 34px;
+    padding: 0 14px;
+    border-radius: 8px;
+    font: 500 12.5px var(--ni-sans);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+}
+/* .ag-btn--secondary and .ag-btn--primary. The dark theme filled the primary
+   with its ink because blue on black was the quieter of the two; on white the
+   accent is the louder one, which is what a primary action wants. */
+.ni-btn-secondary { background: var(--ag-surface); border: 1px solid var(--ag-border-strong); color: var(--ag-body); }
+.ni-btn-secondary:hover { background: var(--ag-sunken); color: var(--ag-ink); }
+.ni-btn-primary { padding: 0 16px; background: var(--ag-accent); border: 1px solid var(--ag-accent); color: #ffffff; font-weight: 600; }
+.ni-btn-primary:hover { background: var(--ag-accent-hover); border-color: var(--ag-accent-hover); }
+.ni-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.ni-btn[disabled]:hover { background: var(--ag-surface); }
+
+/* ── Context cards ───────────────────────────────────────── */
+.ni-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 18px; }
+.ni-ctx-card {
+    padding: 13px 16px;
+    border: 1px solid var(--ni-border);
+    border-radius: 9px;
+    background: var(--ni-panel);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+.ni-ctx-card.alert { border-color: var(--ag-danger-border); background: var(--ag-danger-wash); }
+.ni-ctx-head { display: flex; justify-content: space-between; align-items: baseline; }
+.ni-ctx-title { font: 500 11px var(--ni-mono); letter-spacing: 0.6px; text-transform: uppercase; color: var(--ag-meta); }
+.ni-ctx-card.alert .ni-ctx-title { color: var(--ni-danger); }
+.ni-ctx-link { font: 500 11px var(--ni-mono); color: var(--ni-accent-light); background: transparent; border: none; cursor: pointer; }
+.ni-ctx-card.alert .ni-ctx-link { color: var(--ni-danger); }
+.ni-ctx-link[disabled] { opacity: 0.55; cursor: not-allowed; }
+.ni-dhcp-row { display: flex; align-items: center; gap: 10px; }
+.ni-range { font: 500 13px var(--ni-mono); color: var(--ni-body); white-space: nowrap; }
+.ni-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--ag-hairline); overflow: hidden; }
+.ni-bar-fill { display: block; height: 100%; background: var(--ni-warning); }
+.ni-pct { font: 500 12px var(--ni-mono); color: var(--ni-warning); }
+.ni-ctx-line { display: flex; align-items: baseline; gap: 8px; }
+.ni-ctx-strong { font: 500 13px var(--ni-mono); color: var(--ni-body); }
+.ni-ctx-caption { font-size: 11.5px; color: var(--ni-secondary); }
+.ni-ctx-body { font-size: 12px; color: var(--ni-body); }
+.ni-ctx-empty { font-size: 12px; color: var(--ni-empty); }
+
+/* ── Filter row ──────────────────────────────────────────── */
+.ni-filter-row { display: flex; align-items: center; gap: 8px; margin: 18px 0 12px; }
+/* .ag-seg / .ag-seg-item from aegis-white.css, value for value: an
+   --ag-border-strong track on --ag-surface, and the chosen option white on
+   --ag-ink. The one thing not copied is the state class. network-inventory.js
+   writes `active`, not `is-on`, so `active` is what is styled here; renaming it
+   would be a JS change wearing a stylesheet's clothes. */
+.ni-segment { display: flex; background: var(--ag-surface); border: 1px solid var(--ag-border-strong); border-radius: var(--ag-r-input); padding: 2px; gap: 2px; }
+.ni-seg {
+    padding: 6px 12px;
+    border-radius: 5px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ag-body-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background var(--ag-transition), color var(--ag-transition);
+}
+.ni-seg:hover:not(.active) { color: var(--ag-ink); }
+.ni-seg.active { background: var(--ag-ink); color: #ffffff; font-weight: 600; }
+.ni-seg.danger { color: var(--ni-danger); font-weight: 600; }
+.ni-seg.danger.active { background: var(--ni-danger); color: #ffffff; }
+.ni-table-search { margin-left: auto; width: 240px; }
+
+/* scan progress (reuses the existing SSE contract) */
+.ni-progress { margin: 0 32px 12px; }
+.ni-progress-top { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.ni-progress-label { font-size: 11px; color: var(--ni-secondary); }
+.ni-progress-pct { font: 500 11px var(--ni-mono); color: var(--ni-accent-light); }
+/* Flat, not a gradient: a bar that pales toward its leading edge reads as
+   finished wherever the pale end happens to land. */
+.ni-progress-track { width: 100%; height: 4px; background: var(--ag-hairline); border-radius: 4px; overflow: hidden; }
+.ni-progress-fill { width: 0; height: 100%; background: var(--ag-accent); border-radius: 4px; transition: width 0.5s ease-in-out; }
+
+/* ── IP table ────────────────────────────────────────────── */
+.ni-table-card {
+    flex: 1;
+    margin: 0 32px 24px;
+    border: 1px solid var(--ni-border);
+    border-radius: 10px;
+    background: var(--ni-panel);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.ni-grid {
+    display: grid;
+    grid-template-columns: 128px 108px 1.4fr 150px 1.1fr 1.2fr 74px;
+    gap: 14px;
+    align-items: center;
+    padding: 10px 18px;
+}
+.ni-thead {
+    border-bottom: 1px solid var(--ni-border);
+    font: 500 10px var(--ni-mono);
+    letter-spacing: 0.14em;
+    color: var(--ni-muted);
+    padding: 11px 18px;
+    flex-shrink: 0;
+}
+.ni-tbody { flex: 1; overflow-y: auto; min-height: 0; }
+.ni-row {
+    border-bottom: 1px solid var(--ni-divider);
+    font-size: 12.5px;
+    cursor: pointer;
+}
+.ni-row:hover { background: var(--ag-sunken); }
+.ni-row.conflict { background: var(--ag-danger-wash); border-left: 2px solid var(--ni-danger); }
+/* One step up the danger ramp rather than a darker mix of the same wash: the
+   theme ships a wash and a border per status and nothing in between. */
+.ni-row.conflict:hover { background: var(--ag-danger-border); }
+.ni-cell-ip { font: 500 13px var(--ni-mono); color: var(--ni-ink); }
+.ni-cell-ip.free { font-weight: 400; color: var(--ni-muted); }
+.ni-host { color: var(--ni-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ni-host-flag { color: var(--ni-danger); }
+.ni-mac { font: 500 12px var(--ni-mono); color: var(--ni-mono-val); }
+.ni-cell-empty { color: var(--ni-empty); }
+.ni-dns { display: flex; gap: 5px; flex-wrap: wrap; }
+.ni-badge { font: 500 9px var(--ni-mono); color: var(--ni-accent-light); background: var(--ag-accent-wash); padding: 2px 7px; border-radius: 4px; }
+.ni-badge.amber { color: var(--ni-warning); background: var(--ag-warning-wash); }
+.ni-chip-inline { font: 500 9px var(--ni-mono); color: var(--ni-warning); background: var(--ag-warning-wash); padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
+.ni-chip-inline.amber { background: var(--ag-warning-wash); color: var(--ag-warning); border-color: var(--ag-warning-border); }
+.ni-dhcp-cell { font: 500 11.5px var(--ni-mono); color: var(--ni-secondary); }
+.ni-seen { font: 500 11.5px var(--ni-mono); color: var(--ni-secondary); }
+
+/* status pills */
+.ni-pill { font: 500 9px var(--ni-mono); letter-spacing: 0.08em; padding: 3px 8px; border-radius: 100px; white-space: nowrap; }
+.ni-pill.used { color: var(--ni-danger); background: var(--ag-danger-wash); }
+.ni-pill.free { color: var(--ni-success); background: var(--ag-success-wash); }
+.ni-pill.reserved { color: var(--ni-warning); background: var(--ag-warning-wash); }
+.ni-pill.gateway { color: var(--ag-body); background: var(--ag-sunken); border: 1px solid var(--ni-border); }
+.ni-pill.conflict { color: var(--ni-danger); background: var(--ag-danger-wash); }
+
+.ni-table-foot {
+    margin-top: auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 11px 18px;
+    border-top: 1px solid var(--ni-border);
+    font: 500 11px var(--ni-mono);
+    color: var(--ni-muted);
+    flex-shrink: 0;
+}
+
+.ni-empty-state { padding: 40px 18px; text-align: center; color: var(--ni-muted); font-size: 13px; }
+
+/* ── IP detail drawer ────────────────────────────────────── */
+.ni-scrim {
+    position: fixed;
+    inset: 0;
+    background: var(--ag-scrim);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease-out;
+    z-index: 200;
+}
+.ni-scrim.open { opacity: 1; pointer-events: auto; }
+.ni-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 640px;
+    max-width: 92vw;
+    /* .ag-drawer in aegis-white.css is this component; these are its values. */
+    background: var(--ag-surface);
+    border-left: 1px solid var(--ag-border);
+    box-shadow: var(--ag-shadow-drawer);
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.25s ease-out;
+    z-index: 201;
+    font-family: var(--ni-sans);
+    color: var(--ni-body);
+}
+.ni-drawer.open { transform: translateX(0); }
+.ni-drawer-head { display: flex; align-items: center; gap: 14px; padding: 18px 26px; border-bottom: 1px solid var(--ni-border); }
+.ni-drawer-icon {
+    width: 44px; height: 44px; flex-shrink: 0;
+    border-radius: 11px;
+    background: var(--ag-accent-wash);
+    border: 1px solid var(--ag-accent-border);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ag-accent);
+}
+.ni-drawer-hd-main { flex: 1; min-width: 0; }
+.ni-drawer-hd-top { display: flex; align-items: center; gap: 10px; }
+.ni-drawer-ip { font: 500 21px var(--ni-mono); color: var(--ni-ink); }
+.ni-drawer-sub { font-size: 12.5px; color: var(--ag-meta); margin-top: 3px; }
+.ni-drawer-sub a { color: var(--ni-accent-light); }
+.ni-close {
+    width: 34px; height: 34px;
+    border-radius: 8px;
+    background: transparent;
+    border: 1px solid var(--ni-border);
+    color: var(--ni-secondary);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+}
+.ni-close:hover { background: var(--ag-sunken); color: var(--ni-ink); }
+
+.ni-drawer-body { flex: 1; padding: 20px 26px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; }
+.ni-section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+.ni-section-label { font: 500 11px var(--ni-mono); letter-spacing: 0.6px; color: var(--ni-label); }
+.ni-section-note { font: 500 10px var(--ni-mono); color: var(--ni-muted); }
+.ni-section-action { font: 500 11px var(--ni-mono); color: var(--ni-accent-light); background: transparent; border: none; cursor: pointer; }
+.ni-section-action[disabled] { opacity: 0.55; cursor: not-allowed; }
+
+.ni-records { display: flex; flex-direction: column; gap: 6px; }
+.ni-record { display: flex; align-items: center; gap: 10px; padding: 10px 13px; border: 1px solid var(--ni-card-border); border-radius: 8px; background: var(--ni-rowcard); }
+.ni-record.missing { border-color: var(--ag-warning-border); background: var(--ag-warning-wash); }
+.ni-rec-value { font: 500 12.5px var(--ni-mono); color: var(--ni-body); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ni-rec-note { font-size: 12.5px; color: var(--ni-body); flex: 1; }
+.ni-rec-note b { color: var(--ni-warning); font-weight: 600; }
+.ni-rec-ttl { font: 500 10px var(--ni-mono); color: var(--ni-muted); }
+.ni-rec-actions { display: flex; gap: 4px; }
+.ni-icon-btn { width: 26px; height: 26px; border-radius: 6px; background: transparent; border: 1px solid var(--ni-border); color: var(--ni-secondary); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.ni-icon-btn:hover { color: var(--ni-ink); }
+.ni-icon-btn.danger:hover { color: var(--ni-danger); }
+.ni-icon-btn[disabled], .ni-btn-soft[disabled], .ni-btn-ghost[disabled] { opacity: 0.5; cursor: not-allowed; }
+.ni-btn-fix { padding: 6px 12px; border-radius: 6px; background: var(--ag-warning-wash); border: 1px solid var(--ag-warning-border); color: var(--ni-warning); font: 500 11px var(--ni-mono); cursor: pointer; }
+.ni-btn-fix[disabled] { opacity: 0.6; cursor: not-allowed; }
+
+.ni-lease-card { border: 1px solid var(--ni-card-border); border-radius: 9px; background: var(--ni-rowcard); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.ni-lease-top { display: flex; align-items: center; gap: 12px; }
+.ni-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ni-success); flex-shrink: 0; }
+.ni-dot.muted { background: var(--ag-meta-dim); }
+.ni-lease-text { font-size: 13px; color: var(--ni-body); flex: 1; }
+.ni-lease-expire { font: 500 12px var(--ni-mono); color: var(--ni-warning); }
+.ni-lease-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; font-size: 12px; color: var(--ni-secondary); }
+.ni-lease-grid b { font: 500 12px var(--ni-mono); color: var(--ni-body); font-weight: 500; }
+.ni-lease-actions { display: flex; gap: 8px; border-top: 1px solid var(--ni-border); padding-top: 12px; }
+.ni-btn-soft { flex: 1; padding: 9px 0; border-radius: 8px; background: var(--ag-accent-wash); border: 1px solid var(--ag-accent-border); color: var(--ni-accent-light); font: 600 12.5px var(--ni-sans); cursor: pointer; }
+.ni-btn-ghost { padding: 9px 14px; border-radius: 8px; background: var(--ag-surface); border: 1px solid var(--ni-ghost-border); color: var(--ag-body); font: 500 12.5px var(--ni-sans); cursor: pointer; }
+
+.ni-timeline { display: flex; flex-direction: column; }
+.ni-tl-item { display: flex; gap: 12px; }
+.ni-tl-rail { display: flex; flex-direction: column; align-items: center; }
+.ni-tl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ag-meta-dim); margin-top: 4px; }
+.ni-tl-dot.latest { background: var(--ni-accent); }
+.ni-tl-line { width: 1px; flex: 1; background: var(--ni-card-border); }
+.ni-tl-body { padding-bottom: 12px; }
+.ni-tl-date { font: 500 11px var(--ni-mono); color: var(--ni-secondary); }
+.ni-tl-text { font-size: 12.5px; color: var(--ni-body); margin-left: 10px; }
+
+.ni-drawer-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 26px; border-top: 1px solid var(--ni-border); background: var(--ag-sunken); }
+.ni-foot-servers { font: 500 11px var(--ni-mono); color: var(--ni-muted); }
+.ni-drawer-foot-actions { display: flex; gap: 9px; }
+.ni-btn-apply { padding: 9px 18px; border-radius: 8px; background: var(--ni-accent); border: 1px solid var(--ni-accent); color: #ffffff; font: 600 13px var(--ni-sans); cursor: pointer; }
+.ni-btn-apply[disabled] { opacity: 0.5; cursor: not-allowed; }
+.ni-btn-close-foot { padding: 9px 16px; border-radius: 8px; background: var(--ag-surface); border: 1px solid var(--ni-ghost-border); color: var(--ag-body); font: 500 13px var(--ni-sans); cursor: pointer; }
+.ni-btn-close-foot:hover { color: var(--ni-ink); }
+.ni-evidence { display: flex; flex-direction: column; gap: 6px; }
+.ni-ev-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ni-body); }
+.ni-ev-row.muted { color: var(--ni-muted); font-style: italic; }
+.ni-ev-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ag-sev-low); flex: 0 0 auto; }
+.ni-vendor { display: block; font-size: 11px; color: var(--ni-muted); margin-top: 2px; }
+.ni-lease-grid .ni-vendor { display: inline; margin: 0; }
+.ni-tl-meta { font-size: 12px; color: var(--ni-muted); margin-bottom: 8px; }
+.ni-tl-meta.stale { color: var(--ag-warning); }
+
+/* ── Diagnostics: banner + copyable report ───────────────────
+   A scan reaches services it does not control, and any of them can refuse. The
+   banner is the quiet channel for a scan that mostly worked; the report is what
+   gets pasted into a message to whoever administers the failing server. */
+
+/* `hidden` is an attribute, and the UA rule behind it is one class away from
+   losing. Every `display:` below would beat it, and did: a hidden modal still
+   laid its full-screen backdrop over the page, so the banner button underneath
+   could not be clicked at all. These three restate it at matching specificity. */
+.ni-diag-banner[hidden],
+.ni-diag-modal[hidden],
+.ni-diag-copied[hidden] { display: none; }
+
+/* The banner is a sibling of .ni-main-head, not a child, so it does not inherit
+   that block's 32px padding. It carries the same gutter itself, the way
+   .ni-progress and .ni-table-card do — otherwise it runs edge to edge under
+   cards that stop 32px short of both sides. */
+.ni-diag-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 14px 32px 0;
+    padding: 9px 12px;
+    border: 1px solid var(--ag-warning-border);
+    border-radius: var(--ag-r-input);
+    background: var(--ag-warning-wash);
+    color: var(--ag-body);
+    font-size: 12.5px;
+}
+.ni-diag-banner.failed {
+    border-color: var(--ag-danger-border);
+    background: var(--ag-danger-wash);
+}
+.ni-diag-icon { display: flex; color: var(--ag-warning); flex: 0 0 auto; }
+.ni-diag-banner.failed .ni-diag-icon { color: var(--ag-sev-critical); }
+.ni-diag-banner-text { flex: 1; min-width: 0; }
+.ni-diag-banner-btn {
+    flex: 0 0 auto;
+    border: 1px solid var(--ag-border-strong);
+    border-radius: var(--ag-r-input);
+    background: var(--ag-surface);
+    color: var(--ag-body);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 11px;
+    cursor: pointer;
+    transition: var(--ag-transition);
+}
+.ni-diag-banner-btn:hover { background: var(--ag-sunken); color: var(--ag-ink); }
+
+.ni-diag-modal { position: fixed; inset: 0; z-index: 300; display: flex; }
+.ni-diag-backdrop { position: absolute; inset: 0; background: var(--ag-scrim); }
+.ni-diag-panel {
+    position: relative;
+    margin: auto;
+    width: 720px;
+    max-width: 94vw;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 20px 22px;
+    background: var(--ag-surface);
+    border: 1px solid var(--ag-border);
+    border-radius: var(--ag-r-panel);
+    box-shadow: var(--ag-shadow-drawer);
+}
+.ni-diag-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ni-diag-title { margin: 0; font-size: 16px; font-weight: 600; color: var(--ag-ink); letter-spacing: -0.01em; }
+.ni-diag-lede { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ni-secondary); }
+
+/* The one scrolling region: the head, the lede and the footer stay put while a
+   scan with a dozen failing scopes scrolls inside. */
+.ni-diag-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.ni-diag-entry {
+    padding: 11px 13px;
+    border: 1px solid var(--ni-border);
+    border-left: 3px solid var(--ag-meta-dim);
+    border-radius: var(--ag-r-input);
+    background: var(--ni-rowcard);
+}
+.ni-diag-entry.failed { border-left-color: var(--ag-sev-critical); }
+.ni-diag-entry.degraded { border-left-color: var(--ag-warning); }
+.ni-diag-entry.ok { border-left-color: var(--ag-sev-low); }
+.ni-diag-entry-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.ni-diag-source { font-size: 12px; font-weight: 600; color: var(--ag-ink); }
+.ni-diag-status {
+    font-family: var(--ni-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ni-muted);
+}
+.ni-diag-status.failed { color: var(--ag-sev-critical); }
+.ni-diag-status.degraded { color: var(--ag-warning); }
+.ni-diag-status.ok { color: var(--ag-sev-low); }
+.ni-diag-msg { margin: 0 0 5px; font-size: 12.5px; line-height: 1.45; color: var(--ni-body); }
+.ni-diag-hint { margin: 0 0 6px; font-size: 12px; line-height: 1.45; color: var(--ni-secondary); }
+.ni-diag-cmd,
+.ni-diag-detail {
+    display: block;
+    font-family: var(--ni-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--ni-mono-val);
+    /* A command and an RPC error are both long and both unbreakable at spaces;
+       wrapping anywhere beats a horizontal scrollbar inside a dialog. */
+    overflow-wrap: anywhere;
+}
+.ni-diag-cmd { color: var(--ag-body); margin-bottom: 3px; }
+
+.ni-diag-raw-label {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ni-label);
+}
+.ni-diag-raw {
+    width: 100%;
+    height: 120px;
+    resize: vertical;
+    padding: 9px 11px;
+    border: 1px solid var(--ni-control-border);
+    border-radius: var(--ag-r-input);
+    background: var(--ni-rowcard);
+    color: var(--ni-body);
+    font-family: var(--ni-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre;
+}
+.ni-diag-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.ni-diag-copied { margin-right: auto; font-size: 12px; color: var(--ag-sev-low); }
+
+/* Failover line under the DHCP card. A takeover means the primary server is
+   down, so it reads in the warning colour; every other mode is plain caption. */
+.ni-failover { display: block; margin-top: 2px; }
+.ni-failover.takeover { color: var(--ag-warning); font-weight: 500; }

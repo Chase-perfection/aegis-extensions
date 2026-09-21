@@ -1,0 +1,15 @@
+{
+  "id": "network-inventory",
+  "name": "Network Inventory",
+  "version": 1,
+  "release": "0.0.0",
+  "page": "network-inventory.html",
+  "icon": "network",
+  "labelKey": "nav_network_inventory",
+  "descKey": "desc_network_inventory",
+  "routePrefixes": ["/api/inventory"],
+  "backend": "backend/routes.js",
+  "navSlot": "inventory",
+  "requiresHostOptIn": false,
+  "signature": null
+}

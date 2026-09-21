@@ -13,7 +13,7 @@
   ],
   "requiresHostOptIn": false,
   "channel": "stable",
-  "minAppVersion": "1.0.5",
+  "minAppVersion": "1.0.7",
   "latest": null,
   "releases": []
 }

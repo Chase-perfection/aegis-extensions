@@ -128,6 +128,9 @@ capabilities as an object. The keys, from `backend/src/server.js`:
 | `readOnlyDb` | private | A read-only SQLite reader, `describe(file)` and `page(file, opts)`. In core because `sqlite3` does not resolve from an extension |
 | `writableDb` | private | A guarded SQLite writer: `updateCell`, `insertRow`, `deleteRow`, `execScript`, `appliedMigrations`, `recordMigration`. In core for the same reason as `readOnlyDb`, with a sharper edge: `execScript` runs arbitrary SQL and is meant only for a migration file that came from a repository. Wiring it to a request input opens an injection the core can no longer refuse on the extension's behalf |
 | `resolveChrome` | private | The Chromium the host actually has, for a headless capture. In core because `chromePath.js` reads the install locations of Chrome and Edge, and two copies of that list would drift |
+| `broadcastLog` | private | `broadcastLog(slug, text)`: one line into the tenant's audit console, the stream `/api/audit/events` serves. Since Aegis 1.0.7 |
+| `broadcastAuditEvent` | private | `broadcastAuditEvent(slug, payload)`: one JSON payload onto that same stream, for a page that listens for a typed event such as `{ scan_progress }`. Deliberately narrower than handing over the tenant's in-memory state. Since Aegis 1.0.7 |
+| `recordActivity` | private | `recordActivity(req, type, key, meta)`: one entry in the tenant's activity ledger. Swallows its own failures, so a missing ledger costs the entry and nothing else. Since Aegis 1.0.7 |
 
 The private phase is mounted below the session wall, so a route registered there
 already has a session, a tenant and the module gate behind it.
@@ -145,6 +148,24 @@ A capability is added to the object in `server.js` and read off the context. Tha
 the whole mechanism, and there is deliberately no second one: no host API module, no
 plugin SDK, no dependency injection container. An extension that needs something
 core has not got yet is a one-line change in core and a read here.
+
+## Where the nav entry goes
+
+`navSlot` in `extension.json` is optional and names the nav group the page's
+entry appears in. Aegis 1.0.7 offers three:
+
+| `navSlot` | Group |
+|---|---|
+| `control` | Control Center, next to the store. The default |
+| `audit` | Audit Results |
+| `inventory` | Parc Management, beside AD Inventory |
+
+The names belong to `frontend/src/js/navbar.js`, where the groups are defined.
+The loader checks only that the field is a non-empty string when present. A name
+the running core does not know files the entry under `control` instead of
+dropping it, so a manifest written against a newer core still shows its page on
+an older one. Leave the field out and the entry goes to `control`, which is where
+every extension went before the field existed.
 
 ## Publishing a version that nothing can install
 
