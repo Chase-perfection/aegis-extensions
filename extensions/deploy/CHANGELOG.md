@@ -12,6 +12,12 @@ Every principal is now named by SID. The deny-logon rights, which were written
 where `secedit` never reads them, now land in `[Privilege Rights]` next to
 whoever already holds them, and are checked on every run.
 
+**A finished setup says to restart, not to finish.** Once the host setup has
+run and the Aegis service has not restarted since, the refusals that sent the
+operator back to "Finish setup on this host" say to restart the service
+instead. The page reads that state from Aegis, which shows it on every
+extension page.
+
 **Finish setup on this host creates the accounts it needs.** The click used to
 refuse when the runtime accounts did not exist and told the administrator to
 reinstall the extension. A host reaches that click without `prepare` having run

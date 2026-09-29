@@ -1117,6 +1117,34 @@
     };
 
     /**
+     * Whether core says host setup is done and only waits on a service restart.
+     *
+     * Core's module-guard.js publishes it for every extension page, because
+     * this page cannot tell on its own: all it sees is its variables missing,
+     * which is the same sight before the click and after it. Without this every
+     * sentence below sent an operator back to a click already made.
+     */
+    var SETUP_RESTART = ['deploy_setup_restart',
+        'Deploy setup is done on this server, but the Aegis service has not restarted since, so it is not in effect yet. Restart the service from the Extensions page.'];
+    var SETUP_CODES = ['runtime_disabled', 'build_account_unconfigured'];
+    var SETUP_TODO = {};
+    SETUP_CODES.forEach(function (code) { SETUP_TODO[code] = DEPLOY_ERRORS[code]; });
+
+    function setupWaitsOnRestart() {
+        return !!(window.AegisModuleState && window.AegisModuleState.hostSetup === 'restart');
+    }
+
+    function applyHostSetup() {
+        var restart = setupWaitsOnRestart();
+        SETUP_CODES.forEach(function (code) {
+            var todo = SETUP_TODO[code];
+            DEPLOY_ERRORS[code] = restart ? [SETUP_RESTART[0], SETUP_RESTART[1], todo[2], todo[3]] : todo;
+        });
+    }
+    applyHostSetup();
+    document.addEventListener('aegis:module-state', applyHostSetup);
+
+    /**
      * The sentence for a refusal, with the folder named when the server found one.
      *
      * `suggestRootDir` is the difference between "no index.html at the root" and
@@ -2940,6 +2968,7 @@
     /** What the settings route refused, in the words the rest of the page uses. */
     function settingsRefusal(reason) {
         if (reason === 'runtime_disabled') {
+            if (setupWaitsOnRestart()) return tr(SETUP_RESTART[0], SETUP_RESTART[1]);
             return tr('deploy_settings_runtime_off',
                 'Deploy setup is not finished on this server, so a start command cannot run yet. An administrator opens Extensions, clicks "Finish setup on this host" on the Deploy card, then restarts the Aegis service.');
         }
@@ -4221,8 +4250,10 @@
             var off = el('p', 'dep-net-warn', tr('deploy_net_off',
                 'Sites answer on this machine only. From another machine the port is dropped, which a browser reports as a timeout and reads as the site being down.'));
             block.appendChild(off);
-            block.appendChild(el('p', 'dep-hint', tr('deploy_net_off_fix',
-                'To open it, go to the extension store and use "Finish setup on this host" on the Deploy card. It is a decision taken on the host, not from here.')));
+            block.appendChild(el('p', 'dep-hint', setupWaitsOnRestart()
+                ? tr(SETUP_RESTART[0], SETUP_RESTART[1])
+                : tr('deploy_net_off_fix',
+                    'To open it, go to the extension store and use "Finish setup on this host" on the Deploy card. It is a decision taken on the host, not from here.')));
             box.appendChild(block);
             return;
         }
