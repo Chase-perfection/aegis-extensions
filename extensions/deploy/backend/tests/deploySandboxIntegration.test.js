@@ -53,7 +53,7 @@ function pwsh(args) {
 function staging() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-it-staging-'));
     fs.writeFileSync(path.join(dir, 'build.cmd'),
-        '@echo off\r\nmkdir dist\r\n>dist\\index.html echo ok\r\nwhoami>dist\\who.txt\r\necho built-by-sandbox\r\n');
+        '@echo off\r\nmkdir dist\r\n>dist\\index.html echo ok\r\nwhoami>dist\\who.txt\r\necho built-by-sandbox\r\nset\r\n');
     return dir;
 }
 
