@@ -4,6 +4,27 @@ Clones a git branch and serves it as a site, with an optional sandboxed build.
 
 ## 0.2.5
 
+**A build starts as its account, and says why when it cannot.** Five faults
+stopped every build on a host setup had prepared, each one hidden behind the
+next. The workspace was deleted and made again before each build, which dropped
+the permissions setup gave it ("Access is denied"). The account was named
+`.\name` with no domain, which Windows reads as a wrong password (1326). The
+build logged the account on interactively, which setup denies on purpose (1385).
+It ran on the service's desktop, where any program loading the Windows UI
+libraries (whoami, node, so npm) hung until the timeout. And its environment
+set `PATHEXT` to `.CPL`, so no `.exe` or `.cmd` was found. A build now logs on
+as a batch job, which setup grants, runs on a window station and desktop of its
+own, joins its Job Object before its first instruction, and gets the machine's
+`PATHEXT` and a home folder beside the workspace. Its output reaches the
+console, and `a && b` runs as one command.
+
+**A broken build account is taken out of service.** When Windows refuses to
+start a build as an account, the console names the account, the Windows error
+and the fix, that account stops receiving builds, and the build runs on
+another. The page says the sandbox is at fault, not the project. Every account
+is checked when Aegis starts and on `POST /api/deploy/sandbox/probe`, and
+`/api/deploy/status` lists each one.
+
 **Installing on a server creates the build accounts.** Two refusals stopped the
 install at "Preparing the accounts". The account description was 72 characters,
 and `New-LocalUser` takes 48 at most. The workspace ACL named `Administrators`
