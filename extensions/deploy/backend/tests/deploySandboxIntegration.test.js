@@ -53,9 +53,11 @@ function pwsh(args) {
 function staging() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-it-staging-'));
     fs.writeFileSync(path.join(dir, 'build.cmd'),
-        '@echo off\r\nmkdir dist\r\n>dist\\index.html echo ok\r\nwhoami>dist\\who.txt\r\n'
+        '@echo off\r\nmkdir dist\r\n>dist\\index.html echo ok\r\n'
+        + 'echo step-child-cmd\r\ncmd /d /c exit 7\r\necho step-child-cmd-exit=%errorlevel%\r\n'
+        + 'echo step-whoami\r\nwhoami>dist\\who.txt\r\necho step-whoami-exit=%errorlevel%\r\n'
         + '>dist\\home.txt echo %USERPROFILE%\r\n'
-        + 'node --version\r\n'
+        + 'echo step-node\r\nnode --version\r\necho step-node-exit=%errorlevel%\r\n'
         + 'if defined PSExecutionPolicyPreference echo POLICY-LEAK\r\n'
         + 'echo built-by-sandbox\r\n');
     return dir;
@@ -83,7 +85,13 @@ test('the real sandbox', { skip, timeout: 600000 }, async (t) => {
         // Chained, because a quoting mistake in the sandbox's command line
         // turned `a && b` into the name of a program, and wrote no log.
         installCmd: '', buildCmd: 'build.cmd && echo chained-after-build', outputDir: 'dist',
-        timeoutMs: 120000, runLauncher, scopeWorkspace
+        timeoutMs: 60000, runLauncher, scopeWorkspace
+    }).catch((e) => {
+        // The log is the only witness of where a build stopped.
+        let log = '(no build.log)';
+        try { log = fs.readFileSync(path.join(workspaceRoot, account, 'build.log'), 'utf8'); } catch { }
+        e.message += `\nbuild.log:\n${log}`;
+        throw e;
     });
 
     await t.test('builds as the account, twice in a row', async () => {
