@@ -189,12 +189,13 @@ namespace AegisSandbox {
 
         /// <summary>"NAME=value\0...\0\0", sorted case-insensitively as Windows expects.</summary>
         static IntPtr EnvironmentBlock(IDictionary environment) {
-            var names = new System.Collections.Generic.List<string>();
-            foreach (DictionaryEntry kv in environment) names.Add((string)kv.Key);
-            names.Sort(StringComparer.OrdinalIgnoreCase);
+            // Convert, not cast: a value PowerShell got from a cmdlet (Join-Path)
+            // arrives wrapped in a PSObject, and (string) on that throws.
+            var pairs = new System.Collections.Generic.SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (DictionaryEntry kv in environment) pairs[Convert.ToString(kv.Key)] = Convert.ToString(kv.Value);
             var sb = new StringBuilder();
-            foreach (var name in names) {
-                sb.Append(name).Append('=').Append((string)environment[name]).Append('\0');
+            foreach (var kv in pairs) {
+                sb.Append(kv.Key).Append('=').Append(kv.Value).Append('\0');
             }
             sb.Append('\0');
             return Marshal.StringToHGlobalUni(sb.ToString());
