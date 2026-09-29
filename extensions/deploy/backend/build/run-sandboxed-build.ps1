@@ -189,7 +189,13 @@ function Invoke-Capped {
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.LoadUserProfile = $false
-    $psi.UserName = $credential.UserName
+    # The bare name and the machine as the domain, never ".\name": with no
+    # domain, CreateProcessWithLogonW reads the name as a UPN, and ".\name" is
+    # no UPN, so Windows answers 1326 "user name or password is incorrect" for
+    # an account whose password is right. MachineName and not
+    # $env:COMPUTERNAME, which the launcher does not pass to this process.
+    $psi.UserName = $AccountName
+    $psi.Domain = [Environment]::MachineName
     $psi.Password = $credential.Password
 
     # Added last, so the project's own values win over anything inherited. The

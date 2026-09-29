@@ -137,7 +137,12 @@ $psi.CreateNoWindow = $true
 $psi.LoadUserProfile = $false
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
-$psi.UserName = $credential.UserName
+# The bare name and the machine as the domain, never ".\name": with no domain,
+# CreateProcessWithLogonW reads the name as a UPN, and ".\name" is no UPN, so
+# Windows answers 1326 for an account whose password is right. Same fix as
+# run-sandboxed-build.ps1.
+$psi.UserName = $AccountName
+$psi.Domain = [Environment]::MachineName
 $psi.Password = $credential.Password
 
 # `Environment` and not `EnvironmentVariables`: the latter lowercases every key
