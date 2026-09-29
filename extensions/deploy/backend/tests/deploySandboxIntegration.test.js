@@ -87,9 +87,9 @@ test('the real sandbox', { skip, timeout: 600000 }, async (t) => {
         // used to delete the folder setup had scoped, and make it again without.
         for (const run of [1, 2]) {
             const out = await build(createPool([account]));
-            const who = fs.readFileSync(path.join(out, 'who.txt'), 'utf8').trim().toLowerCase();
-            assert.ok(who.endsWith(`\\${account}`), `run ${run} ran as ${who}, not as ${account}`);
             const log = fs.readFileSync(path.join(path.dirname(out), 'build.log'), 'utf8');
+            const who = fs.readFileSync(path.join(out, 'who.txt'), 'utf8').trim().toLowerCase();
+            assert.ok(who.endsWith(`\\${account}`), `run ${run} ran as "${who}", not as ${account}. build.log:\n${log}`);
             assert.match(log, /built-by-sandbox/, 'what the build printed reaches build.log');
             assert.match(log, /chained-after-build/, 'the whole && chain ran, as one command line');
         }
