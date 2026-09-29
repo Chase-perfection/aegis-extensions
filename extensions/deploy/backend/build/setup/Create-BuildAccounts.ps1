@@ -152,8 +152,10 @@ foreach ($name in $AccountNames) {
     if (-not (Get-LocalUser -Name $name -ErrorAction SilentlyContinue)) {
         $password = New-RandomPassword
         $secure = ConvertTo-SecureString $password -AsPlainText -Force
+        # New-LocalUser caps -Description at 48 characters and refuses the
+        # whole call past that, before the account exists.
         New-LocalUser -Name $name -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
-            -Description "Aegis Deploy build sandbox account (managed by Create-BuildAccounts.ps1)" | Out-Null
+            -Description "Aegis Deploy build sandbox account" | Out-Null
 
         # No interactive or remote logon: this account only ever runs as the
         # target of Start-Process from the backend, never logs in directly.

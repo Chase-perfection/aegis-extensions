@@ -4,6 +4,10 @@ Clones a git branch and serves it as a site, with an optional sandboxed build.
 
 ## 0.2.5
 
+**Installing on a server creates the build accounts.** Their description was
+72 characters and `New-LocalUser` takes 48 at most, so the install stopped at
+"Preparing the accounts" with nothing written.
+
 **Finish setup on this host creates the accounts it needs.** The click used to
 refuse when the runtime accounts did not exist and told the administrator to
 reinstall the extension. A host reaches that click without `prepare` having run
