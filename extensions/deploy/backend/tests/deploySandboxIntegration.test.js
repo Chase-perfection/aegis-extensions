@@ -53,7 +53,11 @@ function pwsh(args) {
 function staging() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-it-staging-'));
     fs.writeFileSync(path.join(dir, 'build.cmd'),
-        '@echo off\r\nmkdir dist\r\n>dist\\index.html echo ok\r\nwhoami>dist\\who.txt\r\necho built-by-sandbox\r\nset\r\n');
+        '@echo off\r\nmkdir dist\r\n>dist\\index.html echo ok\r\nwhoami>dist\\who.txt\r\n'
+        + '>dist\\home.txt echo %USERPROFILE%\r\n'
+        + 'node --version\r\n'
+        + 'if defined PSExecutionPolicyPreference echo POLICY-LEAK\r\n'
+        + 'echo built-by-sandbox\r\n');
     return dir;
 }
 
@@ -91,6 +95,11 @@ test('the real sandbox', { skip, timeout: 600000 }, async (t) => {
             const who = fs.readFileSync(path.join(out, 'who.txt'), 'utf8').trim().toLowerCase();
             assert.ok(who.endsWith(`\\${account}`), `run ${run} ran as "${who}", not as ${account}. build.log:\n${log}`);
             assert.match(log, /built-by-sandbox/, 'what the build printed reaches build.log');
+            assert.match(log, /^v\d+\./m, `node resolves on the build's PATH and PATHEXT. build.log:\n${log}`);
+            assert.doesNotMatch(log, /POLICY-LEAK/, "pwsh's -ExecutionPolicy Bypass must not reach the build");
+            const home = fs.readFileSync(path.join(out, 'home.txt'), 'utf8').trim();
+            assert.strictEqual(home.toLowerCase(), `${path.dirname(out)}.home`.toLowerCase(),
+                "the build's profile is its own home beside the workspace, not the backend's");
             assert.match(log, /chained-after-build/, 'the whole && chain ran, as one command line');
         }
     });

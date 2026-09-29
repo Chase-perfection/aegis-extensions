@@ -153,8 +153,8 @@ test('the workspace folder itself survives the wipe, so the ACL setup gave it is
     assert.strictEqual(fs.statSync(workspace, { bigint: true }).ino, before,
         'the folder must be emptied, not deleted and made again');
     assert.ok(!fs.existsSync(path.join(workspace, 'old')));
-    assert.deepStrictEqual(scoped, [[workspace, 'acct-a', 0]],
-        'permissions are reset once, on the empty folder, before the copy');
+    assert.deepStrictEqual(scoped, [[workspace, 'acct-a', 0], [`${workspace}.home`, 'acct-a', 0]],
+        'permissions are reset on the empty workspace before the copy, and on the empty home beside it');
 });
 
 test('a workspace permission failure fails the build and releases the slot', async () => {

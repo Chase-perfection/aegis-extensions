@@ -38,7 +38,7 @@ function buildSafeEnv(secret, buildEnv) {
  * an env var, never a command-line argument where it would land in a
  * process listing.
  */
-function runLauncher({ workspace, account, installCmd, buildCmd, timeoutMs, signal, buildEnv }) {
+function runLauncher({ workspace, homeDir, account, installCmd, buildCmd, timeoutMs, signal, buildEnv }) {
     return new Promise((resolve, reject) => {
         const secret = machineStore.getBuildAccountSecret(account);
         if (!secret) {
@@ -54,7 +54,8 @@ function runLauncher({ workspace, account, installCmd, buildCmd, timeoutMs, sign
             '-AccountName', account,
             '-InstallCmd', installCmd || '',
             '-BuildCmd', buildCmd,
-            '-TimeoutMs', String(timeoutMs)
+            '-TimeoutMs', String(timeoutMs),
+            ...(homeDir ? ['-HomeDir', homeDir] : [])
         ], {
             windowsHide: true,
             timeout: timeoutMs + 15000,

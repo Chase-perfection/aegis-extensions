@@ -253,6 +253,13 @@ async function buildOnce(account, { workspaceRoot, staging, installCmd, buildCmd
         if (scopeWorkspace) scopeWorkspace(workspace, account);
         fs.cpSync(staging, workspace, { recursive: true });
 
+        // The account's profile for this build (npm's cache, temp files).
+        // A sibling of the workspace, not a subfolder: a site served from `.`
+        // would publish it. Emptied each build, like the workspace.
+        const homeDir = `${workspace}.home`;
+        emptyDir(homeDir);
+        if (scopeWorkspace) scopeWorkspace(homeDir, account);
+
         // On the copy, never on the clone: a dependency this build has no use
         // for is dropped here rather than downloaded again on every deployment.
         // Runs before the tail starts so the operator reads why before they
@@ -265,7 +272,7 @@ async function buildOnce(account, { workspaceRoot, staging, installCmd, buildCmd
 
         stopTail = tailLogs({ workspace, installCmd, buildCmd, report: say });
         try {
-            await runLauncher({ workspace, account, installCmd: installCmd || '', buildCmd, timeoutMs, signal, buildEnv });
+            await runLauncher({ workspace, homeDir, account, installCmd: installCmd || '', buildCmd, timeoutMs, signal, buildEnv });
         } catch (e) {
             // The install or build command exited non-zero, or pwsh could not
             // start. Named here because nothing further up can tell that apart

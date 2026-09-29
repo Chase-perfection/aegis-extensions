@@ -21,7 +21,11 @@ param(
     # Optional: a project served by a process may need `npm ci` and no build at
     # all. Invoke-Capped skips an empty command.
     [string]$BuildCmd = '',
-    [Parameter(Mandatory)][int]$TimeoutMs
+    [Parameter(Mandatory)][int]$TimeoutMs,
+    # The build account's profile for this build: npm's cache, temp files.
+    # Beside the workspace and never inside it, so a site served from `.` does
+    # not publish it. Empty for the probe, which runs `exit 0` and needs none.
+    [string]$HomeDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -175,6 +179,57 @@ function Start-AsBuildAccount {
     }
 }
 
+<#
+The environment block the build starts with. Built, not inherited as is: what
+this process holds is the launcher's short list plus what Node and pwsh add on
+their own, and three of those broke real builds.
+
+- PATHEXT. The launcher does not pass it and pwsh then sets it to ".CPL", so cmd
+  resolved no .exe and no .cmd: npm, node and git were all "not recognized".
+  The machine's own value, from the registry.
+- USERNAME, USERPROFILE, APPDATA, LOCALAPPDATA, TEMP. Node's libuv copies the
+  backend's in when they are missing, so the build read the backend account's
+  profile, which it cannot write: npm's cache lives there. They name the build
+  account and point into -HomeDir instead.
+- PSExecutionPolicyPreference. pwsh sets it for -ExecutionPolicy Bypass, and a
+  child inherits it, so any PowerShell a build script started ran unrestricted.
+
+The project's values come last so they win. A PowerShell hashtable matches
+names case-insensitively, as Windows does, and keeps the case the project wrote.
+The names Aegis refuses on the way in (PATH, ComSpec, the AEGIS_ prefix) are
+exactly the ones that would matter here: see projectEnv.js.
+#>
+function Get-BuildEnvironment {
+    $environment = @{}
+    foreach ($item in Get-ChildItem Env:) { $environment[$item.Name] = $item.Value }
+    $environment.Remove('PSExecutionPolicyPreference')
+
+    $pathExt = [Environment]::GetEnvironmentVariable('PATHEXT', 'Machine')
+    if (-not $pathExt) { $pathExt = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC' }
+    $environment['PATHEXT'] = $pathExt
+
+    $environment['USERNAME'] = $AccountName
+    $environment['USERDOMAIN'] = [Environment]::MachineName
+    $environment['LOGONSERVER'] = '\\' + [Environment]::MachineName
+    if ($HomeDir) {
+        $roaming = Join-Path $HomeDir 'AppData\Roaming'
+        $local = Join-Path $HomeDir 'AppData\Local'
+        $temp = Join-Path $HomeDir 'Temp'
+        foreach ($dir in $roaming, $local, $temp) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+        $qualifier = Split-Path $HomeDir -Qualifier
+        $environment['USERPROFILE'] = $HomeDir
+        $environment['HOMEDRIVE'] = $qualifier
+        $environment['HOMEPATH'] = $HomeDir.Substring($qualifier.Length)
+        $environment['APPDATA'] = $roaming
+        $environment['LOCALAPPDATA'] = $local
+        $environment['TEMP'] = $temp
+        $environment['TMP'] = $temp
+    }
+
+    foreach ($name in $buildEnv.Keys) { $environment[$name] = $buildEnv[$name] }
+    return $environment
+}
+
 function Invoke-Capped {
     param([string]$Command, [string]$LogFile)
     if (-not $Command) { return }
@@ -185,15 +240,7 @@ function Invoke-Capped {
     $cmdExe = Join-Path ([Environment]::SystemDirectory) 'cmd.exe'
     $commandLine = "`"$cmdExe`" /d /s /c `"$Command`""
 
-    # This process's own environment (the short list the launcher passed, the
-    # two Aegis variables already removed), then the project's values, added
-    # last so they win. A PowerShell hashtable matches names case-insensitively,
-    # as Windows does, and keeps the case the project wrote. The names Aegis
-    # refuses on the way in (PATH, ComSpec, the AEGIS_ prefix) are exactly the
-    # ones that would matter here: see projectEnv.js.
-    $environment = @{}
-    foreach ($item in Get-ChildItem Env:) { $environment[$item.Name] = $item.Value }
-    foreach ($name in $buildEnv.Keys) { $environment[$name] = $buildEnv[$name] }
+    $environment = Get-BuildEnvironment
 
     $proc = Start-AsBuildAccount -CommandLine $commandLine -Environment $environment -LogFile $LogFile
     try {
