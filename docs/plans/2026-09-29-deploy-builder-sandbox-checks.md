@@ -51,6 +51,20 @@ Out, on purpose:
 - Showing probe results on core's Extensions card. The Deploy page and the
   status route are enough for now.
 
+## Outcome
+
+The real-sandbox test failed five times before it passed, each on a real fault
+the stubbed suite had hidden: 1326 (`.\name` with no domain), 1385 (interactive
+logon, which setup denies), no output in the log (cmd's quote stripping), `PATHEXT`
+set to `.CPL` by pwsh, and a hang on the service's desktop for anything loading
+user32. The batch-logon start was therefore brought into scope (approved on
+2026-09-29), with a window station and desktop per account.
+
+Still open: `runtime/run-sandboxed-server.ps1` starts applications with
+`Process.Start` and credentials, so it carries the same 1385, desktop and
+`PATHEXT` faults. It needs SandboxProcess.cs with pipes for stdout, and a test
+of its own.
+
 ## Check
 
 - `npm test` green locally (the integration test skips, with its reason).
