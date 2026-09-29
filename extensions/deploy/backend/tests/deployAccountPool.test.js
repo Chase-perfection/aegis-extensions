@@ -55,3 +55,46 @@ test('waiters are served in FIFO order, not LIFO', async () => {
     await p2;
     assert.deepStrictEqual(order, ['first', 'second']);
 });
+
+test('a quarantined slot is never handed out again, and restore puts it back', async () => {
+    const pool = createPool(['a', 'b']);
+    const a = await pool.borrow();
+    pool.quarantine(a, 'Windows error 1326');
+    pool.release(a);
+    assert.strictEqual(pool.freeCount(), 1, 'the quarantined slot must not return to the free list');
+
+    const b = await pool.borrow();
+    assert.strictEqual(b, 'b');
+    const waiting = pool.borrow();
+    pool.restore('a');
+    assert.strictEqual(await waiting, 'a', 'a restored slot goes to whoever is waiting');
+    assert.deepStrictEqual(pool.health().map((h) => [h.account, h.ok]), [['a', true], ['b', null]]);
+});
+
+test('when every slot is quarantined, borrow refuses at once and waiters are refused, not hung', async () => {
+    const pool = createPool(['a', 'b']);
+    const a = await pool.borrow();
+    const b = await pool.borrow();
+    const waiting = pool.borrow();
+    pool.quarantine(a, 'error 5');
+    pool.release(a);
+    pool.quarantine(b, 'error 1326');
+    pool.release(b);
+
+    await assert.rejects(waiting, (e) => e.code === 'sandbox_unavailable' && /a: error 5; b: error 1326/.test(e.message));
+    await assert.rejects(pool.borrow(), (e) => e.code === 'sandbox_unavailable');
+});
+
+test('borrow(account) waits for that slot and leaves the others to anyone else', async () => {
+    const pool = createPool(['a', 'b']);
+    const a = await pool.borrow();
+    let got = null;
+    const wantA = pool.borrow('a').then((x) => { got = x; });
+    assert.strictEqual(await pool.borrow(), 'b', 'a waiter for a named slot must not hold the free one');
+    pool.release('b');
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(got, null, 'releasing another slot must not satisfy it');
+    pool.release(a);
+    await wantA;
+    assert.strictEqual(got, 'a');
+});

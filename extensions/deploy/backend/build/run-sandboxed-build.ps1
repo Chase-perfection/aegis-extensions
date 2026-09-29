@@ -25,6 +25,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# What this script prints is read by Node as UTF-8 and shown in the build
+# console. Without these two lines an error arrives wrapped in ANSI colour codes
+# and in the console code page, so "Accès refusé" reads "Acc�s refus�".
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }
 
 $plainPassword = $env:AEGIS_BUILD_ACCOUNT_SECRET
 if (-not $plainPassword) { throw "AEGIS_BUILD_ACCOUNT_SECRET is not set" }
@@ -131,6 +136,48 @@ namespace AegisBuild {
 # generous but real caps, so a runaway build cannot take the host down.
 $job = [AegisBuild.JobObject]::CreateCappedJob(64, 2GB)
 
+# The Windows error behind a failed Process.Start, as the sentence an operator
+# can act on. The raw message names neither the account nor the fix, and "Access
+# is denied" alone has three unrelated causes on this path.
+function Get-StartFailureHint {
+    param([int]$Code)
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    switch ($Code) {
+        5 {
+            if ($identity.IsSystem) {
+                return "the Aegis backend runs as LocalSystem, and Windows refuses to start a process under another account from LocalSystem (CreateProcessWithLogonW). Run the backend service as a local administrator account instead."
+            }
+            return "Windows refused $AccountName access to $WorkspaceDir or to cmd.exe. Aegis resets the workspace permissions before each build, so run the Deploy host setup again to repair the account."
+        }
+        267 { return "$WorkspaceDir is not a folder $AccountName can open. Run the Deploy host setup again." }
+        1326 { return "the password Aegis stored for $AccountName no longer matches the account. Run the Deploy host setup again: it resets both." }
+        1327 { return "a policy on this host restricts how $AccountName may sign in (logon hours, workstations or blank password)." }
+        1330 { return "the password of $AccountName has expired. Run the Deploy host setup again." }
+        1331 { return "$AccountName is disabled. Enable it in Local Users and Groups, or run the Deploy host setup again." }
+        1385 { return "$AccountName is not allowed the logon type a build needs. A security policy denies it local logon: check 'Deny log on locally' in the host's user rights." }
+        1909 { return "$AccountName is locked out. Unlock it in Local Users and Groups." }
+        1792 { return "the Secondary Logon service (seclogon) is stopped or disabled. Set it to Manual and start it." }
+        default { return "run the Deploy host setup again; if it persists, the Windows error code above names the cause." }
+    }
+}
+
+function Start-AsBuildAccount {
+    param([System.Diagnostics.ProcessStartInfo]$StartInfo)
+    try {
+        return [System.Diagnostics.Process]::Start($StartInfo)
+    } catch {
+        $inner = $_.Exception
+        while ($inner.InnerException -and -not ($inner -is [System.ComponentModel.Win32Exception])) { $inner = $inner.InnerException }
+        $code = if ($inner -is [System.ComponentModel.Win32Exception]) { $inner.NativeErrorCode } else { 0 }
+        $hint = Get-StartFailureHint -Code $code
+        # Exit 3, not a throw (which exits 1): the launcher reads 3 as "the
+        # sandbox is broken, nothing of the project ran", which is what lets the
+        # backend take this account out of the pool and retry on another.
+        [Console]::Error.WriteLine("could not start the build as $AccountName (Windows error $code, $($inner.Message.Trim())): $hint")
+        exit 3
+    }
+}
+
 function Invoke-Capped {
     param([string]$Command, [string]$LogFile)
     if (-not $Command) { return }
@@ -156,7 +203,7 @@ function Invoke-Capped {
         $psi.Environment[$name] = $buildEnv[$name]
     }
 
-    $proc = [System.Diagnostics.Process]::Start($psi)
+    $proc = Start-AsBuildAccount -StartInfo $psi
     [AegisBuild.JobObject]::AssignProcessToJobObject($job, $proc.Handle) | Out-Null
 
     $exited = $proc.WaitForExit($TimeoutMs)

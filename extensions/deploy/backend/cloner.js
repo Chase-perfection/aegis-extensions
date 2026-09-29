@@ -229,8 +229,9 @@ function assertServableAsIs(dir) {
 }
 
 const accountPool = require('./build/accountPool');
-const { buildInSandbox } = require('./build/builder');
+const { buildInSandbox, scopeWorkspace } = require('./build/builder');
 const { runLauncher } = require('./build/launcher');
+const { probeAll } = require('./build/sandboxProbe');
 const { assertNoSymlinks } = require('./build/symlinkGuard');
 const siteConfig = require('./siteConfig');
 const accessPolicy = require('./accessPolicy');
@@ -243,6 +244,26 @@ function buildWorkspaceRoot() {
         (process.env.ProgramData ? require('path').join(process.env.ProgramData, 'Aegis', 'deploy-build') : '/var/lib/aegis/deploy-build');
 }
 
+let probing = null;
+
+/**
+ * Checks every build account can start a process, and takes the ones that
+ * cannot out of service (sandboxProbe.js). One at a time: a second caller gets
+ * the run already going instead of starting processes beside it.
+ */
+function probeSandbox() {
+    if (process.platform !== 'win32') return Promise.resolve([]);
+    if (!probing) {
+        probing = probeAll({
+            pool: accountPool.defaultPool,
+            workspaceRoot: buildWorkspaceRoot(),
+            runLauncher,
+            scopeWorkspace
+        }).finally(() => { probing = null; });
+    }
+    return probing;
+}
+
 async function defaultBuild({ staging, installCmd, buildCmd, outputDir, buildEnv, report, signal }) {
     return buildInSandbox({
         pool: accountPool.defaultPool,
@@ -250,6 +271,7 @@ async function defaultBuild({ staging, installCmd, buildCmd, outputDir, buildEnv
         staging, installCmd, buildCmd, outputDir, buildEnv,
         timeoutMs: Number(process.env.AEGIS_BUILD_TIMEOUT_MS) || 10 * 60 * 1000,
         runLauncher,
+        scopeWorkspace,
         report,
         signal
     });
@@ -608,5 +630,6 @@ function rollback({ projectDir, currentDir, currentSha, previousSha }) {
 module.exports = {
     cloneToCurrent, publish, promote, rollback, swapOnto,
     listReleases, adoptPrevious, releasesDir, RELEASES_KEPT,
-    assertServableAsIs, looksLikeSource, redact, gitExe
+    assertServableAsIs, looksLikeSource, redact, gitExe,
+    probeSandbox, sandboxHealth: () => accountPool.defaultPool.health()
 };

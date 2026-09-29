@@ -132,6 +132,103 @@ test('the workspace is wiped before copy, so a stale file from a previous build 
     assert.ok(fs.existsSync(path.join(workspace, 'package.json')), "this build's own files must be present");
 });
 
+test('the workspace folder itself survives the wipe, so the ACL setup gave it is kept', async () => {
+    const staging = tmpStaging({ 'package.json': '{}' });
+    const root = tmpRoot();
+    const pool = createPool(['acct-a']);
+    const workspace = path.join(root, 'acct-a');
+    fs.mkdirSync(path.join(workspace, 'old', 'deep'), { recursive: true });
+    const before = fs.statSync(workspace, { bigint: true }).ino;
+    const scoped = [];
+
+    await buildInSandbox({
+        pool, workspaceRoot: root, staging,
+        buildCmd: 'build', outputDir: '.', timeoutMs: 1000,
+        scopeWorkspace: (dir, account) => {
+            scoped.push([dir, account, fs.readdirSync(dir).length]);
+        },
+        runLauncher: async () => {}
+    });
+
+    assert.strictEqual(fs.statSync(workspace, { bigint: true }).ino, before,
+        'the folder must be emptied, not deleted and made again');
+    assert.ok(!fs.existsSync(path.join(workspace, 'old')));
+    assert.deepStrictEqual(scoped, [[workspace, 'acct-a', 0]],
+        'permissions are reset once, on the empty folder, before the copy');
+});
+
+test('a workspace permission failure fails the build and releases the slot', async () => {
+    const staging = tmpStaging({ 'package.json': '{}' });
+    const pool = createPool(['acct-a']);
+    let launched = false;
+    await assert.rejects(
+        buildInSandbox({
+            pool, workspaceRoot: tmpRoot(), staging,
+            buildCmd: 'build', outputDir: '.', timeoutMs: 1000,
+            scopeWorkspace: () => { throw Object.assign(new Error('icacls refused'), { code: 'build_failed' }); },
+            runLauncher: async () => { launched = true; }
+        }),
+        (e) => e.code === 'build_failed' && /icacls refused/.test(e.message)
+    );
+    assert.strictEqual(launched, false);
+    assert.strictEqual(pool.freeCount(), 1);
+});
+
+function sandboxStartError(msg) {
+    return Object.assign(new Error('Command failed'), { code: 3, sandboxStart: true, output: `run-sandboxed-build.ps1: ${msg}\n` });
+}
+
+test('a slot Windows will not start a process as is quarantined, and the build retries on another', async () => {
+    const staging = tmpStaging({ 'package.json': '{}' });
+    const pool = createPool(['acct-a', 'acct-b']);
+    const tried = [];
+    const logs = [];
+    const result = await buildInSandbox({
+        pool, workspaceRoot: tmpRoot(), staging,
+        buildCmd: 'build', outputDir: '.', timeoutMs: 1000,
+        report: { stage() { }, log(t) { logs.push(t); } },
+        runLauncher: async ({ account }) => {
+            tried.push(account);
+            if (account === 'acct-a') throw sandboxStartError('could not start the build as acct-a (Windows error 1326)');
+        }
+    });
+    assert.deepStrictEqual(tried, ['acct-a', 'acct-b']);
+    assert.ok(result.endsWith('acct-b'));
+    assert.deepStrictEqual(pool.health().map((h) => [h.account, h.ok]), [['acct-a', false], ['acct-b', null]]);
+    assert.match(pool.health()[0].error, /^could not start the build as acct-a/, 'the reason is kept without the script prefix');
+    assert.ok(logs.some((l) => /acct-a could not start a process/.test(l)), 'the console says which account went out and why');
+});
+
+test('a command that fails is never retried: the project is at fault, not the slot', async () => {
+    const staging = tmpStaging({ 'package.json': '{}' });
+    const pool = createPool(['acct-a', 'acct-b']);
+    let runs = 0;
+    await assert.rejects(
+        buildInSandbox({
+            pool, workspaceRoot: tmpRoot(), staging,
+            buildCmd: 'build', outputDir: '.', timeoutMs: 1000,
+            runLauncher: async () => { runs++; throw Object.assign(new Error('command exited 1'), { code: 1 }); }
+        }),
+        (e) => e.code === 'build_failed'
+    );
+    assert.strictEqual(runs, 1);
+    assert.strictEqual(pool.freeCount(), 2, 'no slot is quarantined for a failing build');
+});
+
+test('two broken slots in a row fail as sandbox_unavailable, not build_failed', async () => {
+    const staging = tmpStaging({ 'package.json': '{}' });
+    const pool = createPool(['acct-a', 'acct-b', 'acct-c']);
+    await assert.rejects(
+        buildInSandbox({
+            pool, workspaceRoot: tmpRoot(), staging,
+            buildCmd: 'build', outputDir: '.', timeoutMs: 1000,
+            runLauncher: async ({ account }) => { throw sandboxStartError(`could not start the build as ${account} (Windows error 5)`); }
+        }),
+        (e) => e.code === 'sandbox_unavailable'
+    );
+    assert.strictEqual(pool.freeCount(), 1, 'the one slot never tried stays in service');
+});
+
 test('build output containing a symlink/junction is refused, and the slot is still released', async () => {
     const staging = tmpStaging({ 'package.json': '{}' });
     const root = tmpRoot();
@@ -220,13 +317,11 @@ test('a directory the build did not write is not mistaken for its output', async
     const result = await buildInSandbox({
         pool, workspaceRoot: root, staging,
         buildCmd: 'npm run build', outputDir: '', timeoutMs: 1000,
+        // A build that leaves public/ alone, and writes its output nowhere Aegis
+        // looks. The rule under test is "did this build write it", read from the
+        // file's own time before and after, so no clock is involved.
         runLauncher: async (args) => {
-            // A build that leaves public/ alone leaves its timestamp alone. Set
-            // explicitly rather than relied on: the copy into the workspace and
-            // the build's start can land in the same millisecond, and the rule
-            // under test is "did this build write it", not "how fast is the disk".
-            const old = new Date('2020-01-01T00:00:00Z');
-            fs.utimesSync(path.join(args.workspace, 'public', 'index.html'), old, old);
+            fs.writeFileSync(path.join(args.workspace, 'build.log'), 'done');
         }
     });
 

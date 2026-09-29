@@ -38,3 +38,8 @@ jobs:
       # README.md, "The four that need Aegis on disk".
       - name: Run every extension's suite
         run: npm test
+        env:
+          # Lets deploySandboxIntegration.test.js create a real build account
+          # and run the sandbox as it. The runner is admin and is discarded
+          # after the job; the test skips everywhere this is not set.
+          AEGIS_SANDBOX_IT: '1'

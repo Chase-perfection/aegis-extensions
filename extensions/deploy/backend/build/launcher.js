@@ -6,6 +6,9 @@ const machineStore = require('../machineStore');
 
 const SCRIPT_PATH = path.join(__dirname, 'run-sandboxed-build.ps1');
 
+/** run-sandboxed-build.ps1's exit code when Windows refuses to start the process as the account. */
+const SANDBOX_START_EXIT = 3;
+
 /** Windows/pwsh baseline env vars a subprocess needs to start at all -- not Aegis secrets. */
 const SAFE_ENV_KEYS = ['SystemRoot', 'windir', 'PATH', 'Path', 'TEMP', 'TMP', 'ComSpec', 'ProgramData', 'PSModulePath'];
 
@@ -68,7 +71,13 @@ function runLauncher({ workspace, account, installCmd, buildCmd, timeoutMs, sign
             env: buildSafeEnv(secret, buildEnv)
         }, (err, stdout, stderr) => {
             if (err) {
-                err.output = String(stderr || stdout || err.message);
+                // The script asks pwsh for plain text; a pwsh older than 7.2
+                // ignores that and colours its errors anyway.
+                err.output = String(stderr || stdout || err.message).replace(/\x1b\[[0-9;]*m/g, '');
+                // Exit 3 is the script saying Windows refused to start the
+                // process as this account: the slot is broken, the project is
+                // not at fault, and nothing of it ran.
+                if (err.code === SANDBOX_START_EXIT) err.sandboxStart = true;
                 return reject(err);
             }
             resolve(String(stdout || ''));
@@ -76,4 +85,4 @@ function runLauncher({ workspace, account, installCmd, buildCmd, timeoutMs, sign
     });
 }
 
-module.exports = { runLauncher, buildSafeEnv };
+module.exports = { runLauncher, buildSafeEnv, SANDBOX_START_EXIT };

@@ -1093,6 +1093,8 @@
             'deploy_ref_build_failed', 'The install or build command exited non-zero'],
         build_account_unconfigured: ['deploy_new_no_sandbox', 'The build accounts are missing on this server. An administrator opens Extensions, clicks "Finish setup on this host" on the Deploy card to create them, then restarts the Aegis service.',
             'deploy_ref_no_sandbox', 'The build sandbox accounts are missing on the host'],
+        sandbox_unavailable: ['deploy_new_sandbox_down', 'The build sandbox on this server could not start a process, so nothing of the project ran. The console above names the build account and the reason. An administrator repairs it on the host, usually by running the Deploy host setup again.',
+            'deploy_ref_sandbox_down', 'The build sandbox could not start on the host'],
         tool_missing: ['deploy_new_tool_missing', 'This server could not start git or pwsh. Check both are on the PATH of the account Aegis runs as.',
             'deploy_ref_tool_missing', 'git or pwsh could not be started'],
         github_auth_failed: ['deploy_new_gh_auth', 'GitHub refused the App credentials. Reconnect the App, or check it is still installed on that repository.',
@@ -4454,7 +4456,7 @@
         'bad_repo_url', 'needs_install', 'repo_not_found', 'bad_branch', 'needs_build',
         'no_index', 'not_a_site', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink', 'bad_site_config',
         'bad_deploy_manifest',
-        'no_free_port', 'deploy_failed', 'build_failed', 'build_account_unconfigured',
+        'no_free_port', 'deploy_failed', 'build_failed', 'build_account_unconfigured', 'sandbox_unavailable',
         'tool_missing', 'github_auth_failed', 'github_unreachable', 'busy', 'branch_gone'
     ];
 

@@ -38,6 +38,7 @@ const projectData = require('./projectData');
 const projectSettings = require('./projectSettings');
 const projectEnv = require('./projectEnv');
 const migrations = require('./migrations');
+const cloner = require('./cloner');
 const { deployNow, promoteNow, releasesFor, isDeploying, startAllRuntimes, useWritableDb } = require('./deployService');
 const runs = require('./runs');
 const runStore = require('./runStore');
@@ -680,6 +681,10 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // de module, pas en argument, pour que ses cinq appelants (quatre routes
         // et le sweep du poller) ne puissent pas l'oublier. Voir deployService.js.
         useWritableDb(writableDb);
+        // Learns which build accounts are broken before a deployment does.
+        // Not awaited: boot does not wait on Windows logons, and a build that
+        // starts first borrows a slot the probe then waits behind.
+        cloner.probeSandbox().catch((e) => console.warn(`[Deploy] build account check skipped: ${e.message}`));
     }
 
     /**
@@ -703,6 +708,9 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 // server. The form only offers it when this is true.
                 runtimes: runtime.isEnabled()
             },
+            // One row per build account: `ok` null means not checked yet, false
+            // means out of service, with the reason Windows gave.
+            sandbox: cloner.sandboxHealth(),
             // Why a site answers here and not from a colleague's machine. The
             // pane renders this rather than assuming, because "the site is
             // down" and "the firewall drops it" look identical in a browser and
@@ -736,6 +744,21 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
      * than waiting for the next boot, because an operator who has just narrowed
      * who may reach their sites means now.
      */
+    /**
+     * Checks the build accounts again, and puts back in service the ones that
+     * now start. What an administrator clicks after repairing the host, instead
+     * of restarting the service to get the boot check.
+     */
+    router.post('/api/deploy/sandbox/probe', requireOptIn, requireRole('admin'), async (req, res) => {
+        try {
+            await cloner.probeSandbox();
+            res.json({ success: true, sandbox: cloner.sandboxHealth() });
+        } catch (e) {
+            console.warn(`[Deploy] build account check failed: ${e.message}`);
+            res.status(500).json({ success: false, error: 'probe_failed' });
+        }
+    });
+
     router.post('/api/deploy/network', requireOptIn, requireRole('admin'), async (req, res) => {
         if (machineStore.siteNetworkIsPinned()) {
             return res.status(409).json({ success: false, error: 'network_pinned' });

@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { assertNoSymlinks } = require('./symlinkGuard');
 const { applyAutofixes } = require('./autofix');
 
@@ -112,7 +113,27 @@ const OUTPUT_CANDIDATES = ['dist', 'build', 'out', '_site', 'public'];
  * Nothing found means nothing changes: the workspace is served exactly as it was
  * before this existed, and the acceptance test says what it thinks of it.
  */
-function discoverOutput(workspace, buildCmd, startedAt, say) {
+/**
+ * Each candidate's `index.html` modification time before the build, null where
+ * there is none. Compared against after the build rather than against the
+ * clock: `Date.now()` and a file time come from two clocks of different
+ * precision, and a file written a millisecond after the build started could
+ * read as older than it, which failed a test at random and could have served a
+ * real build from its source.
+ */
+function snapshotOutputs(workspace) {
+    const before = {};
+    for (const name of OUTPUT_CANDIDATES) {
+        try {
+            before[name] = fs.statSync(path.join(workspace, name, 'index.html')).mtimeMs;
+        } catch {
+            before[name] = null;
+        }
+    }
+    return before;
+}
+
+function discoverOutput(workspace, buildCmd, before, say) {
     if (!buildCmd) return null;
     for (const name of OUTPUT_CANDIDATES) {
         const index = path.join(workspace, name, 'index.html');
@@ -122,12 +143,45 @@ function discoverOutput(workspace, buildCmd, startedAt, say) {
         } catch {
             continue;
         }
-        if (!stat.isFile() || stat.mtimeMs < startedAt) continue;
+        if (!stat.isFile() || stat.mtimeMs === before[name]) continue;
         say.log(`output directory: ${name}/, which this build wrote. `
             + 'Set it on the project to pin it.\n');
         return name;
     }
     return null;
+}
+
+/** Makes `dir` exist and hold nothing, keeping the folder itself and its ACL. */
+function emptyDir(dir) {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const name of fs.readdirSync(dir)) {
+        fs.rmSync(path.join(dir, name), { recursive: true, force: true, maxRetries: 3 });
+    }
+}
+
+/**
+ * Gives the workspace the ACL Create-BuildAccounts.ps1 set: the build account,
+ * SYSTEM and Administrators, nothing inherited. On every build, the way
+ * runtime.js grants its folders on every start, so a folder that was replaced,
+ * restored or made by hand is repaired instead of failing the build. Runs on
+ * the empty folder, so what is copied in next inherits it.
+ *
+ * Principals by SID: the hosts are French Windows, and "Administrators" does
+ * not resolve there.
+ */
+function scopeWorkspace(dir, account) {
+    if (process.platform !== 'win32') return;
+    try {
+        execFileSync('icacls', [dir, '/inheritance:r',
+            '/grant:r', `${account}:(OI)(CI)F`, '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '/Q'],
+        { windowsHide: true, stdio: 'pipe' });
+    } catch (e) {
+        throw Object.assign(
+            new Error(`could not give build account ${account} its workspace ${dir}: `
+                + `${String(e.stderr || e.message).trim()}. Run the Deploy host setup again.`),
+            // A slot fault: icacls refuses an account that no longer exists.
+            { code: 'sandbox_unavailable', sandboxStart: true });
+    }
 }
 
 /**
@@ -148,16 +202,55 @@ function discoverOutput(workspace, buildCmd, startedAt, say) {
  * object to the launcher, which is where the decision about how to get them
  * across a process boundary without leaving a copy behind lives.
  */
-async function buildInSandbox({ pool, workspaceRoot, staging, installCmd, buildCmd, outputDir, timeoutMs, runLauncher, report, signal, buildEnv }) {
-    const say = report || SILENT;
-    const account = await pool.borrow();
+async function buildInSandbox(opts) {
+    const { pool } = opts;
+    const say = opts.report || SILENT;
+    let last = null;
+    // Two attempts: the second exists for one reason, a slot Windows would not
+    // start a process as. Nothing of the project ran on that slot, so running
+    // it again elsewhere is safe. A command that failed is never retried.
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const account = await pool.borrow();
+        try {
+            return await buildOnce(account, opts, say);
+        } catch (e) {
+            if (!isSandboxFault(e)) throw e;
+            const reason = firstLine(e.output || e.message);
+            pool.quarantine(account, reason);
+            say.log(`build account ${account} could not start a process, and is out of service until it passes a check: ${reason}\n`);
+            last = e;
+        } finally {
+            pool.release(account);
+        }
+    }
+    // A missing password already has a code, and a page sentence that says
+    // which click creates it. Everything else is the sandbox, named as such.
+    if (last.code !== 'build_account_unconfigured') last.code = 'sandbox_unavailable';
+    throw last;
+}
+
+/** A failure of the slot rather than of the project: nothing of the project ran. */
+function isSandboxFault(e) {
+    return !!(e && (e.sandboxStart || e.code === 'build_account_unconfigured'));
+}
+
+function firstLine(text) {
+    return String(text || '').replace(/^[^:\n]*\.ps1:\s*/, '').split(/\r?\n/).find((l) => l.trim()) || 'unknown error';
+}
+
+async function buildOnce(account, { workspaceRoot, staging, installCmd, buildCmd, outputDir, timeoutMs, runLauncher, signal, buildEnv, scopeWorkspace }, say) {
     let stopTail = null;
     try {
         const workspace = path.join(workspaceRoot, account);
         // Wiped first, not after: a crash mid-build leaves a dirty folder
         // rather than an orphaned account, and the NEXT use is what cleans it.
-        fs.rmSync(workspace, { recursive: true, force: true });
-        fs.mkdirSync(workspace, { recursive: true });
+        //
+        // Emptied, never removed. The folder carries the ACL that lets this
+        // account in, and a folder deleted and made again inherits
+        // ProgramData's instead, so Windows refused to start the build there
+        // ("Access is denied") on every build after the first.
+        emptyDir(workspace);
+        if (scopeWorkspace) scopeWorkspace(workspace, account);
         fs.cpSync(staging, workspace, { recursive: true });
 
         // On the copy, never on the clone: a dependency this build has no use
@@ -168,7 +261,7 @@ async function buildInSandbox({ pool, workspaceRoot, staging, installCmd, buildC
 
         // Taken before the launcher, so `discoverOutput` can tell a directory
         // this build produced from one that was committed beside it.
-        const startedAt = Date.now();
+        const before = snapshotOutputs(workspace);
 
         stopTail = tailLogs({ workspace, installCmd, buildCmd, report: say });
         try {
@@ -178,7 +271,7 @@ async function buildInSandbox({ pool, workspaceRoot, staging, installCmd, buildC
             // start. Named here because nothing further up can tell that apart
             // from a clone that failed, and "the clone failed" is what the
             // operator was being told about their own build script.
-            if (!e.code || typeof e.code === 'number') e.code = 'build_failed';
+            if (!e.sandboxStart && (!e.code || typeof e.code === 'number')) e.code = 'build_failed';
             throw e;
         }
         stopTail();
@@ -187,7 +280,7 @@ async function buildInSandbox({ pool, workspaceRoot, staging, installCmd, buildC
         // Nothing to declare when the build says where it put things. An empty
         // outputDir used to mean "serve the whole workspace", which for a build
         // that writes into dist/ serves the source next to it.
-        const resolved = outputDir || discoverOutput(workspace, buildCmd, startedAt, say);
+        const resolved = outputDir || discoverOutput(workspace, buildCmd, before, say);
         const built = path.resolve(workspace, resolved || '.');
         const inside = path.relative(workspace, built);
         if (inside.startsWith('..') || path.isAbsolute(inside)) {
@@ -203,8 +296,7 @@ async function buildInSandbox({ pool, workspaceRoot, staging, installCmd, buildC
         // the only place the operator will ever see it: the workspace is wiped
         // by the next build of any project.
         if (stopTail) stopTail();
-        pool.release(account);
     }
 }
 
-module.exports = { buildInSandbox };
+module.exports = { buildInSandbox, scopeWorkspace };
