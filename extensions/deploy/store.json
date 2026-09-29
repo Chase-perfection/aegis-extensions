@@ -16,9 +16,9 @@
   "minAppVersion": "1.0.5",
   "latest": {
     "version": "0.2.5",
-    "publishedAt": "2026-09-29T09:35:42Z",
-    "size": 350953,
-    "sha256": "d31935547e086922312f5514ab3b766ce0e667c7119e71120bd6f10dfabab39e"
+    "publishedAt": "2026-09-29T11:48:44Z",
+    "size": 351887,
+    "sha256": "04e9828f9b363d1eeb7389a46e113219ea09a7d80e6b8feed59152df4e29894e"
   },
   "releases": [
     "0.0.0",
