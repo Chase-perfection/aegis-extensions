@@ -2,7 +2,7 @@
 
 Hosts and services discovered on the network.
 
-## 0.0.0
+## 0.0.1
 
 The subnet explorer leaves Aegis core and becomes an extension you install.
 
