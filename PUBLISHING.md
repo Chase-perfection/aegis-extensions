@@ -46,6 +46,63 @@ compares it with the signed manifest and refuses `release_mismatch` when they
 disagree, so a stale field publishes assets that every install downloads and then
 rejects. The workflow refuses the tag rather than letting you find out that way.
 
+## 1b. If the extension declares `provision`
+
+A host setup script runs with administrator rights, from three places, and a
+release has to be ready for all three:
+
+| Who runs it | When | Phases |
+|---|---|---|
+| The backend, as the service | the store installs or updates the extension | `prepare` |
+| The backend, as the service | an admin clicks **Finish setup on this host** | `enable` |
+| `Aegis-Setup.exe` (elevated) | every install and update of Aegis, wizard or `--silent` | `prepare`, then `enable` when the wizard's "Finish their setup on this machine" box is ticked (`--silent` never ticks it) |
+| The backend, as the service | an admin deletes the extension (**Delete from this server**) | `remove`, before core deletes the files |
+
+The installer is the reason this section exists. An extension used to reach a
+machine without its `prepare` ever running (a reinstall of Aegis, a restored data
+folder, an install whose `prepare` failed quietly), and the admin's click then
+failed on accounts nobody had created. `installer/Aegis.Setup.Core/ExtensionSetup.cs`
+closes that, and it is strict about what it will run. Before tagging, check:
+
+- **`provision` is a relative `.ps1` inside the extension.** Absolute, `..`, or
+  another extension: skipped and logged.
+- **Everything the script calls is inside the package.** The installer checks the
+  permissions of the data root, its `extensions` folder, and every file and folder
+  of your extension. An owner, or a write grant, outside SYSTEM, Administrators,
+  TrustedInstaller and the account running the installer, and it runs nothing.
+  A store install gives you exactly that, so this only bites when the folder
+  was put there some other way.
+- **No link or junction anywhere in the extension.** Refused for the same reason:
+  the permissions read would be the link's, the content somebody else's. The
+  developer loop in [README.md](README.md) junctions the working copy into
+  `ProgramData`, so on a developer machine the installer skips your extension
+  and says why. That is the check working, not a bug: use the dashboard button there.
+- **`enable` sets only `AEGIS_*` variables, never one core owns** (`PORT`,
+  `AEGIS_ADMIN_PORT`, `AEGIS_DATA_ROOT`, `AEGIS_AUTH_DB_PATH`,
+  `PUPPETEER_CACHE_DIR`, the `AEGIS_STORAGE_*` overrides). Anything else is
+  refused by name in the install log. Values are strings, one line.
+- **`enable` succeeds on a host where `prepare` never ran.** Check what you need,
+  and create what is missing instead of refusing: the installer may be the first
+  thing to call you, and "reinstall the extension" is not an answer an
+  administrator can act on. Deploy's `Provision.ps1` is the reference.
+- **A failure is printed on stdout, not thrown.** Both runners keep stdout and
+  show its last line to the administrator; stderr is kept by neither the card
+  nor the backend. Catch, `Write-Output` the reason, `exit 1`.
+- **`remove` undoes only what you made, found by a mark you left on it.** Core
+  already deletes your code, `tenants/<slug>/data/extensions/<id>` in every
+  tenant, your opt-in variable and your ledger line. Anything else of yours is
+  your `remove` phase's job; clear your `enable` variables with `null`. Exiting
+  non-zero stops the whole deletion, so do it only when going ahead would harm
+  the host. Test it on a VM before tagging: nobody gets a second try at a delete.
+- **Five minutes, no input.** Both runners stop the script after that, and stdin
+  is closed. Rerunnable, because an update runs it again.
+- **Node is on `PATH` and `AEGIS_DATA_ROOT` is set** when the installer runs
+  you, pointing where the service keeps its data, so what you store there is what
+  the service reads.
+
+The installer never fails an Aegis install on your script: a refusal or an exit
+code is logged, and the dashboard button stays the way to retry.
+
 ## 2. Write the changelog, then tag
 
 `extensions/<id>/CHANGELOG.md` becomes the release notes verbatim, so write it

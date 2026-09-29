@@ -84,22 +84,40 @@ Declare `"provision": "backend/setup/YourScript.ps1"` and Aegis runs it for you,
 as the service, which on a real install is LocalSystem. Two phases:
 
 ```powershell
-param([ValidateSet('prepare','enable')][string]$Phase)
+param([ValidateSet('prepare','enable','remove')][string]$Phase)
 ```
 
-`prepare` runs at every install and every update. Create what you need on the
-host and leave your feature off. Be idempotent: an update runs it again.
+`prepare` runs at every install and every update, of your extension from the
+store and of Aegis itself by `Aegis-Setup.exe`. Create what you need on the host
+and leave your feature off. Be idempotent: an update runs it again.
 
 `enable` runs when an administrator clicks **Finish setup on this host** on your
-card. Print one line of JSON anywhere in your output and Aegis writes it into
-the service environment:
+card, or ticks the matching box in the Aegis installer. It may be the first
+phase to run on a host, so create what is missing rather than refuse. Print one
+line of JSON anywhere in your output and Aegis writes it into the service
+environment:
 
 ```
 {"env":{"AEGIS_YOURID_RUNTIME":"1","AEGIS_YOURID_ACCOUNTS":"a,b"}}
 ```
 
 Everything else you print goes to the install log, so talk to the operator
-freely. The last `env` line wins.
+freely. The last `env` line wins. Only `AEGIS_*` names that core does not own are
+accepted by the installer, and a failure belongs on stdout: the last line printed
+is what the administrator reads. The full list of what the installer checks
+before it runs you is in [PUBLISHING.md](PUBLISHING.md), section 1b.
+
+`remove` runs when an administrator deletes your extension from the server
+(**Delete from this server**, in the card's details). It runs first, while your
+files still exist, and undoes what the other two phases did on the host: the
+accounts, the rules, any folder of yours outside
+`tenants/<slug>/data/extensions/<id>` (that one, your code and your ledger line
+are core's to delete). Find what you delete by a mark you wrote on it, never by
+a name pattern. Print `{"env":{"AEGIS_YOURID_RUNTIME":null}}` to clear the
+variables `enable` set; a value other than `null` is ignored. Exit non-zero only
+when deleting would leave the host worse off (Deploy refuses while a site it
+cannot stop is still running): core then deletes nothing. A script without a
+`remove` phase is still removable; only its host changes stay behind.
 
 You never write the service environment yourself. One implementation of that
 registry write exists, it is tested, and it stays that way however many
