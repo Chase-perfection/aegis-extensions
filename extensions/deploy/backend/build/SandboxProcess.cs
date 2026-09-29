@@ -64,6 +64,40 @@ namespace AegisSandbox {
         static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr security,
             uint disposition, uint flags, IntPtr template);
 
+        [StructLayout(LayoutKind.Sequential)]
+        struct SECURITY_ATTRIBUTES {
+            public int nLength;
+            public IntPtr lpSecurityDescriptor;
+            public bool bInheritHandle;
+        }
+
+        const uint WINSTA_ALL_ACCESS = 0x0000037F;
+        const uint DESKTOP_ALL_ACCESS = 0x000F01FF;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern IntPtr GetProcessWindowStation();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern bool SetProcessWindowStation(IntPtr winsta);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr CreateWindowStationW(string name, uint flags, uint access, ref SECURITY_ATTRIBUTES sa);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr CreateDesktopW(string name, IntPtr device, IntPtr devmode, uint flags, uint access, ref SECURITY_ATTRIBUTES sa);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern bool CloseWindowStation(IntPtr winsta);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern bool CloseDesktop(IntPtr desktop);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl, int revision, out IntPtr sd, IntPtr size);
+
+        [DllImport("kernel32.dll")]
+        static extern IntPtr LocalFree(IntPtr mem);
+
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
 
@@ -84,7 +118,7 @@ namespace AegisSandbox {
 
         /// <summary>A started, suspended-then-resumed process. Dispose closes its handles.</summary>
         public sealed class Started : IDisposable {
-            internal IntPtr Process, Thread;
+            internal IntPtr Process, Thread, WindowStation, Desktop;
             public int Id { get; internal set; }
 
             /// <summary>True when it exited within `ms`; false on timeout (the caller kills the job).</summary>
@@ -103,6 +137,64 @@ namespace AegisSandbox {
             public void Dispose() {
                 if (Thread != IntPtr.Zero) { CloseHandle(Thread); Thread = IntPtr.Zero; }
                 if (Process != IntPtr.Zero) { CloseHandle(Process); Process = IntPtr.Zero; }
+                if (Desktop != IntPtr.Zero) { CloseDesktop(Desktop); Desktop = IntPtr.Zero; }
+                if (WindowStation != IntPtr.Zero) { CloseWindowStation(WindowStation); WindowStation = IntPtr.Zero; }
+            }
+        }
+
+        /// <summary>
+        /// A window station and desktop of the build's own, open to `sid`,
+        /// SYSTEM and Administrators only.
+        ///
+        /// Without it the process lands on the backend service's desktop, which
+        /// the build account cannot open. cmd's built-ins do not notice; any
+        /// program that loads user32 (whoami, node, so npm) fails to initialise
+        /// and waits on an error box nobody can see: the build hung until its
+        /// timeout. A desktop of its own also keeps the build from sending
+        /// window messages to anything the service runs.
+        ///
+        /// Named per account and not per build: the pool never runs two builds
+        /// on one account, and CreateWindowStation opens an existing one.
+        /// </summary>
+        static void OwnDesktop(string user, string sid, out IntPtr winsta, out IntPtr desktop, out string name) {
+            winsta = IntPtr.Zero; desktop = IntPtr.Zero;
+            string station = "AegisBuild-" + user;
+            IntPtr sd;
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    "D:P(A;;GA;;;" + sid + ")(A;;GA;;;SY)(A;;GA;;;BA)", 1, out sd, IntPtr.Zero)) {
+                int e = Marshal.GetLastWin32Error();
+                throw new Win32Exception(e, "could not build the desktop's access list: " + new Win32Exception(e).Message);
+            }
+            IntPtr previous = GetProcessWindowStation();
+            try {
+                var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES)), lpSecurityDescriptor = sd };
+                winsta = CreateWindowStationW(station, 0, WINSTA_ALL_ACCESS, ref sa);
+                if (winsta == IntPtr.Zero) {
+                    int e = Marshal.GetLastWin32Error();
+                    throw new Win32Exception(e, "could not create the build's window station: " + new Win32Exception(e).Message);
+                }
+                // A desktop is created in the calling process's window station,
+                // so this one is borrowed for the call and given straight back.
+                if (!SetProcessWindowStation(winsta)) {
+                    int e = Marshal.GetLastWin32Error();
+                    throw new Win32Exception(e, "could not enter the build's window station: " + new Win32Exception(e).Message);
+                }
+                try {
+                    desktop = CreateDesktopW("Default", IntPtr.Zero, IntPtr.Zero, 0, DESKTOP_ALL_ACCESS, ref sa);
+                    if (desktop == IntPtr.Zero) {
+                        int e = Marshal.GetLastWin32Error();
+                        throw new Win32Exception(e, "could not create the build's desktop: " + new Win32Exception(e).Message);
+                    }
+                } finally {
+                    SetProcessWindowStation(previous);
+                }
+                name = station + "\\Default";
+            } catch {
+                if (desktop != IntPtr.Zero) { CloseDesktop(desktop); desktop = IntPtr.Zero; }
+                if (winsta != IntPtr.Zero) { CloseWindowStation(winsta); winsta = IntPtr.Zero; }
+                throw;
+            } finally {
+                LocalFree(sd);
             }
         }
 
@@ -125,6 +217,7 @@ namespace AegisSandbox {
                                     IDictionary environment, IntPtr job, string logFile) {
             IntPtr token = IntPtr.Zero, secret = IntPtr.Zero, env = IntPtr.Zero;
             IntPtr log = INVALID_HANDLE_VALUE, nul = INVALID_HANDLE_VALUE;
+            IntPtr winsta = IntPtr.Zero, desktop = IntPtr.Zero;
             var pi = new PROCESS_INFORMATION();
             try {
                 log = CreateFileW(logFile, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, IntPtr.Zero, CREATE_ALWAYS, 0, IntPtr.Zero);
@@ -144,10 +237,15 @@ namespace AegisSandbox {
                     throw new Win32Exception(e, "logon as a batch job refused: " + new Win32Exception(e).Message);
                 }
 
+                string sid;
+                using (var identity = new System.Security.Principal.WindowsIdentity(token)) sid = identity.User.Value;
+                string desktopName;
+                OwnDesktop(user, sid, out winsta, out desktop, out desktopName);
+
                 env = EnvironmentBlock(environment);
                 var si = new STARTUPINFO();
                 si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
-                si.lpDesktop = "";
+                si.lpDesktop = desktopName;
                 // Duplicated into the new process by the Secondary Logon
                 // service, the way runas redirects: no handle inheritance needed.
                 si.dwFlags = unchecked((int)STARTF_USESTDHANDLES);
@@ -172,10 +270,15 @@ namespace AegisSandbox {
                     throw new Win32Exception(e, "could not resume the process: " + new Win32Exception(e).Message);
                 }
 
-                var started = new Started { Process = pi.hProcess, Thread = pi.hThread, Id = pi.dwProcessId };
+                // The desktop lives as long as Started: the process is on it.
+                var started = new Started { Process = pi.hProcess, Thread = pi.hThread, Id = pi.dwProcessId,
+                                            WindowStation = winsta, Desktop = desktop };
                 pi = new PROCESS_INFORMATION();   // ownership moved
+                winsta = IntPtr.Zero; desktop = IntPtr.Zero;
                 return started;
             } finally {
+                if (desktop != IntPtr.Zero) CloseDesktop(desktop);
+                if (winsta != IntPtr.Zero) CloseWindowStation(winsta);
                 if (pi.hThread != IntPtr.Zero) CloseHandle(pi.hThread);
                 if (pi.hProcess != IntPtr.Zero) CloseHandle(pi.hProcess);
                 if (secret != IntPtr.Zero) Marshal.ZeroFreeGlobalAllocUnicode(secret);
