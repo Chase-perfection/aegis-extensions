@@ -129,6 +129,61 @@ if ($WithPython) {
     Write-Host "Python for the sandbox: $pythonRootResolved"
 }
 
+<#
+Every principal below is named by SID, never by name. Names are localized:
+'Administrators' is 'Administrateurs' on a French Windows, and a name that does not translate throws
+IdentityNotMappedException at AddAccessRule, after the account exists.
+#>
+$SystemSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$AdministratorsSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
+
+<#
+Adds the account to the two deny-logon rights, keeping whoever is already
+there. Run on every pass, not only when the account is created: a pass that
+stopped between the two used to leave an account that could log on, for good.
+
+secedit exports UTF-16 and reads the rights only under [Privilege Rights], as
+*SID entries. Appending to the end of the file lands in [Version] and is
+ignored without an error, which is what this did before.
+#>
+function Set-DenyLogon {
+    param([System.Security.Principal.SecurityIdentifier]$Sid)
+
+    $entry = "*$($Sid.Value)"
+    $stamp = [guid]::NewGuid().ToString('N')
+    $cfg = Join-Path $env:TEMP "aegis-secpol-$stamp.inf"
+    $db = Join-Path $env:TEMP "aegis-secpol-$stamp.sdb"
+    try {
+        & secedit /export /cfg $cfg /areas USER_RIGHTS /quiet | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "secedit could not export the user rights (exit $LASTEXITCODE)" }
+        $lines = [System.Collections.Generic.List[string]](Get-Content -LiteralPath $cfg)
+
+        $changed = $false
+        foreach ($right in 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight') {
+            $i = -1
+            for ($k = 0; $k -lt $lines.Count; $k++) { if ($lines[$k] -match "^\s*$right\s*=") { $i = $k; break } }
+            if ($i -ge 0) {
+                $holders = @(($lines[$i] -split '=', 2)[1] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                if ($holders -contains $entry) { continue }
+                $lines[$i] = "$right = " + (($holders + $entry) -join ',')
+            } else {
+                $section = -1
+                for ($k = 0; $k -lt $lines.Count; $k++) { if ($lines[$k] -match '^\s*\[Privilege Rights\]') { $section = $k; break } }
+                if ($section -lt 0) { $lines.Add('[Privilege Rights]'); $section = $lines.Count - 1 }
+                $lines.Insert($section + 1, "$right = $entry")
+            }
+            $changed = $true
+        }
+        if (-not $changed) { return }
+
+        Set-Content -LiteralPath $cfg -Value $lines -Encoding Unicode
+        & secedit /configure /db $db /cfg $cfg /areas USER_RIGHTS /quiet | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "secedit could not deny logon to $($Sid.Value) (exit $LASTEXITCODE)" }
+    } finally {
+        Remove-Item -LiteralPath $cfg, $db, ($db -replace '\.sdb$', '.jfm') -ErrorAction SilentlyContinue
+    }
+}
+
 function New-RandomPassword {
     -join ((1..24) | ForEach-Object { [char]((48..57) + (65..90) + (97..122) + (33, 35, 36, 37) | Get-Random) })
 }
@@ -153,17 +208,11 @@ foreach ($name in $AccountNames) {
         $password = New-RandomPassword
         $secure = ConvertTo-SecureString $password -AsPlainText -Force
         # New-LocalUser caps -Description at 48 characters and refuses the
-        # whole call past that, before the account exists.
+        # whole call past that, before the account exists. The description is
+        # also the mark Provision.ps1 `remove` finds these accounts by: change
+        # one, change the other.
         New-LocalUser -Name $name -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
             -Description "Aegis Deploy build sandbox account" | Out-Null
-
-        # No interactive or remote logon: this account only ever runs as the
-        # target of Start-Process from the backend, never logs in directly.
-        $sid = (Get-LocalUser -Name $name).SID.Value
-        $sidObj = New-Object System.Security.Principal.SecurityIdentifier($sid)
-        secedit /export /cfg "$env:TEMP\secpol.cfg" | Out-Null
-        Add-Content "$env:TEMP\secpol.cfg" "`nSeDenyInteractiveLogonRight = $sid`nSeDenyRemoteInteractiveLogonRight = $sid`n"
-        secedit /configure /db secedit.sdb /cfg "$env:TEMP\secpol.cfg" /areas USER_RIGHTS | Out-Null
 
         # Through the environment, not on the command line. An argument to node
         # is readable by anyone who can list processes, and the restricted
@@ -181,11 +230,20 @@ foreach ($name in $AccountNames) {
         Write-Host "Account $name already exists, leaving it alone"
     }
 
+    $sid = (Get-LocalUser -Name $name).SID
+
+    # No interactive or remote logon: this account only ever runs as the
+    # target of Start-Process from the backend, never logs in directly.
+    Set-DenyLogon -Sid $sid
+
     New-Item -ItemType Directory -Path $workspace -Force | Out-Null
     $acl = Get-Acl $workspace
     $acl.SetAccessRuleProtection($true, $false)   # stop inheriting from ProgramData
-    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) } | Out-Null
-    foreach ($grantee in @($name, 'SYSTEM', 'Administrators')) {
+    # Explicit rules only, read as SIDs: asking for names would translate each
+    # one, and the inherited ones go with the protection flag above anyway.
+    $acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) |
+        ForEach-Object { $acl.RemoveAccessRule($_) } | Out-Null
+    foreach ($grantee in @($sid, $SystemSid, $AdministratorsSid)) {
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
             $grantee, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
         $acl.AddAccessRule($rule)
@@ -203,7 +261,7 @@ foreach ($name in $AccountNames) {
     # reset outright. Rebuilding Python's ACL from scratch would be a good way
     # to break Python for everyone.
     if ($WithPython) {
-        & icacls $pythonRootResolved /grant "${name}:(OI)(CI)(RX)" /T /C /Q | Out-Null
+        & icacls $pythonRootResolved /grant "*$($sid.Value):(OI)(CI)(RX)" /T /C /Q | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "could not grant $name read+execute on $pythonRootResolved" }
         Write-Host "Granted $name read+execute on $pythonRootResolved"
     }
@@ -211,16 +269,16 @@ foreach ($name in $AccountNames) {
     $ruleBase = "AegisBuild-$name"
     if (-not (Get-NetFirewallRule -DisplayName "$ruleBase-AllowWeb" -ErrorAction SilentlyContinue)) {
         New-NetFirewallRule -DisplayName "$ruleBase-AllowWeb" -Direction Outbound -Action Allow `
-            -Protocol TCP -RemotePort 443, 80 -Package "*" -Owner (New-Object System.Security.Principal.NTAccount($name)).Translate([System.Security.Principal.SecurityIdentifier]).Value | Out-Null
+            -Protocol TCP -RemotePort 443, 80 -Package "*" -Owner $sid.Value | Out-Null
         New-NetFirewallRule -DisplayName "$ruleBase-AllowDns" -Direction Outbound -Action Allow `
-            -Protocol UDP -RemotePort 53 -Owner (New-Object System.Security.Principal.NTAccount($name)).Translate([System.Security.Principal.SecurityIdentifier]).Value | Out-Null
+            -Protocol UDP -RemotePort 53 -Owner $sid.Value | Out-Null
         Write-Host "Added outbound allow (443/80/53) scoped to $name"
     }
     foreach ($subnet in $DomainSubnets) {
         $denyName = "$ruleBase-DenyDomain-$($subnet -replace '[/.]', '_')"
         if (-not (Get-NetFirewallRule -DisplayName $denyName -ErrorAction SilentlyContinue)) {
             New-NetFirewallRule -DisplayName $denyName -Direction Outbound -Action Block `
-                -RemoteAddress $subnet -Owner (New-Object System.Security.Principal.NTAccount($name)).Translate([System.Security.Principal.SecurityIdentifier]).Value | Out-Null
+                -RemoteAddress $subnet -Owner $sid.Value | Out-Null
             Write-Host "Added outbound deny to $subnet scoped to $name"
         }
     }

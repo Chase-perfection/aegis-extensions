@@ -4,9 +4,13 @@ Clones a git branch and serves it as a site, with an optional sandboxed build.
 
 ## 0.2.5
 
-**Installing on a server creates the build accounts.** Their description was
-72 characters and `New-LocalUser` takes 48 at most, so the install stopped at
-"Preparing the accounts" with nothing written.
+**Installing on a server creates the build accounts.** Two refusals stopped the
+install at "Preparing the accounts". The account description was 72 characters,
+and `New-LocalUser` takes 48 at most. The workspace ACL named `Administrators`
+and `SYSTEM`, which a French Windows calls `Administrateurs` and `Système`.
+Every principal is now named by SID. The deny-logon rights, which were written
+where `secedit` never reads them, now land in `[Privilege Rights]` next to
+whoever already holds them, and are checked on every run.
 
 **Finish setup on this host creates the accounts it needs.** The click used to
 refuse when the runtime accounts did not exist and told the administrator to
