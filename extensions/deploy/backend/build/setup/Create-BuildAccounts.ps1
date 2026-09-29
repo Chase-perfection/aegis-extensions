@@ -142,6 +142,11 @@ Adds the account to the two deny-logon rights, keeping whoever is already
 there. Run on every pass, not only when the account is created: a pass that
 stopped between the two used to leave an account that could log on, for good.
 
+And to SeBatchLogonRight, the one logon the sandbox uses: run-sandboxed-build.ps1
+logs the account on as a batch job (SandboxProcess.cs). Without it every build
+fails with 1385. A batch logon is not an interactive one, so the two denies
+still hold: nobody signs in at the console or over RDP with these accounts.
+
 secedit exports UTF-16 and reads the rights only under [Privilege Rights], as
 *SID entries. Appending to the end of the file lands in [Version] and is
 ignored without an error, which is what this did before.
@@ -159,7 +164,7 @@ function Set-DenyLogon {
         $lines = [System.Collections.Generic.List[string]](Get-Content -LiteralPath $cfg)
 
         $changed = $false
-        foreach ($right in 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight') {
+        foreach ($right in 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight', 'SeBatchLogonRight') {
             $i = -1
             for ($k = 0; $k -lt $lines.Count; $k++) { if ($lines[$k] -match "^\s*$right\s*=") { $i = $k; break } }
             if ($i -ge 0) {
@@ -178,7 +183,7 @@ function Set-DenyLogon {
 
         Set-Content -LiteralPath $cfg -Value $lines -Encoding Unicode
         & secedit /configure /db $db /cfg $cfg /areas USER_RIGHTS /quiet | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "secedit could not deny logon to $($Sid.Value) (exit $LASTEXITCODE)" }
+        if ($LASTEXITCODE -ne 0) { throw "secedit could not set the logon rights of $($Sid.Value) (exit $LASTEXITCODE)" }
     } finally {
         Remove-Item -LiteralPath $cfg, $db, ($db -replace '\.sdb$', '.jfm') -ErrorAction SilentlyContinue
     }
@@ -232,8 +237,8 @@ foreach ($name in $AccountNames) {
 
     $sid = (Get-LocalUser -Name $name).SID
 
-    # No interactive or remote logon: this account only ever runs as the
-    # target of Start-Process from the backend, never logs in directly.
+    # No interactive or remote logon, and a batch logon: this account only
+    # ever runs what the backend starts as it, never logs in directly.
     Set-DenyLogon -Sid $sid
 
     New-Item -ItemType Directory -Path $workspace -Force | Out-Null

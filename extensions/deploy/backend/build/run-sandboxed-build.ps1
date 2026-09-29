@@ -34,7 +34,6 @@ if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }
 $plainPassword = $env:AEGIS_BUILD_ACCOUNT_SECRET
 if (-not $plainPassword) { throw "AEGIS_BUILD_ACCOUNT_SECRET is not set" }
 $securePassword = ConvertTo-SecureString $plainPassword -AsPlainText -Force
-$credential = New-Object System.Management.Automation.PSCredential(".\$AccountName", $securePassword)
 $plainPassword = $null
 Remove-Item Env:AEGIS_BUILD_ACCOUNT_SECRET -ErrorAction SilentlyContinue
 
@@ -136,25 +135,23 @@ namespace AegisBuild {
 # generous but real caps, so a runaway build cannot take the host down.
 $job = [AegisBuild.JobObject]::CreateCappedJob(64, 2GB)
 
-# The Windows error behind a failed Process.Start, as the sentence an operator
-# can act on. The raw message names neither the account nor the fix, and "Access
-# is denied" alone has three unrelated causes on this path.
+# Logon as a batch job, a suspended start and the Job Object before the first
+# instruction: see SandboxProcess.cs for why Process.Start could not do this.
+Add-Type -Path (Join-Path $PSScriptRoot 'SandboxProcess.cs')
+
+# The Windows error behind a refused start, as the sentence an operator can act
+# on. The raw message names neither the account nor the fix.
 function Get-StartFailureHint {
     param([int]$Code)
-    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     switch ($Code) {
-        5 {
-            if ($identity.IsSystem) {
-                return "the Aegis backend runs as LocalSystem, and Windows refuses to start a process under another account from LocalSystem (CreateProcessWithLogonW). Run the backend service as a local administrator account instead."
-            }
-            return "Windows refused $AccountName access to $WorkspaceDir or to cmd.exe. Aegis resets the workspace permissions before each build, so run the Deploy host setup again to repair the account."
-        }
+        5 { return "Windows refused $AccountName access to $WorkspaceDir or to cmd.exe. Aegis resets the workspace permissions before each build, so run the Deploy host setup again to repair the account." }
         267 { return "$WorkspaceDir is not a folder $AccountName can open. Run the Deploy host setup again." }
+        1314 { return "the account the Aegis backend runs as lacks 'Impersonate a client after authentication'. LocalSystem and administrators hold it: run the Aegis service as one of them." }
         1326 { return "the password Aegis stored for $AccountName no longer matches the account. Run the Deploy host setup again: it resets both." }
         1327 { return "a policy on this host restricts how $AccountName may sign in (logon hours, workstations or blank password)." }
         1330 { return "the password of $AccountName has expired. Run the Deploy host setup again." }
         1331 { return "$AccountName is disabled. Enable it in Local Users and Groups, or run the Deploy host setup again." }
-        1385 { return "$AccountName is not allowed the logon type a build needs. A security policy denies it local logon: check 'Deny log on locally' in the host's user rights." }
+        1385 { return "$AccountName is not granted 'Log on as a batch job', or a policy denies it. Run the Deploy host setup again, which grants it; if a domain policy owns that right on this host, add the account there." }
         1909 { return "$AccountName is locked out. Unlock it in Local Users and Groups." }
         1792 { return "the Secondary Logon service (seclogon) is stopped or disabled. Set it to Manual and start it." }
         default { return "run the Deploy host setup again; if it persists, the Windows error code above names the cause." }
@@ -162,9 +159,9 @@ function Get-StartFailureHint {
 }
 
 function Start-AsBuildAccount {
-    param([System.Diagnostics.ProcessStartInfo]$StartInfo)
+    param([string]$CommandLine, [System.Collections.IDictionary]$Environment, [string]$LogFile)
     try {
-        return [System.Diagnostics.Process]::Start($StartInfo)
+        return [AegisSandbox.SandboxProcess]::Start($AccountName, $securePassword, $CommandLine, $WorkspaceDir, $Environment, $job, $LogFile)
     } catch {
         $inner = $_.Exception
         while ($inner.InnerException -and -not ($inner -is [System.ComponentModel.Win32Exception])) { $inner = $inner.InnerException }
@@ -182,43 +179,33 @@ function Invoke-Capped {
     param([string]$Command, [string]$LogFile)
     if (-not $Command) { return }
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = 'cmd.exe'
-    $psi.Arguments = "/d /c `"$Command`" > `"$LogFile`" 2>&1"
-    $psi.WorkingDirectory = $WorkspaceDir
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.LoadUserProfile = $false
-    # The bare name and the machine as the domain, never ".\name": with no
-    # domain, CreateProcessWithLogonW reads the name as a UPN, and ".\name" is
-    # no UPN, so Windows answers 1326 "user name or password is incorrect" for
-    # an account whose password is right. MachineName and not
-    # $env:COMPUTERNAME, which the launcher does not pass to this process.
-    $psi.UserName = $AccountName
-    $psi.Domain = [Environment]::MachineName
-    $psi.Password = $credential.Password
+    # /s: cmd strips exactly the outer pair of quotes and runs what is inside
+    # as typed, so `npm ci && npm run build` stays one command line. The output
+    # goes to $LogFile as the process's own handle, not through a redirect.
+    $cmdExe = Join-Path ([Environment]::SystemDirectory) 'cmd.exe'
+    $commandLine = "`"$cmdExe`" /d /s /c `"$Command`""
 
-    # Added last, so the project's own values win over anything inherited. The
-    # names Aegis refuses on the way in (PATH, ComSpec, the AEGIS_ prefix) are
-    # exactly the ones that would matter here: see projectEnv.js.
-    # `Environment` and not `EnvironmentVariables`: the latter is a
-    # StringDictionary, which lowercases every key it stores. Windows and Node
-    # both read environment variables case-insensitively so it would mostly
-    # work, and "mostly" is not what a build script reading API_TOKEN needs.
-    foreach ($name in $buildEnv.Keys) {
-        $psi.Environment[$name] = $buildEnv[$name]
-    }
+    # This process's own environment (the short list the launcher passed, the
+    # two Aegis variables already removed), then the project's values, added
+    # last so they win. A PowerShell hashtable matches names case-insensitively,
+    # as Windows does, and keeps the case the project wrote. The names Aegis
+    # refuses on the way in (PATH, ComSpec, the AEGIS_ prefix) are exactly the
+    # ones that would matter here: see projectEnv.js.
+    $environment = @{}
+    foreach ($item in Get-ChildItem Env:) { $environment[$item.Name] = $item.Value }
+    foreach ($name in $buildEnv.Keys) { $environment[$name] = $buildEnv[$name] }
 
-    $proc = Start-AsBuildAccount -StartInfo $psi
-    [AegisBuild.JobObject]::AssignProcessToJobObject($job, $proc.Handle) | Out-Null
-
-    $exited = $proc.WaitForExit($TimeoutMs)
-    if (-not $exited) {
-        [AegisBuild.JobObject]::TerminateJobObject($job, 1) | Out-Null
-        throw "command timed out after ${TimeoutMs}ms: $Command"
-    }
-    if ($proc.ExitCode -ne 0) {
-        throw "command exited $($proc.ExitCode): $Command (see $LogFile)"
+    $proc = Start-AsBuildAccount -CommandLine $commandLine -Environment $environment -LogFile $LogFile
+    try {
+        if (-not $proc.Wait($TimeoutMs)) {
+            [AegisBuild.JobObject]::TerminateJobObject($job, 1) | Out-Null
+            throw "command timed out after ${TimeoutMs}ms: $Command"
+        }
+        if ($proc.ExitCode -ne 0) {
+            throw "command exited $($proc.ExitCode): $Command (see $LogFile)"
+        }
+    } finally {
+        $proc.Dispose()
     }
 }
 

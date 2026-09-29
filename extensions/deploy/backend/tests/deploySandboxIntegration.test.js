@@ -53,7 +53,7 @@ function pwsh(args) {
 function staging() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-it-staging-'));
     fs.writeFileSync(path.join(dir, 'build.cmd'),
-        '@echo off\r\nmkdir dist\r\n>dist\\index.html echo ok\r\nwhoami>dist\\who.txt\r\n');
+        '@echo off\r\nmkdir dist\r\n>dist\\index.html echo ok\r\nwhoami>dist\\who.txt\r\necho built-by-sandbox\r\n');
     return dir;
 }
 
@@ -76,7 +76,9 @@ test('the real sandbox', { skip, timeout: 600000 }, async (t) => {
 
     const build = (pool) => buildInSandbox({
         pool, workspaceRoot, staging: staging(),
-        installCmd: '', buildCmd: 'build.cmd', outputDir: 'dist',
+        // Chained, because a quoting mistake in the sandbox's command line
+        // turned `a && b` into the name of a program, and wrote no log.
+        installCmd: '', buildCmd: 'build.cmd && echo chained-after-build', outputDir: 'dist',
         timeoutMs: 120000, runLauncher, scopeWorkspace
     });
 
@@ -87,6 +89,9 @@ test('the real sandbox', { skip, timeout: 600000 }, async (t) => {
             const out = await build(createPool([account]));
             const who = fs.readFileSync(path.join(out, 'who.txt'), 'utf8').trim().toLowerCase();
             assert.ok(who.endsWith(`\\${account}`), `run ${run} ran as ${who}, not as ${account}`);
+            const log = fs.readFileSync(path.join(path.dirname(out), 'build.log'), 'utf8');
+            assert.match(log, /built-by-sandbox/, 'what the build printed reaches build.log');
+            assert.match(log, /chained-after-build/, 'the whole && chain ran, as one command line');
         }
     });
 
