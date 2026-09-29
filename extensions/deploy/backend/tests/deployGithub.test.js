@@ -10,7 +10,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
-const { appJwt, buildManifest, verifyAppCredentials, manifestAction, UNREACHABLE_HOOK } = require('../github');
+const {
+  appJwt, buildManifest, verifyAppCredentials, manifestAction, UNREACHABLE_HOOK,
+  appNameFor, appSlugFor, appSettingsUrl
+} = require('../github');
 
 // Generated once per run rather than checked in: a private key in the test tree
 // is the kind of file that gets copied somewhere real.
@@ -106,6 +109,26 @@ test('manifestAction refuses anything that is not a GitHub login', () => {
   for (const bad of ['bad/login', '../x', 'a b', '-lead', 'trail-', '', 'x'.repeat(40)]) {
     if (bad === '') continue;   // empty means "my own account", tested above
     assert.strictEqual(manifestAction(bad, 'S'), null, bad);
+  }
+});
+
+// A recreated tenant or a second install must land on the App the first setup
+// made, which only works while the name is a pure function of the tenant slug
+// and the slug matches what GitHub derived from it.
+test('the App name is fixed per tenant and its slug is the one GitHub derives', () => {
+  assert.strictEqual(appNameFor('acme'), 'Aegis Deploy (acme)');
+  assert.strictEqual(appNameFor('acme'), appNameFor('acme'));
+  assert.strictEqual(appSlugFor(appNameFor('acme')), 'aegis-deploy-acme');
+  assert.strictEqual(appSlugFor(appNameFor('acme-corp-2')), 'aegis-deploy-acme-corp-2');
+});
+
+test('appSettingsUrl opens the existing App under the account that owns it', () => {
+  assert.strictEqual(appSettingsUrl('', 'aegis-deploy-acme'),
+    'https://github.com/settings/apps/aegis-deploy-acme');
+  assert.strictEqual(appSettingsUrl('acme-corp', 'aegis-deploy-acme'),
+    'https://github.com/organizations/acme-corp/settings/apps/aegis-deploy-acme');
+  for (const bad of ['bad/login', '../x', 'a b', '-lead']) {
+    assert.strictEqual(appSettingsUrl(bad, 'aegis-deploy-acme'), null, bad);
   }
 });
 

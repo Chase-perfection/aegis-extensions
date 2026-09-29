@@ -299,6 +299,48 @@ function manifestAction(owner, state) {
 }
 
 /**
+ * The name the manifest proposes for a tenant's App.
+ *
+ * Deterministic on purpose: a tenant that is recreated, or a second install
+ * signing in to the same GitHub account, lands on the same name, and that is
+ * what lets `appSettingsUrl` point at the App a previous setup already made.
+ */
+function appNameFor(tenantSlug) {
+    return `Aegis Deploy (${tenantSlug})`;
+}
+
+/**
+ * The slug GitHub derives from an App name: lower case, every run of other
+ * characters collapsed to one hyphen, no hyphen at either end.
+ * `Aegis Deploy (acme)` becomes `aegis-deploy-acme`.
+ */
+function appSlugFor(name) {
+    return String(name || '').toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * The settings page of an App this account already owns, or null when `owner`
+ * is not a GitHub login.
+ *
+ * Reusing an App cannot be done from here. GitHub never hands out an existing
+ * App's private key, not even to its owner through the API: a new key is
+ * generated on this page, by a signed-in person. And a private App is not
+ * visible to an anonymous lookup, so Aegis cannot tell whether it exists
+ * either. The page answers both: it opens on the App, with its ID at the top
+ * and Generate a private key further down, or GitHub answers 404 and there is
+ * nothing to reuse.
+ */
+function appSettingsUrl(owner, appSlug) {
+    const login = String(owner || '').trim();
+    const slug = encodeURIComponent(appSlug);
+    if (!login) return 'https://github.com/settings/apps/' + slug;
+    if (!GH_LOGIN_RE.test(login)) return null;
+    return 'https://github.com/organizations/' + encodeURIComponent(login) + '/settings/apps/' + slug;
+}
+
+/**
  * `owner/repo` from anything an operator is likely to paste.
  *
  * Accepts the address bar, the clone URL, the SSH remote, and the bare
@@ -476,7 +518,7 @@ module.exports = {
     appJwt, ghFetch, exchangeManifestCode, verifyAppCredentials, branchHead,
     parseRepoUrl, installationForRepo, publicRepoInfo, readRepoFile, listRootEntries,
     installationToken, forgetInstallationToken,
-    manifestAction, UNREACHABLE_HOOK,
+    manifestAction, UNREACHABLE_HOOK, appNameFor, appSlugFor, appSettingsUrl,
     listInstallations, listRepos, listBranches,
     buildManifest
 };

@@ -28,7 +28,7 @@ prints is compared before it is written.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('prepare', 'enable')]
+    [ValidateSet('prepare', 'enable', 'remove')]
     [string]$Phase,
 
     # The accounts a running application may run as. One project holds one for as
@@ -132,7 +132,7 @@ if (-not (Test-Path $setup)) {
     exit 1
 }
 
-if ($Phase -eq 'prepare') {
+function Invoke-Prepare {
     $subnets = if ($DomainSubnets.Count) { $DomainSubnets } else { Get-DomainSubnet }
     Write-Output ("Denying the sandbox accounts these subnets: " + ($subnets -join ', '))
 
@@ -143,6 +143,14 @@ if ($Phase -eq 'prepare') {
 
     Write-Output 'Preparing the runtime accounts.'
     & $setup -AccountNames $RuntimeAccounts -DomainSubnets $subnets
+}
+
+function Get-MissingRuntimeAccount {
+    @($RuntimeAccounts | Where-Object { -not (Get-LocalUser -Name $_ -ErrorAction SilentlyContinue) })
+}
+
+if ($Phase -eq 'prepare') {
+    Invoke-Prepare
 
     # Deliberately nothing printed for core to write. Preparing the host is not
     # the same sentence as allowing application processes on it.
@@ -150,13 +158,129 @@ if ($Phase -eq 'prepare') {
     exit 0
 }
 
+<#
+remove: an administrator deleted Deploy from this server. Core deletes the code
+and each tenant's `data\extensions\deploy`; this undoes the rest, which only
+Deploy knows about. Everything is found by what Deploy wrote on it rather than
+by a name pattern, so nothing another tool created is touched:
+
+  - the local accounts whose description Create-BuildAccounts.ps1 set, and the
+    Windows profiles they left
+  - the outbound rules named AegisBuild-<account>-*, and the inbound site rules
+    in the 'Aegis Deploy' group (firewall.js)
+  - its folders: ProgramData\Aegis\deploy-build (build workspaces), the data
+    root's deploy (the encrypted machine store) and each tenant's deploy
+    (projects, sites, run logs)
+
+A site still running under one of those accounts is stopped first. One that
+cannot be stopped is a refusal and nothing is deleted: removing an account
+whose process is alive leaves an orphan nobody can sign in as to stop.
+The rest is best effort and reported line by line, because a rule that is
+already gone must not make Deploy impossible to delete.
+#>
+if ($Phase -eq 'remove') {
+    $mark = 'Aegis Deploy build sandbox account*'
+    $accounts = @(Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $_.Description -like $mark })
+    $names = @($accounts | ForEach-Object { $_.Name })
+
+    if ($names.Count) {
+        $stuck = @()
+        foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+            $owner = $null
+            try { $owner = (Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction Stop).User } catch { continue }
+            if ($owner -and ($names -contains $owner)) {
+                try {
+                    Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
+                    Write-Output "Stopped $($p.Name) (pid $($p.ProcessId)) running as $owner."
+                } catch {
+                    $stuck += "$($p.Name) (pid $($p.ProcessId), $owner)"
+                }
+            }
+        }
+        if ($stuck.Count) {
+            Write-Output ("Could not stop: " + ($stuck -join ', ') + ". Nothing was deleted. Stop them, then delete Deploy again.")
+            exit 1
+        }
+    }
+
+    $warnings = 0
+    foreach ($a in $accounts) {
+        $sid = $a.SID.Value
+        foreach ($rule in @(Get-NetFirewallRule -DisplayName "AegisBuild-$($a.Name)-*" -ErrorAction SilentlyContinue)) {
+            try { Remove-NetFirewallRule -InputObject $rule -ErrorAction Stop } catch { $warnings++; Write-Output "Rule $($rule.DisplayName) stayed: $($_.Exception.Message)" }
+        }
+        try { Remove-LocalUser -SID $sid -ErrorAction Stop; Write-Output "Deleted account $($a.Name)." }
+        catch { $warnings++; Write-Output "Account $($a.Name) stayed: $($_.Exception.Message)" }
+        foreach ($userProfile in @(Get-CimInstance Win32_UserProfile -Filter "SID='$sid'" -ErrorAction SilentlyContinue)) {
+            try { Remove-CimInstance -InputObject $userProfile -ErrorAction Stop; Write-Output "Deleted the profile of $($a.Name)." }
+            catch { $warnings++; Write-Output "Profile $($userProfile.LocalPath) stayed: $($_.Exception.Message)" }
+        }
+    }
+
+    $siteRules = @(Get-NetFirewallRule -Group 'Aegis Deploy' -ErrorAction SilentlyContinue)
+    if ($siteRules.Count) {
+        try { $siteRules | Remove-NetFirewallRule -ErrorAction Stop; Write-Output "Deleted $($siteRules.Count) site firewall rule(s)." }
+        catch { $warnings++; Write-Output "Site firewall rules stayed: $($_.Exception.Message)" }
+    }
+
+    $folders = @(Join-Path $env:ProgramData 'Aegis\deploy-build')
+    if ($env:AEGIS_DATA_ROOT) {
+        $folders += Join-Path $env:AEGIS_DATA_ROOT 'deploy'
+        $tenantsRoot = Join-Path $env:AEGIS_DATA_ROOT 'tenants'
+        foreach ($t in @(Get-ChildItem -LiteralPath $tenantsRoot -Directory -ErrorAction SilentlyContinue)) {
+            if ($t.Name -match '^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$') { $folders += Join-Path $t.FullName 'deploy' }
+        }
+    } else {
+        Write-Output 'AEGIS_DATA_ROOT is not set, so the machine store and the tenant deploy folders were left.'
+        $warnings++
+    }
+    foreach ($f in $folders) {
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        try {
+            # A link is removed as a link: Remove-Item -Recurse on a junction
+            # would empty what it points to.
+            $item = Get-Item -LiteralPath $f -Force
+            if ($item.LinkType) { $item.Delete() } else { Remove-Item -LiteralPath $f -Recurse -Force -ErrorAction Stop }
+            Write-Output "Deleted $f."
+        } catch {
+            $warnings++; Write-Output "$f stayed: $($_.Exception.Message)"
+        }
+    }
+
+    # Core clears these from the service environment; its own switch too.
+    Write-Output (@{ env = @{ AEGIS_DEPLOY_RUNTIME = $null; AEGIS_RUNTIME_ACCOUNTS = $null; AEGIS_DEPLOY_FIREWALL = $null } } | ConvertTo-Json -Compress)
+    if ($warnings) { Write-Output "Deploy removed from the host, with $warnings item(s) left as listed above." }
+    else { Write-Output 'Deploy removed from the host.' }
+    exit 0
+}
+
 # enable: every account must exist before the runtime is allowed to name it.
 # Reporting names the backend would then fail to use would turn a refusal an
 # operator can read into a runtime error nobody sees.
-$missing = @($RuntimeAccounts | Where-Object { -not (Get-LocalUser -Name $_ -ErrorAction SilentlyContinue) })
+#
+# Missing accounts are prepared here rather than refused. `prepare` runs at
+# install, and a host can reach this click without it having run or finished:
+# an extension linked in place for development, a prepare the install recorded
+# as failed and nobody read, accounts deleted since. "Reinstall the extension"
+# was the answer, and it sent an administrator through a download to redo the
+# one step this click can do itself. The click is the stronger consent of the
+# two, so preparing under it asks for nothing the install did not.
+$missing = Get-MissingRuntimeAccount
 if ($missing.Count) {
-    Write-Output ("These runtime accounts do not exist: " + ($missing -join ', ') + ". Reinstall the extension to prepare them.")
-    exit 1
+    Write-Output ("These runtime accounts do not exist yet: " + ($missing -join ', ') + ". Preparing them now.")
+    try {
+        Invoke-Prepare
+    } catch {
+        # Printed, not rethrown: core keeps stdout and drops stderr, so a throw
+        # here reached the operator as "Command failed" and nothing else.
+        Write-Output ("Preparing the accounts failed: " + $_.Exception.Message)
+        exit 1
+    }
+    $missing = Get-MissingRuntimeAccount
+    if ($missing.Count) {
+        Write-Output ("Could not create these runtime accounts: " + ($missing -join ', ') + ". The Aegis service must run as an administrator or as SYSTEM to create local accounts.")
+        exit 1
+    }
 }
 
 # Opening the port a site already listens on rides along with this click, and

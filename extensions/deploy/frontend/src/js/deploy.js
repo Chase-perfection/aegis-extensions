@@ -519,6 +519,60 @@
             });
     }
 
+    function reuseNote(msg) {
+        var note = document.getElementById('deploy-reuse-note');
+        if (!note) return;
+        note.textContent = msg;
+        note.hidden = !msg;
+    }
+
+    /**
+     * Points the operator at the App a previous setup already registered.
+     *
+     * A link to click and not a `window.open`: the address arrives after a
+     * fetch, and a popup opened outside the click is what browsers block. The
+     * pair then goes through the manual form, which already checks it against
+     * GitHub, so the App ID field is where the page lands.
+     */
+    function startReuse(btn) {
+        btn.disabled = true;
+        reuseNote('');
+        var status = 0;
+        var ownerField = document.getElementById('deploy-connect-owner');
+        var owner = ownerField ? ownerField.value.trim() : '';
+        window.api('/api/deploy/github/app/existing?owner=' + encodeURIComponent(owner))
+            .then(function (r) { status = r.status; return readJson(r, 'app/existing'); })
+            .then(function (data) {
+                btn.disabled = false;
+                if (data && data.success) {
+                    var link = document.getElementById('deploy-reuse-link');
+                    link.href = data.settingsUrl;
+                    link.textContent = data.name;
+                    document.getElementById('deploy-reuse').hidden = false;
+                    var idEl = document.getElementById('deploy-manual-appid');
+                    if (idEl) {
+                        idEl.scrollIntoView({ block: 'center' });
+                        idEl.focus({ preventScroll: true });
+                    }
+                    return null;
+                }
+                if (status === 403) {
+                    return reuseNote(tr('deploy_connect_admin_only',
+                        'Only an administrator can connect GitHub.'));
+                }
+                if (status === 400 && data && data.error === 'bad_owner') {
+                    return reuseNote(tr('deploy_connect_bad_owner',
+                        'That is not a GitHub organisation name. Leave the field empty to use your own account.'));
+                }
+                throw new Error('app/existing refused with ' + status);
+            })
+            .catch(function (e) {
+                btn.disabled = false;
+                reuseNote(tr('deploy_connect_failed', 'Could not start the GitHub connection.'));
+                console.error('[Deploy] app/existing failed:', e);
+            });
+    }
+
     // Feedback from the callback redirect. Reported by code rather than a
     // generic failure, because "you took too long" and "GitHub refused the
     // exchange" need different responses from the operator.
@@ -1021,11 +1075,11 @@
             'deploy_ref_bad_site_config', 'The vercel.json in that branch will not parse'],
         bad_deploy_manifest: ['deploy_new_bad_manifest', 'The aegis.deploy.json in that branch could not be read. Aegis refuses rather than create a project whose declared settings it ignored.',
             'deploy_ref_bad_manifest', 'The aegis.deploy.json in that branch will not parse'],
-        runtime_disabled: ['deploy_new_runtime_off', 'This server does not run application processes. Set AEGIS_DEPLOY_RUNTIME=1 and the runtime accounts on the host, or leave the start command empty and deploy a built site.'],
+        runtime_disabled: ['deploy_new_runtime_off', 'Deploy setup is not finished on this server, so it cannot run an application yet. An administrator opens Extensions, clicks "Finish setup on this host" on the Deploy card, then restarts the Aegis service. To serve files only, leave the start command empty.'],
         no_start_cmd: ['deploy_new_no_start', 'Name the command that starts the application.'],
         start_failed: ['deploy_new_start_failed', 'The start command stopped before it answered. What it printed is in the console above.'],
         unhealthy: ['deploy_new_unhealthy', 'The application never answered on its port. The version that was running is still serving.'],
-        no_runtime_account: ['deploy_new_no_runtime_account', 'Every runtime account on this server is in use. Add one with Create-BuildAccounts.ps1, or remove a project that runs a process.'],
+        no_runtime_account: ['deploy_new_no_runtime_account', 'Every runtime account on this server is taken: each project that runs an application keeps one. Delete a project that runs a process to free one.'],
         bad_repo: ['deploy_new_bad_repo', 'Pick a repository from the list.'],
         bad_branch: ['deploy_new_bad_branch', 'That branch name is not one Aegis will pass to git.',
             'deploy_ref_bad_branch', 'A branch name Aegis will not pass to git'],
@@ -1037,7 +1091,7 @@
         // operator to go and check a branch that was never the problem.
         build_failed: ['deploy_new_build_failed', 'The build command failed. What it printed is in the console above.',
             'deploy_ref_build_failed', 'The install or build command exited non-zero'],
-        build_account_unconfigured: ['deploy_new_no_sandbox', 'The build sandbox accounts do not exist on this server. Run Create-BuildAccounts.ps1 on the host, or deploy a branch that needs no build.',
+        build_account_unconfigured: ['deploy_new_no_sandbox', 'The build accounts are missing on this server. An administrator opens Extensions, clicks "Finish setup on this host" on the Deploy card to create them, then restarts the Aegis service.',
             'deploy_ref_no_sandbox', 'The build sandbox accounts are missing on the host'],
         tool_missing: ['deploy_new_tool_missing', 'This server could not start git or pwsh. Check both are on the PATH of the account Aegis runs as.',
             'deploy_ref_tool_missing', 'git or pwsh could not be started'],
@@ -2887,7 +2941,7 @@
     function settingsRefusal(reason) {
         if (reason === 'runtime_disabled') {
             return tr('deploy_settings_runtime_off',
-                'This server runs no application process. The files can be served as they are; a start command needs the host to allow processes.');
+                'Deploy setup is not finished on this server, so a start command cannot run yet. An administrator opens Extensions, clicks "Finish setup on this host" on the Deploy card, then restarts the Aegis service.');
         }
         if (reason === 'bad_db_file') {
             return tr('deploy_settings_bad_db',
@@ -6083,6 +6137,9 @@
 
         var btn = document.getElementById('deploy-connect-btn');
         if (btn) btn.addEventListener('click', function () { startConnect(btn); });
+
+        var rbtn = document.getElementById('deploy-reuse-btn');
+        if (rbtn) rbtn.addEventListener('click', function () { startReuse(rbtn); });
 
         var mbtn = document.getElementById('deploy-manual-btn');
         if (mbtn) mbtn.addEventListener('click', function () { submitManual(mbtn); });

@@ -2,6 +2,41 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.5
+
+**Finish setup on this host creates the accounts it needs.** The click used to
+refuse when the runtime accounts did not exist and told the administrator to
+reinstall the extension. A host reaches that click without `prepare` having run
+more often than expected: an extension linked in place, a `prepare` that failed
+at install and nobody read, accounts deleted since. `enable` now runs the
+preparation itself, and refuses only when the accounts still cannot be created,
+saying the service must run as an administrator or as SYSTEM. A failure is
+printed rather than thrown, so the card shows the reason and not "Command
+failed".
+
+**Deleting Deploy from a server cleans the host.** `Provision.ps1` gains a
+`remove` phase, run when an administrator deletes the extension. It stops any
+site still running under a Deploy account, then deletes those accounts and
+their profiles, the build and site firewall rules, the build workspaces, the
+machine store and each tenant's deploy folder, and clears the three service
+variables. Everything is found by the mark Deploy wrote on it, never by a name
+pattern. A site that cannot be stopped is a refusal and nothing is deleted.
+
+**A tenant that was connected before reuses its GitHub App.** The App name is
+fixed per tenant, so a recreated tenant, or a second install on the same GitHub
+account, met "name already taken" and was told to rename, which made a second
+App with no installation. The GitHub card now has **Reuse my existing App**: it
+opens that App's settings page on GitHub, where the operator copies the App ID
+and generates a private key, and the manual form stores the pair. Aegis cannot
+check the App exists beforehand: GitHub hides a private App from an anonymous
+lookup and never hands out an existing key.
+
+**Setup errors name the click that fixes them.** The messages for missing
+build accounts, a runtime that is off and no free runtime account sent the
+operator to environment variables or a PowerShell script on the host. They now
+point to Extensions, Deploy, **Finish setup on this host**, then a restart of
+the service.
+
 ## 0.2.4
 
 **A project is corrected instead of being deleted.** Everything a project was

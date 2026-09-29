@@ -811,12 +811,35 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             // this action with the manifest as a single field.
             action,
             manifest: github.buildManifest({
-                name: `Aegis Deploy (${req.tenant.slug})`,
+                name: github.appNameFor(req.tenant.slug),
                 baseUrl: base,
                 webhookUrl: publicBase ? `${publicBase}/t/${req.tenant.slug}/api/deploy/webhook` : null,
                 redirectUrl: `${base}/api/deploy/github/app/register-callback`
             })
         });
+    });
+
+    /**
+     * Where the App a previous setup registered for this tenant lives.
+     *
+     * The manifest name is fixed per tenant, so a tenant that was recreated,
+     * or a second install signed in to the same GitHub account, already has
+     * its App on GitHub. Running the manifest again only earns "name already
+     * taken" and, renamed, a second App with no installation. This hands the
+     * page the settings address of the first one instead; the operator
+     * generates a key there and the manual route below stores the pair.
+     *
+     * Read-only and no GitHub call: see `github.appSettingsUrl` for why Aegis
+     * cannot check the App exists before sending the operator to look.
+     */
+    router.get('/api/deploy/github/app/existing', requireOptIn, requireRole('admin'), (req, res) => {
+        const name = github.appNameFor(req.tenant.slug);
+        const slug = github.appSlugFor(name);
+        const settingsUrl = github.appSettingsUrl(req.query.owner || '', slug);
+        if (!settingsUrl) {
+            return res.status(400).json({ success: false, error: 'bad_owner' });
+        }
+        res.json({ success: true, name, slug, settingsUrl });
     });
 
     /**

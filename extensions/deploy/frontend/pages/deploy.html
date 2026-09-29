@@ -458,9 +458,10 @@
                                     <li data-i18n="deploy_connect_step1">It opens github.com on a registration form
                                         already filled in: the name, the read-only permissions and the return address.
                                         Sign in there if you are not already.</li>
-                                    <li data-i18n="deploy_connect_step2">Check it and click Create GitHub App. Every
-                                        field stays editable, so if GitHub answers that the name is taken, change the
-                                        name there and carry on. Nothing else needs touching.</li>
+                                    <li data-i18n="deploy_connect_step2">Check it and click Create GitHub App. Nothing
+                                        needs touching. If GitHub answers that the name is taken, this tenant most
+                                        likely has its App already: do not rename it, come back and use Reuse my
+                                        existing App below.</li>
                                     <li data-i18n="deploy_connect_step3">GitHub sends your browser back here, and Aegis
                                         picks up the App and its private key on the way past. GitHub never connects to
                                         this server itself, which is why this works on a private network.</li>
@@ -480,6 +481,31 @@
                                 <button type="button" id="deploy-connect-btn" class="dep-btn"
                                     data-i18n="deploy_connect_cta">Connect GitHub</button>
                                 <p id="deploy-connect-note" class="dep-note" hidden></p>
+
+                                <!-- A recreated tenant, or a second install on the same GitHub
+                                     account, already has its App: the name is fixed per tenant.
+                                     GitHub never returns an existing App's key, so reuse is a
+                                     key generated on its settings page and pasted below. -->
+                                <p class="dep-steps-title" data-i18n="deploy_reuse_title">Already connected this
+                                    tenant before?</p>
+                                <p class="dep-sub" data-i18n="deploy_reuse_body">From another PC, or before this
+                                    tenant was recreated: its App is still on GitHub. Reuse it rather than creating a
+                                    second one, and the repositories it was given stay granted.</p>
+                                <button type="button" id="deploy-reuse-btn" class="dep-btn dep-btn-ghost"
+                                    data-i18n="deploy_reuse_cta">Reuse my existing App</button>
+                                <div id="deploy-reuse" hidden>
+                                    <ol class="dep-manual-steps">
+                                        <li><span data-i18n="deploy_reuse_step1">Open the App on GitHub:</span>
+                                            <a id="deploy-reuse-link" target="_blank" rel="noopener noreferrer"></a></li>
+                                        <li data-i18n="deploy_reuse_step2">Copy the App ID shown at the top into the
+                                            form below. Further down, click Generate a private key and paste the whole
+                                            .pem file into the second field. Then Save and check.</li>
+                                        <li data-i18n="deploy_reuse_step3">GitHub answers 404 on that page? Then no App
+                                            of that name exists under this account: check the organisation field above,
+                                            or use Connect GitHub.</li>
+                                    </ol>
+                                </div>
+                                <p id="deploy-reuse-note" class="dep-note" hidden></p>
                             </div>
 
                             <div id="deploy-install" class="dep-card-block" hidden>
