@@ -123,10 +123,13 @@ test('the real sandbox', { skip, timeout: 600000 }, async (t) => {
         const current = path.join(site, 'current');
         fs.mkdirSync(current, { recursive: true });
         st.after(() => fs.rmSync(site, { recursive: true, force: true }));
+        // whoami and not os.userInfo(): the latter asks Windows for the
+        // account's profile folder, and a batch logon loads no profile, so
+        // libuv answers ENOMEM. The build test identifies the account the same way.
         fs.writeFileSync(path.join(current, 'server.js'), [
-            "const os = require('os');",
+            "const who = require('child_process').execSync('whoami').toString().trim();",
             "require('http').createServer((q, r) => r.end(JSON.stringify({",
-            "  user: os.userInfo().username, temp: process.env.TEMP, key: process.env.AEGIS_PROXY_KEY",
+            "  user: who.split('\\\\').pop(), temp: process.env.TEMP, key: process.env.AEGIS_PROXY_KEY",
             "}))).listen(Number(process.env.PORT), process.env.HOST, () => console.log('listening-as-sandbox'));"
         ].join('\n'));
 
