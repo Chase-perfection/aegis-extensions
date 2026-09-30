@@ -2,6 +2,23 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.6
+
+**Connecting GitHub is no longer refused with "Name is already taken".** The
+App was named `Aegis Deploy (<tenant>)`, and GitHub App names are unique across
+all of github.com, not per account. Once one install had registered a tenant's
+name, every other install with a tenant of that name was refused, and so was
+the same operator setting up again after forgetting the registration. The name
+now ends with a six-character tag drawn from this install's machine key, for
+example `Aegis Deploy (acme-3f9a1c)`: the same on every rerun here, never
+proposed by another install. It is also cut to the 34 characters GitHub allows.
+
+**A forgotten App can be found again.** A private App's page on GitHub never
+names its owner. Aegis now records the owning account at registration, and
+forgetting the registration keeps the App's name and owner (no key). "Reuse the
+existing App" then opens its settings under that account, whatever the owner
+field says, and shows the owner beside the link.
+
 ## 0.2.5
 
 **A build starts as its account, and says why when it cannot.** Five faults
