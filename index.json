@@ -1,12 +1,12 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-30T08:44:46Z",
+  "generatedAt": "2026-09-30T11:48:11Z",
   "repo": "Chase-perfection/aegis-extensions",
   "extensions": [
     {
       "id": "deploy",
       "name": "Deploy",
-      "version": "0.2.6",
+      "version": "0.2.7",
       "manifestVersion": 1,
       "minAppVersion": "1.0.5",
       "labelKey": "nav_deploy",
@@ -18,16 +18,31 @@
         "/api/deploy"
       ],
       "requiresHostOptIn": true,
-      "file": "deploy-0.2.6.zip",
-      "size": 365476,
-      "sha256": "53aac5e63bbdb86b90921e1ae8acca6b655176c28923a6063bc11b358fafa9a1",
-      "download": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.2.6/deploy-0.2.6.zip",
-      "manifest": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.2.6/deploy-0.2.6.manifest.json",
-      "signature": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.2.6/deploy-0.2.6.manifest.json.sig",
-      "publishedAt": "2026-09-30T08:44:43Z",
+      "file": "deploy-0.2.7.zip",
+      "size": 372064,
+      "sha256": "02641db1b9f2b2d55421eee102f8e1d053cda14ec98a9874ca99c99d080a15d1",
+      "download": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.2.7/deploy-0.2.7.zip",
+      "manifest": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.2.7/deploy-0.2.7.manifest.json",
+      "signature": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.2.7/deploy-0.2.7.manifest.json.sig",
+      "publishedAt": "2026-09-30T11:48:08Z",
       "channel": "stable",
       "image": "https://raw.githubusercontent.com/Chase-perfection/aegis-extensions/main/extensions/deploy/card.png",
-      "imageSha256": "34e6baa85c9a2232f5c9aea870ad92ef321415c3b6c0ca1fe681350c5a80bf78"
+      "imageSha256": "34e6baa85c9a2232f5c9aea870ad92ef321415c3b6c0ca1fe681350c5a80bf78",
+      "prerequisites": [
+        {
+          "id": "git",
+          "required": true,
+          "version": "2.56.0"
+        },
+        {
+          "id": "python",
+          "version": "3.13.15"
+        },
+        {
+          "id": "node",
+          "version": "22.23.3"
+        }
+      ]
     },
     {
       "id": "network-inventory",
