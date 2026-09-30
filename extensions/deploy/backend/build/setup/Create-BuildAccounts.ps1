@@ -147,50 +147,115 @@ logs the account on as a batch job (SandboxProcess.cs). Without it every build
 fails with 1385. A batch logon is not an interactive one, so the two denies
 still hold: nobody signs in at the console or over RDP with these accounts.
 
-secedit exports UTF-16 and reads the rights only under [Privilege Rights], as
-*SID entries. Appending to the end of the file lands in [Version] and is
-ignored without an error, which is what this did before.
+Through LsaAddAccountRights, one right for one SID. This used secedit: export
+every right on the machine, add the SID, /configure the whole area back. On a
+domain member the export carries domain and GPO entries that /configure cannot
+all re-apply, so it exited 1 after the account existed, and it rewrote every
+holder of every right to add one. The LSA call touches nothing else and adding
+a right the account already holds succeeds, so rerunning stays free.
 #>
+if (-not ('AegisLsaRights' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class AegisLsaRights {
+    [StructLayout(LayoutKind.Sequential)]
+    struct LSA_UNICODE_STRING { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct LSA_OBJECT_ATTRIBUTES {
+        public int Length; public IntPtr RootDirectory; public IntPtr ObjectName;
+        public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService;
+    }
+
+    [DllImport("advapi32.dll")]
+    static extern uint LsaOpenPolicy(IntPtr systemName, ref LSA_OBJECT_ATTRIBUTES attributes, uint access, out IntPtr handle);
+    [DllImport("advapi32.dll")]
+    static extern uint LsaAddAccountRights(IntPtr handle, byte[] sid, LSA_UNICODE_STRING[] rights, uint count);
+    [DllImport("advapi32.dll")]
+    static extern uint LsaClose(IntPtr handle);
+    [DllImport("advapi32.dll")]
+    static extern int LsaNtStatusToWinError(uint status);
+
+    const uint POLICY_CREATE_ACCOUNT = 0x10;
+    const uint POLICY_LOOKUP_NAMES = 0x800;
+
+    public static void Add(byte[] sid, string right) {
+        LSA_OBJECT_ATTRIBUTES attributes = new LSA_OBJECT_ATTRIBUTES();
+        attributes.Length = Marshal.SizeOf(attributes);
+        IntPtr handle;
+        uint status = LsaOpenPolicy(IntPtr.Zero, ref attributes, POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES, out handle);
+        if (status != 0) throw new Win32Exception(LsaNtStatusToWinError(status));
+        IntPtr buffer = Marshal.StringToHGlobalUni(right);
+        try {
+            LSA_UNICODE_STRING name = new LSA_UNICODE_STRING();
+            name.Buffer = buffer;
+            name.Length = (ushort)(right.Length * 2);
+            name.MaximumLength = (ushort)(right.Length * 2 + 2);
+            status = LsaAddAccountRights(handle, sid, new LSA_UNICODE_STRING[] { name }, 1);
+            if (status != 0) throw new Win32Exception(LsaNtStatusToWinError(status));
+        } finally {
+            Marshal.FreeHGlobal(buffer);
+            LsaClose(handle);
+        }
+    }
+}
+'@
+}
+
 function Set-DenyLogon {
     param([System.Security.Principal.SecurityIdentifier]$Sid)
 
-    $entry = "*$($Sid.Value)"
-    $stamp = [guid]::NewGuid().ToString('N')
-    $cfg = Join-Path $env:TEMP "aegis-secpol-$stamp.inf"
-    $db = Join-Path $env:TEMP "aegis-secpol-$stamp.sdb"
-    try {
-        & secedit /export /cfg $cfg /areas USER_RIGHTS /quiet | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "secedit could not export the user rights (exit $LASTEXITCODE)" }
-        $lines = [System.Collections.Generic.List[string]](Get-Content -LiteralPath $cfg)
-
-        $changed = $false
-        foreach ($right in 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight', 'SeBatchLogonRight') {
-            $i = -1
-            for ($k = 0; $k -lt $lines.Count; $k++) { if ($lines[$k] -match "^\s*$right\s*=") { $i = $k; break } }
-            if ($i -ge 0) {
-                $holders = @(($lines[$i] -split '=', 2)[1] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-                if ($holders -contains $entry) { continue }
-                $lines[$i] = "$right = " + (($holders + $entry) -join ',')
-            } else {
-                $section = -1
-                for ($k = 0; $k -lt $lines.Count; $k++) { if ($lines[$k] -match '^\s*\[Privilege Rights\]') { $section = $k; break } }
-                if ($section -lt 0) { $lines.Add('[Privilege Rights]'); $section = $lines.Count - 1 }
-                $lines.Insert($section + 1, "$right = $entry")
-            }
-            $changed = $true
+    $bytes = New-Object byte[] ($Sid.BinaryLength)
+    $Sid.GetBinaryForm($bytes, 0)
+    foreach ($right in 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight', 'SeBatchLogonRight') {
+        try {
+            [AegisLsaRights]::Add($bytes, $right)
+        } catch {
+            # A method call wraps the Win32Exception in a MethodInvocationException.
+            $e = $_.Exception
+            if ($e.InnerException) { $e = $e.InnerException }
+            throw "could not grant $right to $($Sid.Value): $($e.Message)"
         }
-        if (-not $changed) { return }
-
-        Set-Content -LiteralPath $cfg -Value $lines -Encoding Unicode
-        & secedit /configure /db $db /cfg $cfg /areas USER_RIGHTS /quiet | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "secedit could not set the logon rights of $($Sid.Value) (exit $LASTEXITCODE)" }
-    } finally {
-        Remove-Item -LiteralPath $cfg, $db, ($db -replace '\.sdb$', '.jfm') -ErrorAction SilentlyContinue
     }
 }
 
+<#
+32 characters with at least two of each class, from the OS random generator.
+
+A domain workstation applies the domain's password policy to local accounts
+too, and New-LocalUser answers a refusal with a bare InvalidPasswordException.
+The old draw (24 characters, any class, Get-Random) could land without a digit
+or a symbol, and Get-Random is not a cryptographic source for a password
+nobody ever types. Two of each class clears any complexity rule, 32 clears
+any minimum length a policy can set (14, or 20 with the relaxed limit).
+#>
 function New-RandomPassword {
-    -join ((1..24) | ForEach-Object { [char]((48..57) + (65..90) + (97..122) + (33, 35, 36, 37) | Get-Random) })
+    $classes = @('ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnopqrstuvwxyz', '23456789', '!#$%*+-=?@_')
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $pick = {
+            param([string]$set)
+            $b = New-Object byte[] 4
+            $rng.GetBytes($b)
+            $set[[int]([System.BitConverter]::ToUInt32($b, 0) % [uint32]$set.Length)]
+        }
+        $chars = New-Object System.Collections.Generic.List[char]
+        foreach ($set in $classes) { 1..2 | ForEach-Object { $chars.Add((& $pick $set)) } }
+        $all = -join $classes
+        while ($chars.Count -lt 32) { $chars.Add((& $pick $all)) }
+        # Shuffle, so the guaranteed characters are not always the first eight.
+        for ($i = $chars.Count - 1; $i -gt 0; $i--) {
+            $b = New-Object byte[] 4; $rng.GetBytes($b)
+            $j = [int]([System.BitConverter]::ToUInt32($b, 0) % [uint32]($i + 1))
+            $tmp = $chars[$i]; $chars[$i] = $chars[$j]; $chars[$j] = $tmp
+        }
+        return -join $chars
+    } finally {
+        $rng.Dispose()
+    }
 }
 
 # machineStore lives beside this script, inside the extension: setup -> build ->
@@ -216,8 +281,12 @@ foreach ($name in $AccountNames) {
         # whole call past that, before the account exists. The description is
         # also the mark Provision.ps1 `remove` finds these accounts by: change
         # one, change the other.
-        New-LocalUser -Name $name -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
-            -Description "Aegis Deploy build sandbox account" | Out-Null
+        try {
+            New-LocalUser -Name $name -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
+                -Description "Aegis Deploy build sandbox account" -ErrorAction Stop | Out-Null
+        } catch [Microsoft.PowerShell.Commands.InvalidPasswordException] {
+            throw "Windows refused the generated password for local account $name. The password policy this machine applies (a domain GPO on a domain member) is stricter than 32 characters with every class; 'net accounts' and the domain's Default Domain Policy show it."
+        }
 
         # Through the environment, not on the command line. An argument to node
         # is readable by anyone who can list processes, and the restricted

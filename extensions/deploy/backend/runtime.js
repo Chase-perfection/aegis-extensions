@@ -349,7 +349,13 @@ function spawnSandboxed({ dir, account, startCmd, port, env, dataDir, proxyKey }
             // branch; the path to the live data is not its business. Putting the
             // variable where only this spawn can reach it makes that structural
             // rather than a rule somebody has to remember.
-            AEGIS_DATA_DIR: dataDir || ''
+            AEGIS_DATA_DIR: dataDir || '',
+            // The Python install Deploy proposes is `pip install --target .`,
+            // which puts packages at the site root. `python sub/app.py` puts
+            // only `sub/` on sys.path, so the first third-party import failed
+            // with ModuleNotFoundError although pip had installed it. The
+            // project's own PYTHONPATH, if any, is kept after the root.
+            PYTHONPATH: [dir, env && env.PYTHONPATH].filter(Boolean).join(path.delimiter)
         }))
     };
     for (const name of ['SystemRoot', 'windir', 'PATH', 'Path', 'TEMP', 'TMP', 'ComSpec', 'ProgramData', 'PSModulePath']) {

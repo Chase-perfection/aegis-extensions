@@ -290,13 +290,16 @@ test('the proxy key reaches only the child JSON environment and cannot be overri
     const proxyKey = 'server-generated-proxy-key';
     isolatedRuntime.spawnSandboxed({
         dir: current, account: 'run-a', startCmd: 'node server.js', port: 3200,
-        env: { AEGIS_PROXY_KEY: 'forged-project-value', PUBLIC_SETTING: 'visible' },
+        env: { AEGIS_PROXY_KEY: 'forged-project-value', PUBLIC_SETTING: 'visible', PYTHONPATH: 'D:\\extra' },
         proxyKey
     });
 
     const childJson = JSON.parse(launch.options.env.AEGIS_BUILD_ENV_JSON);
     assert.strictEqual(childJson.AEGIS_PROXY_KEY, proxyKey);
     assert.strictEqual(childJson.PUBLIC_SETTING, 'visible');
+    // `pip install --target .` lands at the site root, and `python sub/app.py`
+    // does not put the root on sys.path by itself.
+    assert.strictEqual(childJson.PYTHONPATH, current + path.delimiter + 'D:\\extra');
     assert.strictEqual(launch.options.env.AEGIS_PROXY_KEY, undefined);
     assert.ok(!launch.args.includes(proxyKey));
     assert.ok(launch.options.env.Path.startsWith('D:\\Py313;'), launch.options.env.Path);
