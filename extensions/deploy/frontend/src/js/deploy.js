@@ -1099,6 +1099,8 @@
             'deploy_ref_sandbox_down', 'The build sandbox could not start on the host'],
         tool_missing: ['deploy_new_tool_missing', 'This server could not start git or pwsh. Check both are on the PATH of the account Aegis runs as.',
             'deploy_ref_tool_missing', 'git or pwsh could not be started'],
+        runtime_missing: ['deploy_new_runtime_missing', 'Python or Node is not installed for all users on this server. Open the Deploy extension in Extensions and click Install what is missing.',
+            'deploy_ref_runtime_missing', 'A runtime the build needs is not installed for all users'],
         github_auth_failed: ['deploy_new_gh_auth', 'GitHub refused the App credentials. Reconnect the App, or check it is still installed on that repository.',
             'deploy_ref_gh_auth', 'GitHub refused the App credentials'],
         busy: ['deploy_new_busy', 'This project is already deploying. Wait for the deployment in progress to finish.',
@@ -4459,7 +4461,7 @@
         'no_index', 'not_a_site', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink', 'bad_site_config',
         'bad_deploy_manifest',
         'no_free_port', 'deploy_failed', 'build_failed', 'build_account_unconfigured', 'sandbox_unavailable',
-        'tool_missing', 'github_auth_failed', 'github_unreachable', 'busy', 'branch_gone'
+        'tool_missing', 'runtime_missing', 'github_auth_failed', 'github_unreachable', 'busy', 'branch_gone'
     ];
 
     var refusalsPainted = false;

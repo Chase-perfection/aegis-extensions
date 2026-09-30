@@ -38,6 +38,7 @@ const path = require('path');
 const { execFile, execFileSync } = require('child_process');
 
 const machineStore = require('./machineStore');
+const hostTools = require('./build/hostTools');
 
 const SCRIPT_PATH = path.join(__dirname, 'runtime', 'run-sandboxed-server.ps1');
 
@@ -351,7 +352,7 @@ function spawnSandboxed({ dir, account, startCmd, port, env, dataDir, proxyKey }
         '-WorkspaceDir', dir,
         '-AccountName', account,
         '-StartCmd', startCmd
-    ], { windowsHide: true, env: childEnv, maxBuffer: 1024 * 1024 });
+    ], { windowsHide: true, env: hostTools.withToolPath(childEnv, hostTools.toolDirs()), maxBuffer: 1024 * 1024 });
 }
 
 module.exports = {

@@ -58,7 +58,7 @@ test('an empty build script is not a build script', () => {
 
 test('requirements.txt means pip, and never a start command', () => {
     const r = detect.detect(['requirements.txt', 'app.py'], null);
-    assert.strictEqual(r.installCmd, 'pip install --no-cache-dir -r requirements.txt --target .');
+    assert.strictEqual(r.installCmd, 'python -m pip install --no-cache-dir -r requirements.txt --target .');
     assert.strictEqual(r.buildCmd, '');
     assert.match(r.why, /start command is never detected/);
 });

@@ -75,7 +75,9 @@ function detect(names, packageJson) {
     if (has(entries, PY_REQUIREMENTS)) {
         // `--target .` for the same reason the KPI project uses it: the sandbox
         // account has no site-packages of its own to install into.
-        out.installCmd = `pip install --no-cache-dir -r ${PY_REQUIREMENTS} --target .`;
+        // `python -m pip`, not `pip`: a Python installed for all users puts pip in
+        // Scripts\, which is not always on PATH when python.exe is.
+        out.installCmd = `python -m pip install --no-cache-dir -r ${PY_REQUIREMENTS} --target .`;
         out.why = `${PY_REQUIREMENTS} at the root, so pip. No build step is implied, `
             + 'and a start command is never detected: declare one in aegis.deploy.json';
         return out;

@@ -190,11 +190,15 @@ test('through the builder: the copy is fixed and the staging clone is not', asyn
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-autofix-root-'));
     const pool = createPool(['acct-a']);
     let seen = null;
+    // A stand-in python.exe, so the builder's runtime check passes whether or
+    // not this machine has Python.
+    const fakePython = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-autofix-python-'));
+    fs.writeFileSync(path.join(fakePython, 'python.exe'), '');
 
     await buildInSandbox({
         pool, workspaceRoot: root, staging,
         installCmd: 'pip install -r requirements.txt --target .',
-        buildCmd: '', outputDir: '', timeoutMs: 1000,
+        buildCmd: '', outputDir: '', timeoutMs: 1000, toolDirs: () => [fakePython],
         runLauncher: async (args) => {
             seen = fs.readFileSync(path.join(args.workspace, 'requirements.txt'), 'utf8');
         }

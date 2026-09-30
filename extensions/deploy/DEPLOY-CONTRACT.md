@@ -387,7 +387,7 @@ fields being typed at it.
 | `bun.lockb` | `bun install --frozen-lockfile`, build `bun run build` |
 | `package-lock.json` | `npm ci`, build `npm run build` |
 | `package.json` with no lockfile | `npm install`, because `npm ci` needs a lockfile |
-| `requirements.txt` | `pip install --no-cache-dir -r requirements.txt --target .` |
+| `requirements.txt` | `python -m pip install --no-cache-dir -r requirements.txt --target .` |
 
 The build command appears only when `package.json` declares a `build` script,
 and it is that script that is run. Nothing here is inferred from a framework: a

@@ -9,6 +9,10 @@ between the two is the whole reason there are two:
   -Phase enable    when an administrator clicks "Finish setup on this host".
                    Prints the environment the runtime needs; core writes it.
 
+A third phase, -Phase prerequisites, runs before prepare when the store
+drawer asks for missing host tools (git, python, node). Prerequisites.ps1 holds
+the pinned installers.
+
 Why this file exists at all. Turning the application runtime on used to mean
 opening PowerShell as an administrator, knowing the subnet of your own Active
 Directory, and setting two machine environment variables by hand. Aegis ships to
@@ -28,8 +32,11 @@ prints is compared before it is written.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('prepare', 'enable', 'remove')]
+    [ValidateSet('prerequisites', 'prepare', 'enable', 'remove')]
     [string]$Phase,
+
+    # One comma-joined string: powershell -File passes arguments as strings.
+    [string]$Prerequisites = '',
 
     # The accounts a running application may run as. One project holds one for as
     # long as it exists, unlike a build which borrows a slot for two minutes, so
@@ -155,6 +162,16 @@ if ($Phase -eq 'prepare') {
     # Deliberately nothing printed for core to write. Preparing the host is not
     # the same sentence as allowing application processes on it.
     Write-Output 'Prepared. The application runtime stays off until an administrator finishes setup.'
+    exit 0
+}
+
+if ($Phase -eq 'prerequisites') {
+    . (Join-Path $PSScriptRoot 'Prerequisites.ps1')
+    $ids = @($Prerequisites -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $cache = Join-Path $env:ProgramData 'Aegis\cache'
+    $results = Invoke-Prerequisites -Ids $ids -Pins $PrerequisitePins -CacheDir $cache
+    # The one line core reads. Everything above it is for the install log.
+    Write-Output (ConvertTo-Json -Compress -Depth 4 -InputObject @{ prerequisites = @($results) })
     exit 0
 }
 

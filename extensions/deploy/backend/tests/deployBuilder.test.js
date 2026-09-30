@@ -353,11 +353,14 @@ test('a project with an install command and no build discovers nothing', async (
     const staging = tmpStaging({ 'requirements.txt': 'flask' });
     const root = tmpRoot();
     const pool = createPool(['acct-a']);
+    // A stand-in python.exe, so the runtime check passes whether or not this
+    // machine has Python: what is under test is output discovery.
+    const fakePython = tmpStaging({ 'python.exe': '' });
 
     const result = await buildInSandbox({
         pool, workspaceRoot: root, staging,
         installCmd: 'pip install -r requirements.txt --target .', buildCmd: '',
-        outputDir: '', timeoutMs: 1000,
+        outputDir: '', timeoutMs: 1000, toolDirs: () => [fakePython],
         runLauncher: async (args) => {
             // pip --target . writes packages, some of which carry an index.html.
             fs.mkdirSync(path.join(args.workspace, 'build'), { recursive: true });
@@ -367,4 +370,32 @@ test('a project with an install command and no build discovers nothing', async (
 
     assert.strictEqual(result, path.join(root, 'acct-a'),
         'a dependency folder was served as if it were a built site');
+});
+
+// Windows only: the sandbox is, and on another OS no folder holds a python.exe.
+test('a build whose command needs a runtime the host lacks stops with runtime_missing, before any account is used', { skip: process.platform !== 'win32' }, async () => {
+    const staging = tmpStaging({ 'requirements.txt': 'flask' });
+    const root = tmpRoot();
+    const pool = createPool(['acct-a']);
+    let launched = false;
+    // Only toolDirs may count: a python.exe on this machine's own PATH would
+    // make the test pass for the wrong reason.
+    const inherited = process.env.Path;
+    process.env.Path = '';
+    try {
+        const err = await buildInSandbox({
+            pool, workspaceRoot: root, staging,
+            installCmd: 'python -m pip install -r requirements.txt --target .', buildCmd: '',
+            outputDir: '', timeoutMs: 1000,
+            runLauncher: async () => { launched = true; },
+            toolDirs: () => []
+        }).then(() => null, (e) => e);
+        assert.ok(err, 'the build went through');
+        assert.strictEqual(err.code, 'runtime_missing');
+        assert.strictEqual(err.tool, 'python');
+        assert.strictEqual(launched, false);
+        assert.strictEqual(pool.freeCount(), 1, 'no account was taken');
+    } finally {
+        process.env.Path = inherited;
+    }
 });

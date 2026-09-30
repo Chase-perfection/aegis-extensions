@@ -138,3 +138,9 @@ test('the launcher carries the build env as one blob and nothing else from the b
         delete process.env.AEGIS_SECRET_NOT_FOR_BUILDS;
     }
 });
+
+test('the launcher puts the host tool folders ahead of the inherited PATH', () => {
+    const env = buildSafeEnv('pw', {}, ['D:\\Py313', 'D:\\Py313\\Scripts']);
+    assert.ok(env.Path.startsWith('D:\\Py313;D:\\Py313\\Scripts;'), env.Path);
+    assert.strictEqual(env.PATH, undefined);
+});

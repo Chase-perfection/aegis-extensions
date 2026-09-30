@@ -48,7 +48,7 @@ function useWritableDb(mod) { writableDb = mod || null; }
 /** Refusals that already name what to change. Kept as they are. */
 const NAMED = [
     'needs_build', 'no_index', 'not_a_site', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink',
-    'build_failed', 'build_account_unconfigured', 'sandbox_unavailable', 'bad_site_config', 'bad_deploy_manifest',
+    'build_failed', 'runtime_missing', 'build_account_unconfigured', 'sandbox_unavailable', 'bad_site_config', 'bad_deploy_manifest',
     'runtime_disabled', 'no_runtime_account', 'start_failed', 'unhealthy', 'bad_site_port',
     'migration_failed', 'migrations_unsupported',
     // An App that cannot get a token for this repository. 401 and 403 are named

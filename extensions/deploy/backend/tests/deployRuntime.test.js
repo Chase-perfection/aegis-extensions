@@ -266,6 +266,10 @@ test('the proxy key reaches only the child JSON environment and cannot be overri
     };
     childProcess.execFileSync = () => {};
     machineStore.getBuildAccountSecret = () => 'account-password';
+    const hostTools = require('../build/hostTools');
+    const realToolDirs = hostTools.toolDirs;
+    hostTools.toolDirs = () => ['D:\\Py313'];
+    t.after(() => { hostTools.toolDirs = realToolDirs; });
     delete require.cache[require.resolve('../runtime')];
     const isolatedRuntime = require('../runtime');
     t.after(() => {
@@ -287,4 +291,6 @@ test('the proxy key reaches only the child JSON environment and cannot be overri
     assert.strictEqual(childJson.PUBLIC_SETTING, 'visible');
     assert.strictEqual(launch.options.env.AEGIS_PROXY_KEY, undefined);
     assert.ok(!launch.args.includes(proxyKey));
+    assert.ok(launch.options.env.Path.startsWith('D:\\Py313;'), launch.options.env.Path);
+    assert.strictEqual(launch.options.env.PATH, undefined);
 });

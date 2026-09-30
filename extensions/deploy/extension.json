@@ -2,7 +2,7 @@
   "id": "deploy",
   "name": "Deploy",
   "version": 1,
-  "release": "0.2.6",
+  "release": "0.3.0",
   "page": "deploy.html",
   "icon": "network",
   "labelKey": "nav_deploy",
@@ -10,6 +10,7 @@
   "routePrefixes": ["/api/deploy"],
   "backend": "backend/routes.js",
   "provision": "backend/build/setup/Provision.ps1",
+  "prerequisites": [{ "id": "git", "required": true }, { "id": "python" }, { "id": "node" }],
   "requiresHostOptIn": true,
   "signature": null
 }

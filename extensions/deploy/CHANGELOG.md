@@ -2,6 +2,25 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.3.0
+
+**Deploy says what it needs on the server, and installs what is missing.** Git
+is required, Python and Node are optional. The store drawer shows what the
+server already has for all users and installs the rest, from the official
+installers (Git 2.56.0, Python 3.13.15, Node 22.23.3), each refused unless it
+matches a pinned SHA-256. A tool already installed is left alone.
+
+**A build finds a tool installed after the Aegis service started.** Builds and
+sites read the machine PATH when they start, plus the registered all-users
+Python folders, instead of the PATH the service read at boot. No restart.
+
+**Python projects install with `python -m pip`.** It works when `python.exe`
+is on PATH and its `Scripts\` folder, where `pip` lives, is not.
+
+**A build that needs Python or Node the server lacks stops at once and says
+so.** It used to fail minutes later inside the sandbox with "'python' n'est pas
+reconnu", which read as the project's fault.
+
 ## 0.2.6
 
 **Connecting GitHub is no longer refused with "Name is already taken".** The

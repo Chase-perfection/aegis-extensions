@@ -3,6 +3,7 @@
 const { execFile } = require('child_process');
 const path = require('path');
 const machineStore = require('../machineStore');
+const hostTools = require('./hostTools');
 
 const SCRIPT_PATH = path.join(__dirname, 'run-sandboxed-build.ps1');
 
@@ -20,7 +21,7 @@ const SAFE_ENV_KEYS = ['SystemRoot', 'windir', 'PATH', 'Path', 'TEMP', 'TMP', 'C
  * it. run-sandboxed-build.ps1 reads the blob, puts it on the child's
  * environment block and drops its own copy before starting anything.
  */
-function buildSafeEnv(secret, buildEnv) {
+function buildSafeEnv(secret, buildEnv, toolDirs) {
     const env = {};
     for (const key of SAFE_ENV_KEYS) {
         if (process.env[key] !== undefined) env[key] = process.env[key];
@@ -29,7 +30,7 @@ function buildSafeEnv(secret, buildEnv) {
     if (buildEnv && Object.keys(buildEnv).length) {
         env.AEGIS_BUILD_ENV_JSON = JSON.stringify(buildEnv);
     }
-    return env;
+    return toolDirs ? hostTools.withToolPath(env, toolDirs) : env;
 }
 
 /**
@@ -69,7 +70,7 @@ function runLauncher({ workspace, homeDir, account, installCmd, buildCmd, timeou
             // process.env, so a future Aegis secret added elsewhere in the
             // backend cannot leak into a build without someone having to add it
             // here deliberately.
-            env: buildSafeEnv(secret, buildEnv)
+            env: buildSafeEnv(secret, buildEnv, hostTools.toolDirs())
         }, (err, stdout, stderr) => {
             if (err) {
                 // The script asks pwsh for plain text; a pwsh older than 7.2

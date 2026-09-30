@@ -5,6 +5,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { assertNoSymlinks } = require('./symlinkGuard');
 const { applyAutofixes } = require('./autofix');
+const hostTools = require('./hostTools');
 
 /** How often the console catches up with what the sandbox has written. */
 const TAIL_INTERVAL_MS = 400;
@@ -205,6 +206,17 @@ function scopeWorkspace(dir, account) {
 async function buildInSandbox(opts) {
     const { pool } = opts;
     const say = opts.report || SILENT;
+    // Before any account is taken: a project whose install says `python` on a
+    // host with no all-users Python would otherwise fail minutes later with
+    // "'python' n'est pas reconnu" inside the sandbox, which reads as the
+    // project's fault. The drawer's "Install what is missing" is the fix.
+    // Windows only, like the sandbox: elsewhere no folder holds a python.exe.
+    const tool = process.platform === 'win32'
+        ? hostTools.missingTool([opts.installCmd, opts.buildCmd], (opts.toolDirs || hostTools.toolDirs)())
+        : null;
+    if (tool) {
+        throw Object.assign(new Error(`${tool} is not installed for all users on this server`), { code: 'runtime_missing', tool });
+    }
     let last = null;
     // Two attempts: the second exists for one reason, a slot Windows would not
     // start a process as. Nothing of the project ran on that slot, so running
