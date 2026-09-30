@@ -223,6 +223,34 @@
               }
             }
           }
+        },
+        "prerequisites": {
+          "description": "Host tools the extension needs, from a closed list. Core detects them before install; the extension's prerequisites phase installs the missing ones. `version` is the pinned installer version, shown to the operator, informational only.",
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "enum": [
+                  "git",
+                  "python",
+                  "node",
+                  "pwsh"
+                ]
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "version": {
+                "$ref": "#/$defs/semver"
+              }
+            }
+          }
         }
       }
     }

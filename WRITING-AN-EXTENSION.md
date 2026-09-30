@@ -23,7 +23,7 @@ extensions/<id>/
 
 ## The manifest
 
-Nine fields decide whether your extension loads. Six of them fail loudly.
+Ten fields decide whether your extension loads. Seven of them fail loudly.
 
 | Field | What it does |
 |---|---|
@@ -34,6 +34,7 @@ Nine fields decide whether your extension loads. Six of them fail loudly.
 | `routePrefixes` | Each starts with `/api/` and does not end in `/` |
 | `backend` | Path to the file exporting `register()` |
 | `provision` | Optional `.ps1`, see below |
+| `prerequisites` | Optional list of host tools, see below |
 | `requiresHostOptIn` | Boolean. Says a second switch exists |
 | `labelKey` / `descKey` / `icon` | Navigation and store card |
 
@@ -127,6 +128,30 @@ Three refusals to expect: a path climbing out of your folder, anything that is
 not a `.ps1`, and a script that is not in the package. The manifest is signed,
 so your path arrives trusted, but a path is not a promise and this runs as
 LocalSystem.
+
+### Host tools: `prerequisites`
+
+Declare the tools your extension needs on the server, in `extension.json` and
+in `store.json`:
+
+```json
+"prerequisites": [{ "id": "git", "required": true }, { "id": "python", "version": "3.13.1" }]
+```
+
+Core looks for an all-users copy of each before the package is downloaded and
+shows the result in the store drawer. A per-user copy or the Store app does not
+count: the service runs as LocalSystem. Required tools are always installed;
+optional ones are ticked by default when missing.
+
+Core installs nothing itself. It runs your provisioning script with
+`-Phase prerequisites -Prerequisites git,python` (one comma-joined string),
+before `prepare`, for up to 15 minutes, and streams what you print into the
+install log. Print one line `{"prerequisites":[{"id","status","version","path","error"}]}`
+at the end. Pin every installer by version and SHA-256, and refuse on a
+mismatch. Deploy's `backend/build/setup/Prerequisites.ps1` is the reference.
+
+A package whose script predates the phase has none: core reads the refused
+parameter as "no such step", not as a failure.
 
 ## The dev loop
 

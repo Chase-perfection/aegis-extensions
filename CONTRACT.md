@@ -44,6 +44,7 @@ rather than guessing.
 | `signature` | url | Release asset holding the detached signature. |
 | `publishedAt` | ISO 8601 | When this release was cut. |
 | `channel` | `stable` or `preview` | A backend on the stable channel ignores `preview` entries. |
+| `prerequisites` | object[] | Optional. Host tools the extension needs: `{ "id": "git" \| "python" \| "node" \| "pwsh", "required": boolean, "version": "x.y.z" }`. `required` defaults to false; each id at most once. `version` is the pinned installer version, shown in the store drawer and nothing more: the extension's own installer table is what installs. |
 
 `labelKey` and `descKey` matter for a reason worth stating: a catalogue that shipped
 English sentences would put untranslated text in a French dashboard. Keys keep the

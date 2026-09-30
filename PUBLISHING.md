@@ -53,6 +53,7 @@ release has to be ready for all three:
 
 | Who runs it | When | Phases |
 |---|---|---|
+| The backend, as the service | a store install where the operator ticked a missing tool or the extension requires one, and **Install what is missing** in the drawer | `prerequisites`, before `prepare`, async, up to 15 minutes. `Aegis-Setup.exe` never runs it |
 | The backend, as the service | the store installs or updates the extension | `prepare` |
 | The backend, as the service | an admin clicks **Finish setup on this host** | `enable` |
 | `Aegis-Setup.exe` (elevated) | every install and update of Aegis, wizard or `--silent` | `prepare`, then `enable` when the wizard's "Finish their setup on this machine" box is ticked (`--silent` never ticks it) |

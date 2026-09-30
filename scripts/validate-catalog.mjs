@@ -13,7 +13,7 @@ import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { assetUrls, imageUrl, packageFileName, CATEGORIES, SCHEMA_VERSION } from './build-index.mjs';
+import { assetUrls, imageUrl, packageFileName, prerequisiteErrors, CATEGORIES, SCHEMA_VERSION } from './build-index.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SEMVER = /^\d+\.\d+\.\d+$/;
@@ -99,6 +99,10 @@ for (const e of cat.extensions || []) {
 
     if ('publisher' in e && (typeof e.publisher !== 'string' || !e.publisher.trim())) {
         fail(`${at}: publisher, when present, must be a non-empty string`);
+    }
+
+    if ('prerequisites' in e) {
+        for (const why of prerequisiteErrors(e.prerequisites)) fail(`${at}: ${why}`);
     }
 
     // The card image travels as a URL plus a digest, and both are derived. An

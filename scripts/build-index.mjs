@@ -33,6 +33,27 @@ export const SCHEMA_VERSION = 2;
  */
 export const CATEGORIES = ['Detection', 'Inventory', 'Compliance', 'Integrations', 'Automation'];
 
+// The host tools an extension may ask for. The same rule lives in core
+// (backend/src/lib/prerequisiteList.js): change both in the same week.
+export const PREREQUISITE_IDS = ['git', 'python', 'node', 'pwsh'];
+
+export function prerequisiteErrors(list) {
+    if (!Array.isArray(list)) return ['prerequisites must be an array when present'];
+    const errs = [];
+    const seen = new Set();
+    list.forEach((p, i) => {
+        const at = `prerequisites[${i}]`;
+        if (!p || typeof p !== 'object' || Array.isArray(p)) { errs.push(`${at} must be an object`); return; }
+        if (!PREREQUISITE_IDS.includes(p.id)) errs.push(`${at}.id ${JSON.stringify(p.id)} must be one of ${PREREQUISITE_IDS.join(', ')}`);
+        else if (seen.has(p.id)) errs.push(`${at}.id "${p.id}" is listed twice`);
+        else seen.add(p.id);
+        if ('required' in p && typeof p.required !== 'boolean') errs.push(`${at}.required must be a boolean when present`);
+        if ('version' in p && (typeof p.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(p.version))) errs.push(`${at}.version must be x.y.z when present`);
+        for (const key of Object.keys(p)) if (!['id', 'required', 'version'].includes(key)) errs.push(`${at} has unknown field "${key}"`);
+    });
+    return errs;
+}
+
 /**
  * The package file name, in one place.
  *
@@ -117,6 +138,7 @@ function entryFor(store) {
     }
     if (Array.isArray(store.art) && store.art.length) entry.art = store.art;
     if (Array.isArray(store.changelog) && store.changelog.length) entry.changelog = store.changelog;
+    if (Array.isArray(store.prerequisites) && store.prerequisites.length) entry.prerequisites = store.prerequisites;
 
     return entry;
 }
@@ -136,6 +158,10 @@ function main() {
                 `${dir}/store.json declares category ${JSON.stringify(store.category)}; `
                 + `it must be one of ${CATEGORIES.join(', ')}`
             );
+        }
+        if ('prerequisites' in store) {
+            const errs = prerequisiteErrors(store.prerequisites);
+            if (errs.length) throw new Error(`${dir}/store.json: ${errs.join('; ')}`);
         }
         if (!store.latest) { skipped.push(dir); continue; }
         extensions.push(entryFor(store));
