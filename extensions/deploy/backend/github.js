@@ -117,7 +117,8 @@ async function exchangeManifestCode(code) {
         clientSecret: r.client_secret,
         privateKey: r.pem,
         webhookSecret: r.webhook_secret,
-        htmlUrl: r.html_url
+        htmlUrl: r.html_url,
+        owner: ownerOf(r)
     };
 }
 
@@ -301,12 +302,25 @@ function manifestAction(owner, state) {
 /**
  * The name the manifest proposes for a tenant's App.
  *
- * Deterministic on purpose: a tenant that is recreated, or a second install
- * signing in to the same GitHub account, lands on the same name, and that is
- * what lets `appSettingsUrl` point at the App a previous setup already made.
+ * GitHub App names are unique across all of github.com, not per account. The
+ * first version was `Aegis Deploy (<tenant>)` on the belief that a rerun would
+ * find its own App under that name. What it did instead: once any install, on
+ * any account, had registered `Aegis Deploy (acme)`, every other install with a
+ * tenant called `acme` was refused with "Name is already taken", and so was the
+ * same operator setting up again from another account or another machine.
+ *
+ * So the name carries `installTag`, a short tag stable for this install and
+ * different on every other one. A rerun here still proposes the same name;
+ * nobody else ever does. GitHub caps a name at 34 characters, so a long tenant
+ * slug is cut to leave room for the tag.
  */
-function appNameFor(tenantSlug) {
-    return `Aegis Deploy (${tenantSlug})`;
+const APP_NAME_MAX = 34;
+
+function appNameFor(tenantSlug, installTag) {
+    const tag = String(installTag || '');
+    const room = APP_NAME_MAX - 'Aegis Deploy ()'.length - (tag ? tag.length + 1 : 0);
+    const slug = String(tenantSlug || '').slice(0, Math.max(room, 1)).replace(/-+$/, '');
+    return `Aegis Deploy (${tag ? slug + '-' + tag : slug})`;
 }
 
 /**
@@ -511,7 +525,21 @@ async function verifyAppCredentials(appId, privateKey) {
         err.status = 409;
         throw err;
     }
-    return { appId: String(app.id), slug: app.slug || null, htmlUrl: app.html_url || null };
+    return { appId: String(app.id), slug: app.slug || null, htmlUrl: app.html_url || null, owner: ownerOf(app) };
+}
+
+/**
+ * The account an App belongs to, as `{ login, org }`, or null.
+ *
+ * Kept with the registration because a private App's public page never names
+ * its owner. Without it, an operator who forgot the registration and comes back
+ * has an App on GitHub, a name nobody else can take, and no way to find which
+ * of their accounts holds it.
+ */
+function ownerOf(app) {
+    const o = app && app.owner;
+    if (!o || !o.login) return null;
+    return { login: String(o.login), org: o.type === 'Organization' };
 }
 
 module.exports = {

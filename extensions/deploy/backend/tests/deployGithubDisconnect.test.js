@@ -163,3 +163,37 @@ test('one tenant forgetting its App leaves another tenant registered', async () 
     assert.ok(other, "another tenant's registration was taken with it");
     assert.strictEqual(other.appId, '222');
 });
+
+// Forgetting the key does not free the App's name on GitHub. The next setup of
+// the tenant has to find that App, and a private App's page never names its
+// owner, so what was recorded at registration is the only way to point there.
+test('a forgotten App can still be found, under the account that owns it', async () => {
+    machineStore.saveGitHubApp(SLUG, {
+        appId: '333', slug: 'aegis-deploy-acme-3f9a1c', privateKey: 'placeholder-not-a-key',
+        htmlUrl: 'https://github.com/apps/aegis-deploy-acme-3f9a1c',
+        owner: { login: 'acme-corp', org: true }
+    });
+    await call('DELETE /api/deploy/github/app', request());
+
+    const kept = machineStore.forgottenGitHubApp(SLUG);
+    assert.strictEqual(kept.slug, 'aegis-deploy-acme-3f9a1c');
+    assert.ok(!('privateKeyEnc' in kept), 'a forgotten registration kept its key');
+
+    // Whatever the page typed, the answer is the account that holds the App.
+    const req = request();
+    req.query.owner = 'someone-else';
+    const res = await call('GET /api/deploy/github/app/existing', req);
+    assert.strictEqual(res.body.settingsUrl,
+        'https://github.com/organizations/acme-corp/settings/apps/aegis-deploy-acme-3f9a1c');
+    assert.strictEqual(res.body.owner, 'acme-corp');
+
+    // Registering again clears it, so a stale pointer never outlives its App.
+    registerApp(SLUG, '444');
+    assert.strictEqual(machineStore.forgottenGitHubApp(SLUG), null);
+});
+
+test('with nothing recorded, the name looked for carries this install tag', async () => {
+    const res = await call('GET /api/deploy/github/app/existing', request('fresh'));
+    assert.strictEqual(res.body.slug, `aegis-deploy-fresh-${machineStore.installTag()}`);
+    assert.match(machineStore.installTag(), /^[0-9a-f]{6}$/);
+});

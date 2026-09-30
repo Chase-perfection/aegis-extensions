@@ -834,7 +834,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             // this action with the manifest as a single field.
             action,
             manifest: github.buildManifest({
-                name: github.appNameFor(req.tenant.slug),
+                name: github.appNameFor(req.tenant.slug, machineStore.installTag()),
                 baseUrl: base,
                 webhookUrl: publicBase ? `${publicBase}/t/${req.tenant.slug}/api/deploy/webhook` : null,
                 redirectUrl: `${base}/api/deploy/github/app/register-callback`
@@ -854,15 +854,27 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
      *
      * Read-only and no GitHub call: see `github.appSettingsUrl` for why Aegis
      * cannot check the App exists before sending the operator to look.
+     *
+     * An App this tenant registered and then forgot is answered from what was
+     * recorded at registration, owner included, over whatever the page typed:
+     * that is the one case where Aegis knows rather than guesses, and a guess
+     * against the wrong account is a 404 that reads as "there is no App".
      */
     router.get('/api/deploy/github/app/existing', requireOptIn, requireRole('admin'), (req, res) => {
-        const name = github.appNameFor(req.tenant.slug);
-        const slug = github.appSlugFor(name);
+        const known = machineStore.forgottenGitHubApp(req.tenant.slug);
+        if (known && known.slug && known.owner) {
+            const settingsUrl = github.appSettingsUrl(known.owner.org ? known.owner.login : '', known.slug);
+            if (settingsUrl) {
+                return res.json({ success: true, name: known.slug, slug: known.slug, settingsUrl, owner: known.owner.login });
+            }
+        }
+        const name = github.appNameFor(req.tenant.slug, machineStore.installTag());
+        const slug = (known && known.slug) || github.appSlugFor(name);
         const settingsUrl = github.appSettingsUrl(req.query.owner || '', slug);
         if (!settingsUrl) {
             return res.status(400).json({ success: false, error: 'bad_owner' });
         }
-        res.json({ success: true, name, slug, settingsUrl });
+        res.json({ success: true, name, slug, settingsUrl, owner: null });
     });
 
     /**
@@ -902,6 +914,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 appId: app.appId,
                 slug: app.slug,
                 htmlUrl: app.htmlUrl,
+                owner: app.owner,
                 privateKey
                 // No client secret and no webhook secret: manual registration
                 // produces neither, and the webhook route already refuses every

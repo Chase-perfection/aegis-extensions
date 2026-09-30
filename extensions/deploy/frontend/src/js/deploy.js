@@ -547,7 +547,9 @@
                 if (data && data.success) {
                     var link = document.getElementById('deploy-reuse-link');
                     link.href = data.settingsUrl;
-                    link.textContent = data.name;
+                    // The owner, when Aegis recorded it, is the account to be
+                    // signed in as: GitHub answers 404 to any other.
+                    link.textContent = data.owner ? data.name + ' · ' + data.owner : data.name;
                     document.getElementById('deploy-reuse').hidden = false;
                     var idEl = document.getElementById('deploy-manual-appid');
                     if (idEl) {

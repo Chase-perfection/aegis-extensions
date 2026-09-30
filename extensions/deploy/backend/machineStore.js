@@ -91,6 +91,17 @@ function machineKey() {
     }
 }
 
+/**
+ * Six hex characters that name this install in its GitHub App names.
+ *
+ * Derived from the machine key so it needs no file of its own and stays put for
+ * as long as the key does. A one-way hash cut to 24 bits says nothing about the
+ * key. See `github.appNameFor` for why an App name needs it.
+ */
+function installTag() {
+    return crypto.createHash('sha256').update(machineKey()).update('github-app-name').digest('hex').slice(0, 6);
+}
+
 /** `iv.tag.ciphertext`, base64, one line. */
 function encrypt(plaintext) {
     const iv = crypto.randomBytes(12);
@@ -265,17 +276,19 @@ function getGitHubApp(slug) {
  * would read back as "GitHub is not connected" one screen later, with a private
  * key already spent and no way to tell why.
  */
-function saveGitHubApp(tenantSlug, { appId, slug, clientId, clientSecret, privateKey, webhookSecret, htmlUrl }) {
+function saveGitHubApp(tenantSlug, { appId, slug, clientId, clientSecret, privateKey, webhookSecret, htmlUrl, owner }) {
     const key = appKey(tenantSlug);
     if (!key) throw new Error(`refusing to store a GitHub App under ${JSON.stringify(String(tenantSlug))}`);
 
     const all = readRaw();
     if (!all.githubApps) all.githubApps = {};
+    if (all.forgottenGitHubApps) delete all.forgottenGitHubApps[key];
     all.githubApps[key] = {
         appId,
         slug: slug || null,
         clientId: clientId || null,
         htmlUrl: htmlUrl || null,
+        owner: owner || null,
         registeredAt: Date.now(),
         clientSecretEnc: clientSecret ? encrypt(clientSecret) : null,
         privateKeyEnc: privateKey ? encrypt(privateKey) : null,
@@ -294,9 +307,23 @@ function clearGitHubApp(tenantSlug) {
     if (!key) return false;
     const all = readRaw();
     if (!all.githubApps || !all.githubApps[key]) return false;
+    const { appId, slug, htmlUrl, owner } = all.githubApps[key];
+    // Where the App lives outlasts the key. Forgetting it here does not free
+    // its name on GitHub, so the next setup of this tenant is refused unless
+    // the operator deletes it there or reuses it, and both start from knowing
+    // which account holds it. No secret is kept.
+    if (!all.forgottenGitHubApps) all.forgottenGitHubApps = {};
+    all.forgottenGitHubApps[key] = { appId, slug: slug || null, htmlUrl: htmlUrl || null, owner: owner || null, forgottenAt: Date.now() };
     delete all.githubApps[key];
     writeRaw(all);
     return true;
+}
+
+/** The App a tenant registered and then forgot, without any secret, or null. */
+function forgottenGitHubApp(tenantSlug) {
+    const key = appKey(tenantSlug);
+    if (!key) return null;
+    return (readRaw().forgottenGitHubApps || {})[key] || null;
 }
 
 /**
@@ -383,7 +410,8 @@ function getBuildAccountSecret(accountName) {
 module.exports = {
     isEnabled, publicBaseUrl, detectionPath,
     siteNetwork, siteNetworkIsPinned, saveSiteNetwork,
-    getGitHubApp, saveGitHubApp, clearGitHubApp, migrateLegacyGitHubApp, publicStatus,
+    getGitHubApp, saveGitHubApp, clearGitHubApp, forgottenGitHubApp, migrateLegacyGitHubApp, publicStatus,
+    installTag,
     saveBuildAccountSecret, getBuildAccountSecret,
     encrypt, decrypt,
     storeDir, storeFile, SLUG_RE

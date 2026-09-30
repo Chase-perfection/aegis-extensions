@@ -112,14 +112,25 @@ test('manifestAction refuses anything that is not a GitHub login', () => {
   }
 });
 
-// A recreated tenant or a second install must land on the App the first setup
-// made, which only works while the name is a pure function of the tenant slug
-// and the slug matches what GitHub derived from it.
-test('the App name is fixed per tenant and its slug is the one GitHub derives', () => {
-  assert.strictEqual(appNameFor('acme'), 'Aegis Deploy (acme)');
-  assert.strictEqual(appNameFor('acme'), appNameFor('acme'));
-  assert.strictEqual(appSlugFor(appNameFor('acme')), 'aegis-deploy-acme');
-  assert.strictEqual(appSlugFor(appNameFor('acme-corp-2')), 'aegis-deploy-acme-corp-2');
+// App names are unique across github.com. A name built from the tenant slug
+// alone was refused as "already taken" for every install after the first that
+// had a tenant of that name. The install tag keeps a rerun on the same name and
+// keeps every other install off it.
+test('the App name is fixed per install and tenant, and its slug is the one GitHub derives', () => {
+  assert.strictEqual(appNameFor('acme', '3f9a1c'), 'Aegis Deploy (acme-3f9a1c)');
+  assert.strictEqual(appNameFor('acme', '3f9a1c'), appNameFor('acme', '3f9a1c'));
+  assert.notStrictEqual(appNameFor('acme', '3f9a1c'), appNameFor('acme', '0b7e22'));
+  assert.strictEqual(appSlugFor(appNameFor('acme', '3f9a1c')), 'aegis-deploy-acme-3f9a1c');
+  assert.strictEqual(appSlugFor(appNameFor('acme-corp-2', '3f9a1c')), 'aegis-deploy-acme-corp-2-3f9a1c');
+});
+
+test('the App name fits the 34 characters GitHub allows and keeps the tag', () => {
+  const long = 'a-very-long-tenant-slug-that-goes-on';
+  const name = appNameFor(long, '3f9a1c');
+  assert.ok(name.length <= 34, name);
+  assert.ok(name.endsWith('-3f9a1c)'), name);
+  // A cut that lands on a hyphen must not leave two in a row.
+  assert.ok(!/--/.test(appNameFor('abcdefghijk-mnop', '3f9a1c')));
 });
 
 test('appSettingsUrl opens the existing App under the account that owns it', () => {
