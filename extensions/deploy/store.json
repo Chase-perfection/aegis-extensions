@@ -18,7 +18,7 @@
   ],
   "requiresHostOptIn": true,
   "channel": "stable",
-  "minAppVersion": "1.0.9",
+  "minAppVersion": "1.0.5",
   "latest": {
     "version": "0.2.6",
     "publishedAt": "2026-09-30T08:44:43Z",

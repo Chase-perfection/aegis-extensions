@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## 0.3.0
+## 0.2.7
 
 **Deploy says what it needs on the server, and installs what is missing.** Git
 is required, Python and Node are optional. The store drawer shows what the
