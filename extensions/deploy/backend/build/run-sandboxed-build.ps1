@@ -35,27 +35,11 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }
 
-$plainPassword = $env:AEGIS_BUILD_ACCOUNT_SECRET
-if (-not $plainPassword) { throw "AEGIS_BUILD_ACCOUNT_SECRET is not set" }
-$securePassword = ConvertTo-SecureString $plainPassword -AsPlainText -Force
-$plainPassword = $null
-Remove-Item Env:AEGIS_BUILD_ACCOUNT_SECRET -ErrorAction SilentlyContinue
-
-# The project's variables, read once and then removed from this process. A
-# malformed blob stops the build: the alternative is a build that succeeds
-# against defaults and publishes a site pointing at nothing.
-$buildEnv = @{}
-if ($env:AEGIS_BUILD_ENV_JSON) {
-    try {
-        $parsed = $env:AEGIS_BUILD_ENV_JSON | ConvertFrom-Json
-    } catch {
-        throw "AEGIS_BUILD_ENV_JSON is not valid JSON"
-    }
-    foreach ($property in $parsed.PSObject.Properties) {
-        $buildEnv[$property.Name] = [string]$property.Value
-    }
-    Remove-Item Env:AEGIS_BUILD_ENV_JSON -ErrorAction SilentlyContinue
-}
+# The password and the project's variables, read once and removed from this
+# process before any child starts. See sandbox-common.ps1.
+. (Join-Path $PSScriptRoot 'sandbox-common.ps1')
+$securePassword = Read-AccountSecret
+$buildEnv = Read-ProjectEnv
 
 # --- Job Object wrapper: verified standalone before being embedded here. ---
 Add-Type -TypeDefinition @'
@@ -143,91 +127,23 @@ $job = [AegisBuild.JobObject]::CreateCappedJob(64, 2GB)
 # instruction: see SandboxProcess.cs for why Process.Start could not do this.
 Add-Type -Path (Join-Path $PSScriptRoot 'SandboxProcess.cs')
 
-# The Windows error behind a refused start, as the sentence an operator can act
-# on. The raw message names neither the account nor the fix.
-function Get-StartFailureHint {
-    param([int]$Code)
-    switch ($Code) {
-        5 { return "Windows refused $AccountName access to $WorkspaceDir or to cmd.exe. Aegis resets the workspace permissions before each build, so run the Deploy host setup again to repair the account." }
-        267 { return "$WorkspaceDir is not a folder $AccountName can open. Run the Deploy host setup again." }
-        1314 { return "the account the Aegis backend runs as lacks 'Impersonate a client after authentication'. LocalSystem and administrators hold it: run the Aegis service as one of them." }
-        1326 { return "the password Aegis stored for $AccountName no longer matches the account. Run the Deploy host setup again: it resets both." }
-        1327 { return "a policy on this host restricts how $AccountName may sign in (logon hours, workstations or blank password)." }
-        1330 { return "the password of $AccountName has expired. Run the Deploy host setup again." }
-        1331 { return "$AccountName is disabled. Enable it in Local Users and Groups, or run the Deploy host setup again." }
-        1385 { return "$AccountName is not granted 'Log on as a batch job', or a policy denies it. Run the Deploy host setup again, which grants it; if a domain policy owns that right on this host, add the account there." }
-        1909 { return "$AccountName is locked out. Unlock it in Local Users and Groups." }
-        1792 { return "the Secondary Logon service (seclogon) is stopped or disabled. Set it to Manual and start it." }
-        default { return "run the Deploy host setup again; if it persists, the Windows error code above names the cause." }
-    }
-}
-
 function Start-AsBuildAccount {
     param([string]$CommandLine, [System.Collections.IDictionary]$Environment, [string]$LogFile)
     try {
         return [AegisSandbox.SandboxProcess]::Start($AccountName, $securePassword, $CommandLine, $WorkspaceDir, $Environment, $job, $LogFile)
     } catch {
-        $inner = $_.Exception
-        while ($inner.InnerException -and -not ($inner -is [System.ComponentModel.Win32Exception])) { $inner = $inner.InnerException }
-        $code = if ($inner -is [System.ComponentModel.Win32Exception]) { $inner.NativeErrorCode } else { 0 }
-        $hint = Get-StartFailureHint -Code $code
+        $code, $message = Get-Win32Code $_.Exception
+        $hint = Get-StartFailureHint -Code $code -AccountName $AccountName -WorkspaceDir $WorkspaceDir
         # Exit 3, not a throw (which exits 1): the launcher reads 3 as "the
         # sandbox is broken, nothing of the project ran", which is what lets the
         # backend take this account out of the pool and retry on another.
-        [Console]::Error.WriteLine("could not start the build as $AccountName (Windows error $code, $($inner.Message.Trim())): $hint")
+        [Console]::Error.WriteLine("could not start the build as $AccountName (Windows error $code, $message): $hint")
         exit 3
     }
 }
 
-<#
-The environment block the build starts with. Built, not inherited as is: what
-this process holds is the launcher's short list plus what Node and pwsh add on
-their own, and three of those broke real builds.
-
-- PATHEXT. The launcher does not pass it and pwsh then sets it to ".CPL", so cmd
-  resolved no .exe and no .cmd: npm, node and git were all "not recognized".
-  The machine's own value, from the registry.
-- USERNAME, USERPROFILE, APPDATA, LOCALAPPDATA, TEMP. Node's libuv copies the
-  backend's in when they are missing, so the build read the backend account's
-  profile, which it cannot write: npm's cache lives there. They name the build
-  account and point into -HomeDir instead.
-- PSExecutionPolicyPreference. pwsh sets it for -ExecutionPolicy Bypass, and a
-  child inherits it, so any PowerShell a build script started ran unrestricted.
-
-The project's values come last so they win. A PowerShell hashtable matches
-names case-insensitively, as Windows does, and keeps the case the project wrote.
-The names Aegis refuses on the way in (PATH, ComSpec, the AEGIS_ prefix) are
-exactly the ones that would matter here: see projectEnv.js.
-#>
 function Get-BuildEnvironment {
-    $environment = @{}
-    foreach ($item in Get-ChildItem Env:) { $environment[$item.Name] = $item.Value }
-    $environment.Remove('PSExecutionPolicyPreference')
-
-    $pathExt = [Environment]::GetEnvironmentVariable('PATHEXT', 'Machine')
-    if (-not $pathExt) { $pathExt = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC' }
-    $environment['PATHEXT'] = $pathExt
-
-    $environment['USERNAME'] = $AccountName
-    $environment['USERDOMAIN'] = [Environment]::MachineName
-    $environment['LOGONSERVER'] = '\\' + [Environment]::MachineName
-    if ($HomeDir) {
-        $roaming = Join-Path $HomeDir 'AppData\Roaming'
-        $local = Join-Path $HomeDir 'AppData\Local'
-        $temp = Join-Path $HomeDir 'Temp'
-        foreach ($dir in $roaming, $local, $temp) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-        $qualifier = Split-Path $HomeDir -Qualifier
-        $environment['USERPROFILE'] = $HomeDir
-        $environment['HOMEDRIVE'] = $qualifier
-        $environment['HOMEPATH'] = $HomeDir.Substring($qualifier.Length)
-        $environment['APPDATA'] = $roaming
-        $environment['LOCALAPPDATA'] = $local
-        $environment['TEMP'] = $temp
-        $environment['TMP'] = $temp
-    }
-
-    foreach ($name in $buildEnv.Keys) { $environment[$name] = $buildEnv[$name] }
-    return $environment
+    return Get-SandboxEnvironment -AccountName $AccountName -HomeDir $HomeDir -ProjectEnv $buildEnv
 }
 
 function Invoke-Capped {

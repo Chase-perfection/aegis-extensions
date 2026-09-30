@@ -34,8 +34,9 @@
 
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
-const { execFile, execFileSync } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 const machineStore = require('./machineStore');
 const hostTools = require('./build/hostTools');
@@ -314,6 +315,18 @@ function grantData(dir, account) {
     }
 }
 
+/**
+ * The runtime account's writable profile for one slot: TEMP, APPDATA, package
+ * caches and the process's log.
+ *
+ * A sibling of `current/`, which the account may only read, and one per port
+ * because the outgoing and incoming versions of a push run side by side for a
+ * few seconds and must not share a log file.
+ */
+function homeDirFor(dir, port) {
+    return path.join(path.dirname(dir), 'run-home', String(port));
+}
+
 function spawnSandboxed({ dir, account, startCmd, port, env, dataDir, proxyKey }) {
     const secret = machineStore.getBuildAccountSecret(account);
     if (!secret) {
@@ -343,21 +356,28 @@ function spawnSandboxed({ dir, account, startCmd, port, env, dataDir, proxyKey }
         if (process.env[name] !== undefined) childEnv[name] = process.env[name];
     }
 
+    const homeDir = homeDirFor(dir, port);
+    fs.mkdirSync(homeDir, { recursive: true });
     grantAccess(dir, account);
+    grantData(homeDir, account);
     if (dataDir) grantData(dataDir, account);
 
-    return execFile('pwsh', [
+    // `spawn` and not `execFile`: execFile buffers stdout for a callback and
+    // kills the child once maxBuffer fills, and a server logs for as long as it
+    // runs, so a chatty one was killed after its first megabyte of output.
+    return spawn('pwsh', [
         '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
         '-File', SCRIPT_PATH,
         '-WorkspaceDir', dir,
         '-AccountName', account,
-        '-StartCmd', startCmd
-    ], { windowsHide: true, env: hostTools.withToolPath(childEnv, hostTools.toolDirs()), maxBuffer: 1024 * 1024 });
+        '-StartCmd', startCmd,
+        '-HomeDir', homeDir
+    ], { windowsHide: true, env: hostTools.withToolPath(childEnv, hostTools.toolDirs()) });
 }
 
 module.exports = {
     isEnabled, accounts, portFor, targetFor, targetForRequest, isRunning, restart, stop, health, waitHealthy,
-    accountFor, startProcess, spawnSandboxed, grantAccess, grantData,
+    accountFor, startProcess, spawnSandboxed, grantAccess, grantData, homeDirFor,
     HEALTH_TIMEOUT_MS, DRAIN_MS, DEFAULT_RUNTIME_BASE, runtimeBase,
     // Test seam: the flip is about which process the proxy points at, and a
     // test cannot reach that state without starting two of them.

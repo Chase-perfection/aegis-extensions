@@ -175,6 +175,53 @@ account, no health check and no restart discipline, and everything above about
 builds, rollback and the poller still applies to it. Reach for a start command
 when the application has to run code per request.
 
+## A site that is not static
+
+A Node server, a Python API, anything that answers requests with code. Once per
+host, then once per project.
+
+Once per host:
+
+1. On the Deploy card, run the host setup and allow application processes. It
+   creates the runtime accounts (`aegis-run-01`, `aegis-run-02`), grants them
+   "Log on as a batch job" and denies them every interactive logon. Two
+   accounts means two process projects; see **Projects served by a process** in
+   the contract to add more.
+2. Let the store drawer install Python or Node for all users if the project
+   needs one. A per-user install is invisible to the sandbox accounts.
+
+Once per project, in the form or in `aegis.deploy.json` on the branch:
+
+1. **Install command**: what fills `current/` with dependencies, for example
+   `python -m pip install --no-cache-dir -r requirements.txt --target .` or
+   `npm ci`. `--target .` matters for Python: the runtime account has no
+   site-packages of its own, so the packages must sit beside the code.
+2. **Build command**: empty unless something must be compiled.
+3. **Start command**: run from `current/`, so paths are relative to the
+   repository root, for example `python packaging/api/kpi_api.py` or
+   `node server.js`.
+4. **Database file** and **migrations directory**, if the application has them.
+
+What the application must do:
+
+- listen on the `PORT` and `HOST` it is given (`HOST` is `127.0.0.1`);
+- keep anything it writes under `AEGIS_DATA_DIR`, and temporary files in `TEMP`;
+- never write into its own folder, which it can only read.
+
+Where things are on the server, under
+`C:\ProgramData\Aegis\tenants\<tenant>\deploy\sites\<project>\`:
+
+| Folder | Holds | The application may |
+|---|---|---|
+| `current\` | The published code and its installed dependencies | read |
+| `data\` | `AEGIS_DATA_DIR`: the database, uploads. Survives every deployment | read and write |
+| `run-home\<port>\` | Its `TEMP` and profile, and `server.log`, everything it printed | read and write |
+
+Aegis sets these rights itself before every start. If the start fails, the
+console says which Windows error refused it and what to run; the table is
+**When the process does not start** in the contract, and `server.log` holds
+what the application printed before it stopped.
+
 ## When something is refused
 
 Every refusal has a code and a fix, listed in

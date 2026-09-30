@@ -11,39 +11,46 @@ application directly. The Job Object is set to KILL_ON_JOB_CLOSE and the handle
 lives here, so whatever the application spawned dies with this script rather
 than being orphaned under an account nobody looks at.
 
+The process is started exactly as a build is, by SandboxProcess.cs: a batch
+logon, a suspended start, the job, then resume, on a desktop of its own. It used
+to be Process.Start with a password, which is CreateProcessWithLogonW: that
+fails with "Accès refusé" when Aegis runs as LocalSystem, asks for the
+interactive logon setup denies these accounts, and put the process on a desktop
+it could not open. Every node and Python project failed to start on it.
+
 The account's password arrives via AEGIS_BUILD_ACCOUNT_SECRET and the
 application's variables via AEGIS_BUILD_ENV_JSON. Both are removed from this
 process before the child starts, so neither is inherited and neither was ever a
 command-line argument.
+
+Output: the application writes to -LogFile (its own stdout and stderr handle),
+and this script copies what lands there to its own stdout, which is how the
+deployment console shows a crash on boot.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$WorkspaceDir,
     [Parameter(Mandatory)][string]$AccountName,
-    [Parameter(Mandatory)][string]$StartCmd
+    [Parameter(Mandatory)][string]$StartCmd,
+    # The account's writable profile for this process: TEMP, APPDATA, the
+    # package caches, and the log. Beside `current/` and never inside it, which
+    # the account can only read.
+    [Parameter(Mandatory)][string]$HomeDir,
+    [string]$LogFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
+# Read by Node as UTF-8. Without these, an error reaches the deployment console
+# wrapped in ANSI colour codes and in the console code page.
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }
 
-$plainPassword = $env:AEGIS_BUILD_ACCOUNT_SECRET
-if (-not $plainPassword) { throw "AEGIS_BUILD_ACCOUNT_SECRET is not set" }
-$securePassword = ConvertTo-SecureString $plainPassword -AsPlainText -Force
-$credential = New-Object System.Management.Automation.PSCredential(".\$AccountName", $securePassword)
-$plainPassword = $null
-Remove-Item Env:AEGIS_BUILD_ACCOUNT_SECRET -ErrorAction SilentlyContinue
+. (Join-Path $PSScriptRoot '..\build\sandbox-common.ps1')
+$securePassword = Read-AccountSecret
+$appEnv = Read-ProjectEnv
 
-$appEnv = @{}
-if ($env:AEGIS_BUILD_ENV_JSON) {
-    try {
-        $parsed = $env:AEGIS_BUILD_ENV_JSON | ConvertFrom-Json
-    } catch {
-        throw "AEGIS_BUILD_ENV_JSON is not valid JSON"
-    }
-    foreach ($property in $parsed.PSObject.Properties) {
-        $appEnv[$property.Name] = [string]$property.Value
-    }
-    Remove-Item Env:AEGIS_BUILD_ENV_JSON -ErrorAction SilentlyContinue
-}
+if (-not $LogFile) { $LogFile = Join-Path $HomeDir 'server.log' }
+New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
 
 # --- Job Object wrapper: the same one the build script uses. -----------------
 Add-Type -TypeDefinition @'
@@ -98,9 +105,6 @@ namespace AegisRuntime {
             ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION lpJobObjectInfo, uint cbJobObjectInfoLength);
 
         [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool TerminateJobObject(IntPtr hJob, uint uExitCode);
 
         public static IntPtr CreateCappedJob(int activeProcessLimit, ulong memoryLimitBytes) {
@@ -128,48 +132,51 @@ namespace AegisRuntime {
 # is a cap that means something.
 $job = [AegisRuntime.JobObject]::CreateCappedJob(16, 1GB)
 
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = 'cmd.exe'
-$psi.Arguments = "/d /c `"$StartCmd`""
-$psi.WorkingDirectory = $WorkspaceDir
-$psi.UseShellExecute = $false
-$psi.CreateNoWindow = $true
-$psi.LoadUserProfile = $false
-$psi.RedirectStandardOutput = $true
-$psi.RedirectStandardError = $true
-# The bare name and the machine as the domain, never ".\name": with no domain,
-# CreateProcessWithLogonW reads the name as a UPN, and ".\name" is no UPN, so
-# Windows answers 1326 for an account whose password is right. Same fix as
-# run-sandboxed-build.ps1.
-$psi.UserName = $AccountName
-$psi.Domain = [Environment]::MachineName
-$psi.Password = $credential.Password
+Add-Type -Path (Join-Path $PSScriptRoot '..\build\SandboxProcess.cs')
 
-# `Environment` and not `EnvironmentVariables`: the latter lowercases every key
-# it stores, and an application reading DATABASE_URL needs the case it wrote.
-foreach ($name in $appEnv.Keys) {
-    $psi.Environment[$name] = $appEnv[$name]
+# Defaults an application server needs when its output is a file and not a
+# console, set before the project's values so the project can still override
+# them. Python buffers stdout to a file, so a traceback on boot arrived after
+# the health check had already given up; and it writes in the ANSI code page.
+$defaults = @{ PYTHONUNBUFFERED = '1'; PYTHONIOENCODING = 'utf-8' }
+foreach ($name in $defaults.Keys) { if (-not $appEnv.ContainsKey($name)) { $appEnv[$name] = $defaults[$name] } }
+$environment = Get-SandboxEnvironment -AccountName $AccountName -HomeDir $HomeDir -ProjectEnv $appEnv
+
+$cmdExe = Join-Path ([Environment]::SystemDirectory) 'cmd.exe'
+$commandLine = "`"$cmdExe`" /d /s /c `"$StartCmd`""
+
+try {
+    $proc = [AegisSandbox.SandboxProcess]::Start($AccountName, $securePassword, $commandLine, $WorkspaceDir, $environment, $job, $LogFile)
+} catch {
+    $code, $message = Get-Win32Code $_.Exception
+    $hint = Get-StartFailureHint -Code $code -AccountName $AccountName -WorkspaceDir $WorkspaceDir
+    [Console]::Error.WriteLine("could not start the application as $AccountName (Windows error $code, $message): $hint")
+    exit 3
 }
 
-$proc = [System.Diagnostics.Process]::Start($psi)
-[AegisRuntime.JobObject]::AssignProcessToJobObject($job, $proc.Handle) | Out-Null
-
-# Forwarded so the deployment console shows what the application printed while it
-# was starting, which is where a crash on boot explains itself.
-$proc.BeginOutputReadLine()
-$proc.BeginErrorReadLine()
-Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived -Action {
-    if ($EventArgs.Data) { Write-Output $EventArgs.Data }
-} | Out-Null
-Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived -Action {
-    if ($EventArgs.Data) { Write-Output $EventArgs.Data }
-} | Out-Null
+# Copies what the application wrote since the last call to this script's stdout.
+$reader = [System.IO.FileStream]::new($LogFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read,
+    [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+$decoder = [System.Text.UTF8Encoding]::new($false).GetDecoder()
+$buffer = [byte[]]::new(8192)
+$chars = [char[]]::new(8193)
+function Copy-NewOutput {
+    while (($read = $reader.Read($buffer, 0, $buffer.Length)) -gt 0) {
+        $count = $decoder.GetChars($buffer, 0, $read, $chars, 0)
+        if ($count -gt 0) { [Console]::Out.Write($chars, 0, $count); [Console]::Out.Flush() }
+    }
+}
 
 try {
     # Waits for as long as the application runs. Aegis stops it by killing this
     # process, which closes the job handle and takes the application with it.
-    $proc.WaitForExit()
-    exit $proc.ExitCode
+    while (-not $proc.Wait(250)) { Copy-NewOutput }
+    Copy-NewOutput
+    $exitCode = $proc.ExitCode
+    [Console]::Error.WriteLine("the application exited with code $exitCode")
+    exit $exitCode
 } finally {
+    $reader.Dispose()
     [AegisRuntime.JobObject]::TerminateJobObject($job, 0) | Out-Null
+    $proc.Dispose()
 }

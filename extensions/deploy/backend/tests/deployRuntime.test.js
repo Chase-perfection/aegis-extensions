@@ -18,6 +18,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const http = require('http');
 const childProcess = require('child_process');
 const { EventEmitter } = require('events');
@@ -255,12 +258,12 @@ test('stop removes the proxy port and key together', async () => {
 });
 
 test('the proxy key reaches only the child JSON environment and cannot be overridden', (t) => {
-    const originalExecFile = childProcess.execFile;
+    const originalSpawn = childProcess.spawn;
     const originalExecFileSync = childProcess.execFileSync;
     const originalSecret = machineStore.getBuildAccountSecret;
     let launch = null;
 
-    childProcess.execFile = (file, args, options) => {
+    childProcess.spawn = (file, args, options) => {
         launch = { file, args, options };
         return new EventEmitter();
     };
@@ -273,15 +276,20 @@ test('the proxy key reaches only the child JSON environment and cannot be overri
     delete require.cache[require.resolve('../runtime')];
     const isolatedRuntime = require('../runtime');
     t.after(() => {
-        childProcess.execFile = originalExecFile;
+        childProcess.spawn = originalSpawn;
         childProcess.execFileSync = originalExecFileSync;
         machineStore.getBuildAccountSecret = originalSecret;
         delete require.cache[require.resolve('../runtime')];
     });
 
+    const site = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-runtime-'));
+    t.after(() => fs.rmSync(site, { recursive: true, force: true }));
+    const current = path.join(site, 'current');
+    fs.mkdirSync(current);
+
     const proxyKey = 'server-generated-proxy-key';
     isolatedRuntime.spawnSandboxed({
-        dir: '.', account: 'run-a', startCmd: 'node server.js', port: 3200,
+        dir: current, account: 'run-a', startCmd: 'node server.js', port: 3200,
         env: { AEGIS_PROXY_KEY: 'forged-project-value', PUBLIC_SETTING: 'visible' },
         proxyKey
     });
@@ -293,4 +301,10 @@ test('the proxy key reaches only the child JSON environment and cannot be overri
     assert.ok(!launch.args.includes(proxyKey));
     assert.ok(launch.options.env.Path.startsWith('D:\\Py313;'), launch.options.env.Path);
     assert.strictEqual(launch.options.env.PATH, undefined);
+
+    // A writable home per slot, beside `current/` and never inside it.
+    const home = launch.args[launch.args.indexOf('-HomeDir') + 1];
+    assert.strictEqual(home, path.join(site, 'run-home', '3200'));
+    assert.ok(fs.statSync(home).isDirectory());
+    assert.strictEqual(launch.options.maxBuffer, undefined, 'a server logs forever: no buffer cap may kill it');
 });

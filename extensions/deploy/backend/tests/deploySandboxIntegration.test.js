@@ -112,6 +112,57 @@ test('the real sandbox', { skip, timeout: 600000 }, async (t) => {
         }
     });
 
+    // The runtime launcher, which no test had ever run for real: it shipped on
+    // Process.Start with a password and failed on every host with "Accès
+    // refusé" (2026-09-30) while the stubbed tests stayed green. The folder is
+    // under ProgramData and owned by the runner, as a published site is by the
+    // backend: the account reaches it only through runtime.js's own grants.
+    await t.test('serves a project as the account, through run-sandboxed-server.ps1', async (st) => {
+        const runtime = require('../runtime');
+        const site = path.join(process.env.ProgramData, `aegis-it-run-${suffix}`);
+        const current = path.join(site, 'current');
+        fs.mkdirSync(current, { recursive: true });
+        st.after(() => fs.rmSync(site, { recursive: true, force: true }));
+        fs.writeFileSync(path.join(current, 'server.js'), [
+            "const os = require('os');",
+            "require('http').createServer((q, r) => r.end(JSON.stringify({",
+            "  user: os.userInfo().username, temp: process.env.TEMP, key: process.env.AEGIS_PROXY_KEY",
+            "}))).listen(Number(process.env.PORT), process.env.HOST, () => console.log('listening-as-sandbox'));"
+        ].join('\n'));
+
+        let out = '';
+        const port = 3290;
+        const child = await runtime.startProcess({
+            dir: current, account, startCmd: 'node server.js', port, env: {},
+            dataDir: path.join(site, 'data'), proxyKey: 'it-proxy-key',
+            report: { stage() { }, log(s) { out += s; } }
+        }).catch((e) => { e.message += `\nlauncher output:\n${out}`; throw e; });
+        try {
+            const body = await new Promise((resolve, reject) => {
+                require('http').get({ host: '127.0.0.1', port, path: '/' }, (res) => {
+                    let data = '';
+                    res.on('data', (c) => { data += c; });
+                    res.on('end', () => resolve(JSON.parse(data)));
+                }).on('error', reject);
+            });
+            assert.strictEqual(body.user.toLowerCase(), account.toLowerCase(), `served as ${body.user}. output:\n${out}`);
+            assert.strictEqual(body.key, 'it-proxy-key');
+            assert.strictEqual(body.temp.toLowerCase(),
+                path.join(runtime.homeDirFor(current, port), 'Temp').toLowerCase(),
+                "the process's TEMP is its own home, not the backend's");
+            // The log is copied out while the process runs, not at its end.
+            const deadline = Date.now() + 5000;
+            while (!/listening-as-sandbox/.test(out) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+            assert.match(out, /listening-as-sandbox/, 'what the application printed reaches the deployment console');
+        } finally {
+            const gone = new Promise((r) => child.once('exit', r));
+            child.kill();
+            await gone;
+        }
+        // Killing the launcher takes the application with it (the Job Object).
+        assert.strictEqual(await runtime.health(port, 1000), false, 'the application outlived its launcher');
+    });
+
     await t.test('a wrong stored password fails as the sandbox, names the Windows error, and takes the slot out', async () => {
         const good = machineStore.getBuildAccountSecret(account);
         machineStore.saveBuildAccountSecret(account, `Wrong-${crypto.randomBytes(8).toString('hex')}-9!`);

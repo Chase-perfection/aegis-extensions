@@ -246,12 +246,14 @@ the root, so `/assets/app.js` resolves. If your build sets a base path such as
 `/portail-interne/`, remove it. Vite calls this `base`, Next calls it `basePath`,
 and both must be `/`.
 
-**No server.** A static export works. A Node server build does not: server-side
-rendering, API routes, and middleware all need a process running the
-application, which is phase 4 of the plan and not built.
+**No server, in a static project.** A static export works as files. Server-side
+rendering, API routes, middleware, a Python API: those need a process running
+the application, and that is a project with a start command. Nothing in this
+section applies to it; read **Projects served by a process** below instead.
 
-**No runtime environment variables.** A build that bakes values in at build time
-is fine. Anything reading `process.env` when a visitor loads the page is not.
+**No runtime environment variables, in a static project.** A build that bakes
+values in at build time is fine. Anything reading `process.env` when a visitor
+loads the page needs a start command, which receives every project variable.
 
 **No secrets.** Everything in the served directory is public to anyone who can
 reach the port. That includes a `.env` you committed by accident.
@@ -1047,13 +1049,61 @@ does not take the site down for as long as the application takes to boot.
 
 The process runs under a restricted account inside a Job Object capped at 16
 processes and 1 GiB, with `KILL_ON_JOB_CLOSE`: Aegis stops an application by
-killing the pwsh that owns the job, and nothing survives it. The account is
-granted read and execute on the published folder and nothing else -- it serves
-that folder and has no business writing to it.
+killing the pwsh that owns the job, and nothing survives it.
 
-The application reads `PORT` and `HOST` from its environment, plus `NODE_ENV`
-and every variable the project declared. Its output goes to the deployment
-console while it starts, which is where a crash on boot explains itself.
+It is started the way a build is, by `backend/build/SandboxProcess.cs`: a batch
+logon, a suspended start, the Job Object, then resume, on a window station of
+its own. Both launchers take their environment and their error messages from
+`backend/build/sandbox-common.ps1`, so a fix to one is a fix to the other. The
+runtime used to call `Process.Start` with a password, which Windows refuses from
+LocalSystem and which asks for the interactive logon setup denies these
+accounts: every process project failed with "Accès refusé" (error 5) while
+static sites deployed fine.
+
+### Where a process project lives, and what it may touch
+
+Under the tenant's deploy folder, one folder per project:
+
+| Path under `tenants/<slug>/deploy/sites/<project>/` | What it is | The runtime account may |
+|---|---|---|
+| `current/` | The published version: the repository after install and build. The start command's working directory | Read and execute, never write: a process that can rewrite what it serves can serve something nobody deployed |
+| `data/` | `AEGIS_DATA_DIR`. Kept across deployments, rollbacks and promotes. `dbFile` lives here | Modify |
+| `run-home/<port>/` | The process's own profile: `TEMP`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, and `server.log`. One per internal port, because the outgoing and incoming versions of a push run side by side | Modify |
+| `staging/`, `releases/`, `build-output/` | Aegis's own working folders | Nothing |
+
+Aegis grants these rights itself, with `icacls`, before every start. None of
+them is for an operator to set by hand, and a folder replaced by a publish gets
+its grant back on the next start.
+
+So an application must:
+
+- listen on `PORT` and `HOST` (`127.0.0.1`); the proxy is the only way in;
+- write its database and uploads under `AEGIS_DATA_DIR`, never beside its code;
+- write temporary files to `TEMP`, which already points into its own home;
+- expect `current/` as its working directory, so a relative path such as
+  `packaging/api/kpi_api.py` resolves.
+
+The application reads `PORT` and `HOST` from its environment, plus `NODE_ENV`,
+`AEGIS_DATA_DIR`, `AEGIS_PROXY_KEY` and every variable the project declared.
+`PYTHONUNBUFFERED=1` and `PYTHONIOENCODING=utf-8` are set unless the project
+sets them: Python buffers output written to a file, so a traceback on boot used
+to arrive after the health check had given up. The output is written to
+`run-home/<port>/server.log` and copied to the deployment console as it
+arrives, which is where a crash on boot explains itself.
+
+### When the process does not start
+
+The console prints one line naming the Windows error and its fix, the
+deployment fails with `start_failed`, and the previous version keeps serving.
+
+| Printed | Cause | Fix |
+|---|---|---|
+| `could not start the application as <account> (Windows error 1385, ...)` | The account lacks "Log on as a batch job" | Run the host setup again from the Deploy card; if a domain GPO owns that right, add the account there |
+| `... (Windows error 1326, ...)` | The stored password no longer matches the account | Run the host setup again: it resets both |
+| `... (Windows error 1314, ...)` | The Aegis backend runs as neither LocalSystem nor an administrator | Run the Aegis service as LocalSystem |
+| `... (Windows error 5, ...)` | The account cannot open `current/` or `cmd.exe` | Run the host setup again |
+| `the application exited with code N` | The command started, then stopped | Read the lines above it: they are the application's own output |
+| `nothing answered on port ... within 60s` | The application runs but listens somewhere else | Listen on `PORT` and `HOST` from the environment |
 
 ### Native KPI pattern
 

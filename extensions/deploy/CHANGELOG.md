@@ -4,6 +4,15 @@ Clones a git branch and serves it as a site, with an optional sandboxed build.
 
 ## 0.2.7
 
+**A project served by a process starts.** Every Node or Python project failed
+at its start command with "Accès refusé", after a build that succeeded. The
+application was started with `Process.Start` and a password, which Windows
+refuses from LocalSystem; it now starts exactly as a build does (batch logon,
+its own desktop, the Job Object before its first instruction), from one shared
+script, so the two cannot drift again. It gets a writable home of its own
+(`run-home\<port>`, its `TEMP` and `server.log`), and a server that logs more
+than a megabyte is no longer killed for it.
+
 **Deploy says what it needs on the server, and installs what is missing.** Git
 is required, Python and Node are optional. The store drawer shows what the
 server already has for all users and installs the rest, from the official
