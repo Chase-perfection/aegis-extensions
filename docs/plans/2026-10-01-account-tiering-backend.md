@@ -26,7 +26,8 @@ remédiation, stockage, routes, page) se coupe ici en deux plans :
 
 - **1a, ce plan** : tout le backend ;
 - **1b, plan suivant** : la page, reprise de la maquette validée
-  (`C:\Users\PV\Downloads\Arbre des comptes.html`, hors des dépôts).
+  (un export d'outil de design, gardé hors des dépôts). Voir
+  `2026-10-01-account-tiering-page.md`.
 
 Hors de ce plan : le script de collecte (livraison 2), les clés de traduction
 dans le cœur, la vignette et la publication (livraison 3).
@@ -2465,7 +2466,7 @@ fix before livraison 2.
 
 | Point | Pour quand | Qui |
 |---|---|---|
-| Maquette de la page : `C:\Users\PV\Downloads\Arbre des comptes.html`, à copier dans le dépôt par le plan 1b | plan 1b | Claude |
+| Maquette de la page : retrouvée le 2026-10-01, le plan 1b s'appuie dessus | fait | Paul |
 | Catégorie et version : tranché le 2026-10-01, on suit PUBLISHING.md (`Compliance`, liste fermée ; première sortie `0.0.0`, la conception est à corriger) | fait | Paul |
 | Icône `users` : présente dans `navbar.js` du cœur (ligne 21), rendu à regarder | livraison 3 | Paul |
 | `minAppVersion` : première version publiée d'Aegis qui passe `extensionDb` | livraison 3 | vérification |

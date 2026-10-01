@@ -8,7 +8,7 @@
 
 **Tech Stack:** JS natif sans bundler ni bibliothèque, CSS sur les variables du design system du cœur, `node:test`, banc puppeteer du cœur pour le test de page.
 
-**Spécification:** `docs/plans/2026-09-30-account-tiering-conception.md`. Maquette : `C:\Users\PV\Downloads\Arbre des comptes.html`, export d'outil de design, hors des dépôts.
+**Spécification:** `docs/plans/2026-09-30-account-tiering-conception.md`. Maquette : « Arbre des comptes », un export d'outil de design validé par Paul, gardé hors des dépôts.
 
 ---
 
