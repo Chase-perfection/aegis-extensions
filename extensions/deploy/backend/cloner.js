@@ -442,6 +442,18 @@ async function cloneToCurrent(args) {
         // repository's history to anyone who can reach the site.
         fs.rmSync(path.join(staging, '.git'), { recursive: true, force: true });
 
+        if (byProcess) {
+            // Nothing on the port moves here: the version goes to its own
+            // folder, and `deployService` starts it there and repoints
+            // `current` once it answers. See `stageRelease`.
+            adoptPrevious({ projectDir, previousSha });
+            const staged = stageRelease({ served, projectDir, sha: head, servingSha: currentSha });
+            say.log(staged.reused
+                ? `${head.slice(0, 8)} is already the version serving, its folder is reused`
+                : `${head.slice(0, 8)} ready in releases/`);
+            return { sha: head, manifestChanged: live.changed, dir: staged.dir };
+        }
+
         say.stage('publish', 'running');
         publish({ served, currentDir, projectDir, currentSha, previousSha });
         say.log(currentSha
@@ -449,7 +461,7 @@ async function cloneToCurrent(args) {
             : 'current/ published');
         say.stage('publish', 'done');
 
-        return { sha: head, manifestChanged: live.changed };
+        return { sha: head, manifestChanged: live.changed, dir: currentDir };
     } finally {
         // A refused clone used to leave its whole tree on disk, one copy per
         // failing project. Cleared here so the only surviving copy is the one
@@ -527,11 +539,42 @@ function listReleases(projectDir) {
         .sort((a, b) => b.at - a.at);
 }
 
-/** Drops the oldest releases past the cap. Called after a publish, not before. */
-function pruneReleases(projectDir) {
-    listReleases(projectDir).slice(RELEASES_KEPT).forEach((release) => {
-        fs.rmSync(path.join(releasesDir(projectDir), release.sha), { recursive: true, force: true });
-    });
+/**
+ * Drops the oldest releases past the cap. Called after a publish, not before.
+ *
+ * `keep` names the versions a process may still be running from: the one just
+ * started and the one it replaced, which drains for a while. They are never
+ * counted against the cap and never deleted. And a deletion that fails is left
+ * for the next publish: a recursive delete that hits a locked file has already
+ * removed the others, and a deployment that succeeded must not fail over the
+ * tidying after it.
+ */
+function pruneReleases(projectDir, keep) {
+    const spared = new Set((keep || []).filter(Boolean));
+    listReleases(projectDir)
+        .filter((release) => !spared.has(release.sha))
+        .slice(Math.max(0, RELEASES_KEPT - spared.size))
+        .forEach((release) => {
+            try {
+                fs.rmSync(path.join(releasesDir(projectDir), release.sha), { recursive: true, force: true });
+            } catch (_) { /* retried at the next publish */ }
+        });
+}
+
+/** True for a junction or a symbolic link, false for a folder or nothing. */
+function isLink(p) {
+    try { return fs.lstatSync(p).isSymbolicLink(); } catch (_) { return false; }
+}
+
+/**
+ * Removes a junction, never what it points at.
+ *
+ * `unlink` is what Windows takes for a directory junction; `rmdir` is the
+ * fallback for a symbolic link to a directory, which some Node versions refuse
+ * to unlink. Neither follows the link.
+ */
+function removeLink(p) {
+    try { fs.unlinkSync(p); } catch (_) { fs.rmdirSync(p); }
 }
 
 /**
@@ -571,6 +614,10 @@ function adoptPrevious({ projectDir, previousSha }) {
  * already gone wrong.
  */
 function swapOnto({ served, currentDir, keepAs }) {
+    // A project that was served by a process has `current` as a junction onto
+    // a folder already filed under `releases/`. Filing the link itself would put
+    // a link where a release belongs, so it is only removed.
+    if (isLink(currentDir)) removeLink(currentDir);
     const hadCurrent = fs.existsSync(currentDir);
     if (hadCurrent) {
         if (keepAs) {
@@ -635,7 +682,9 @@ function promote({ projectDir, currentDir, sha, currentSha, previousSha }) {
 function rollback({ projectDir, currentDir, currentSha, previousSha }) {
     adoptPrevious({ projectDir, previousSha });
 
-    const newest = listReleases(projectDir)[0];
+    // The version on the port is not a version to go back to. A static site
+    // never has it under `releases/`; a project served by a process always does.
+    const newest = listReleases(projectDir).filter((r) => r.sha !== currentSha)[0];
     if (!newest) {
         throw Object.assign(new Error('no previous version on disk'), { code: 'no_previous' });
     }
@@ -643,7 +692,111 @@ function rollback({ projectDir, currentDir, currentSha, previousSha }) {
     return newest.sha;
 }
 
+/*
+ * A project served by a process never has a folder renamed under it.
+ *
+ * Windows refuses to rename a folder that is a running process's working
+ * directory or holds a file it has open (EBUSY), and the old process is still
+ * running when the new version lands: it is the one serving while the new one
+ * boots. The rename `swapOnto` does for a static site therefore failed every
+ * deployment after the first, with the site still up and nothing new reaching it.
+ *
+ * So each version of such a project lives in its own `releases/<sha>` for its
+ * whole life, its process starts there, and `current` is a junction onto the one
+ * on the port. Repointing a junction does not touch the folder behind it, which
+ * is the property this rests on: removing or renaming the link works while its
+ * target is in use. Everything that reads `current` -- the access manifest, the
+ * site server -- reads through the link without knowing.
+ */
+
+/**
+ * Files a built version under `releases/<sha>`, where its process will run.
+ *
+ * The same commit deployed again finds its folder there already. When that
+ * folder is the one serving, it cannot be replaced -- that is the rename this
+ * whole layout exists to avoid -- and it holds the same commit, so it is reused
+ * and the new copy dropped. Otherwise the new copy wins: an install command may
+ * have changed since.
+ */
+function stageRelease({ served, projectDir, sha, servingSha }) {
+    const target = releasePath(projectDir, sha);
+    fs.mkdirSync(releasesDir(projectDir), { recursive: true });
+    if (fs.existsSync(target)) {
+        if (sha === servingSha) return { dir: target, reused: true };
+        fs.rmSync(target, { recursive: true, force: true });
+    }
+    fs.renameSync(served, target);
+    // Its mtime is when it was built, not when it was cloned: `listReleases`
+    // orders by it, and a release must read as the newest once filed.
+    const now = new Date();
+    try { fs.utimesSync(target, now, now); } catch (_) { }
+    return { dir: target, reused: false };
+}
+
+/**
+ * Points `current` at `releases/<sha>`.
+ *
+ * Built beside it as `current.next` and renamed into place, so the moment with
+ * no `current` at all is the gap between removing one link and renaming the
+ * other, not the length of a copy.
+ *
+ * `current` may still be a real folder, left by a version of Deploy that renamed
+ * folders: it is filed as `releases/<oldSha>` first. That rename is the one that
+ * fails while the process started from it is alive, and the error is thrown as is
+ * so the caller can try again once that process has been stopped.
+ */
+function pointCurrent({ projectDir, currentDir, sha, oldSha }) {
+    const target = releasePath(projectDir, sha);
+    if (!fs.existsSync(target)) {
+        throw Object.assign(new Error(`no release ${sha} on disk`), { code: 'unknown_release' });
+    }
+    if (fs.existsSync(currentDir) && !isLink(currentDir)) {
+        const keep = releasePath(projectDir, oldSha || 'unknown');
+        if (keep === target) {
+            throw Object.assign(new Error(`current/ and release ${sha} are both on disk`), { code: 'bad_release' });
+        }
+        fs.rmSync(keep, { recursive: true, force: true });
+        fs.renameSync(currentDir, keep);
+    }
+    const next = `${currentDir}.next`;
+    if (isLink(next)) removeLink(next);
+    fs.symlinkSync(target, next, 'junction');
+    if (isLink(currentDir)) removeLink(currentDir);
+    fs.renameSync(next, currentDir);
+}
+
+/**
+ * The real folder `current` stands for, so a process never starts through the
+ * link. A `current` that cannot be resolved is returned as is: the start that
+ * follows fails with its own message, which says more than this one would.
+ */
+function resolveCurrent(currentDir) {
+    try { return fs.realpathSync(currentDir); } catch (_) { return currentDir; }
+}
+
+/**
+ * The kept version a promote (`sha`) or a rollback (`sha` empty) would start,
+ * for a project served by a process. Nothing is moved: that project's versions
+ * stay where they are and only the process and `current` change.
+ */
+function findRelease({ projectDir, sha, currentSha, previousSha }) {
+    adoptPrevious({ projectDir, previousSha });
+    if (sha) {
+        const dir = releasePath(projectDir, sha);       // throws bad_release first
+        if (!fs.existsSync(dir)) {
+            throw Object.assign(new Error(`no release ${sha} on disk`), { code: 'unknown_release' });
+        }
+        return { sha, dir };
+    }
+    const newest = listReleases(projectDir).filter((r) => r.sha !== currentSha)[0];
+    if (!newest) {
+        throw Object.assign(new Error('no previous version on disk'), { code: 'no_previous' });
+    }
+    return { sha: newest.sha, dir: releasePath(projectDir, newest.sha) };
+}
+
 module.exports = {
+    stageRelease, pointCurrent, resolveCurrent, findRelease, pruneReleases, isLink,
     cloneToCurrent, publish, promote, rollback, swapOnto,
     listReleases, adoptPrevious, releasesDir, RELEASES_KEPT,
     assertServableAsIs, looksLikeSource, redact, gitExe,

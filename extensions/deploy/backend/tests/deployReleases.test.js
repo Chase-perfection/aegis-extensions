@@ -180,3 +180,119 @@ test('a release folder that is not a folder is not offered as one', () => {
 
     assert.deepStrictEqual(releaseNames(dir), []);
 });
+
+/*
+ * A project served by a process: its versions never move once filed.
+ *
+ * Windows refuses to rename a folder a running process works in (EBUSY), and the
+ * old process is still serving when the new version lands. Every deployment after
+ * the first failed on that rename, so these versions stay where they were built
+ * and `current` is a junction that is repointed instead.
+ */
+
+function release(dir, sha, body) {
+    const folder = path.join(dir, 'releases', sha);
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'index.html'), body);
+    return folder;
+}
+
+test('a version served by a process is filed in its own folder and current points at it', () => {
+    const dir = project();
+    const currentDir = path.join(dir, 'current');
+
+    const first = cloner.stageRelease({ served: staged(dir, 'one'), projectDir: dir, sha: 'aaaaaaa' });
+    assert.strictEqual(first.dir, path.join(dir, 'releases', 'aaaaaaa'));
+    assert.strictEqual(first.reused, false);
+    cloner.pointCurrent({ projectDir: dir, currentDir, sha: 'aaaaaaa' });
+    assert.strictEqual(cloner.isLink(currentDir), true);
+    assert.strictEqual(serving(dir), 'one');
+
+    cloner.stageRelease({ served: staged(dir, 'two'), projectDir: dir, sha: 'bbbbbbb', servingSha: 'aaaaaaa' });
+    cloner.pointCurrent({ projectDir: dir, currentDir, sha: 'bbbbbbb', oldSha: 'aaaaaaa' });
+    assert.strictEqual(serving(dir), 'two');
+    assert.strictEqual(cloner.resolveCurrent(currentDir), fs.realpathSync(path.join(dir, 'releases', 'bbbbbbb')));
+    // The outgoing version did not move: its process may still be running there.
+    assert.strictEqual(fs.readFileSync(path.join(dir, 'releases', 'aaaaaaa', 'index.html'), 'utf8'), 'one');
+});
+
+test('repointing current works while a process runs in the version it pointed at', async () => {
+    const dir = project();
+    const currentDir = path.join(dir, 'current');
+    const old = release(dir, 'aaaaaaa', 'one');
+    release(dir, 'bbbbbbb', 'two');
+    cloner.pointCurrent({ projectDir: dir, currentDir, sha: 'aaaaaaa' });
+
+    const child = require('child_process').spawn(process.execPath,
+        ['-e', 'setTimeout(() => {}, 10000)'], { cwd: old });
+    try {
+        await new Promise((r) => setTimeout(r, 200));
+        cloner.pointCurrent({ projectDir: dir, currentDir, sha: 'bbbbbbb', oldSha: 'aaaaaaa' });
+        assert.strictEqual(serving(dir), 'two');
+    } finally {
+        child.kill();
+    }
+});
+
+test('a current/ folder left by the renaming layout is filed under its commit', () => {
+    const dir = project('one');
+    const currentDir = path.join(dir, 'current');
+    release(dir, 'bbbbbbb', 'two');
+
+    cloner.pointCurrent({ projectDir: dir, currentDir, sha: 'bbbbbbb', oldSha: 'aaaaaaa' });
+
+    assert.strictEqual(serving(dir), 'two');
+    assert.strictEqual(fs.readFileSync(path.join(dir, 'releases', 'aaaaaaa', 'index.html'), 'utf8'), 'one');
+});
+
+test('the same commit deployed again reuses the folder that is serving', () => {
+    const dir = project();
+    const currentDir = path.join(dir, 'current');
+    release(dir, 'aaaaaaa', 'one');
+    cloner.pointCurrent({ projectDir: dir, currentDir, sha: 'aaaaaaa' });
+
+    const again = cloner.stageRelease({ served: staged(dir, 'one rebuilt'), projectDir: dir, sha: 'aaaaaaa', servingSha: 'aaaaaaa' });
+    assert.strictEqual(again.reused, true);
+    assert.strictEqual(serving(dir), 'one', 'the serving folder was replaced under its process');
+});
+
+test('pruning never takes a version a process may still run from', () => {
+    const dir = project();
+    ['a000001', 'a000002', 'a000003', 'a000004', 'a000005', 'a000006', 'a000007'].forEach((sha, i) => {
+        release(dir, sha, sha);
+        stamp(dir, sha, i);
+    });
+    // The two oldest are the ones running: one just started, one draining.
+    cloner.pruneReleases(dir, ['a000001', 'a000002']);
+
+    const left = releaseNames(dir);
+    assert.ok(left.includes('a000001') && left.includes('a000002'), 'a live version was deleted');
+    assert.strictEqual(left.length, cloner.RELEASES_KEPT);
+});
+
+test('a rollback or a promote picks a kept version and never the one serving', () => {
+    const dir = project();
+    release(dir, 'aaaaaaa', 'one');
+    stamp(dir, 'aaaaaaa', 1);
+    release(dir, 'bbbbbbb', 'two');
+    stamp(dir, 'bbbbbbb', 2);
+
+    assert.strictEqual(cloner.findRelease({ projectDir: dir, currentSha: 'bbbbbbb' }).sha, 'aaaaaaa');
+    assert.strictEqual(cloner.findRelease({ projectDir: dir, sha: 'bbbbbbb', currentSha: 'aaaaaaa' }).sha, 'bbbbbbb');
+    assert.throws(() => cloner.findRelease({ projectDir: dir, sha: 'ccccccc' }), { code: 'unknown_release' });
+    fs.rmSync(path.join(dir, 'releases', 'aaaaaaa'), { recursive: true });
+    assert.throws(() => cloner.findRelease({ projectDir: dir, currentSha: 'bbbbbbb' }), { code: 'no_previous' });
+});
+
+test('a static deployment after a process one removes the link, not the release', () => {
+    const dir = project();
+    const currentDir = path.join(dir, 'current');
+    release(dir, 'aaaaaaa', 'one');
+    cloner.pointCurrent({ projectDir: dir, currentDir, sha: 'aaaaaaa' });
+
+    cloner.publish({ served: staged(dir, 'static'), currentDir, projectDir: dir, currentSha: 'aaaaaaa' });
+
+    assert.strictEqual(cloner.isLink(currentDir), false);
+    assert.strictEqual(serving(dir), 'static');
+    assert.strictEqual(fs.readFileSync(path.join(dir, 'releases', 'aaaaaaa', 'index.html'), 'utf8'), 'one');
+});

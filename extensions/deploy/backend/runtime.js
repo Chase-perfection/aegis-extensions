@@ -324,7 +324,12 @@ function grantData(dir, account) {
  * few seconds and must not share a log file.
  */
 function homeDirFor(dir, port) {
-    return path.join(path.dirname(dir), 'run-home', String(port));
+    // A process runs from `releases/<sha>` (see cloner.stageRelease), whose
+    // parent is `releases/` and not the project. Its home stays beside
+    // `current/` either way, so a release folder holds only the release.
+    const parent = path.dirname(dir);
+    const projectDir = path.basename(parent) === 'releases' ? path.dirname(parent) : parent;
+    return path.join(projectDir, 'run-home', String(port));
 }
 
 function spawnSandboxed({ dir, account, startCmd, port, env, dataDir, proxyKey }) {
