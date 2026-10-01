@@ -148,9 +148,14 @@ const overrides = [
 ];
 const remediations = [{ sid: sid(2014), proposed_by: 'admin@corp.local', proposed_at: '2026-09-30T09:00:00Z' }];
 
-// The rows are shaped as store.js returns them, which is what buildModel takes.
-const model = buildModel(facts, rules, overrides, remediations);
+module.exports = { facts, rules, overrides, remediations };
 
-const out = path.join(__dirname, 'model.json');
-fs.writeFileSync(out, JSON.stringify({ model, rules, settings: { domain: null, passes: 3 } }, null, 2) + '\n');
-console.log(`wrote ${out}: ${model.accounts.length} accounts, ${model.chokepoints.length} chokepoints`);
+// Required by seed-db.js for the data alone; run directly to rewrite model.json.
+if (require.main === module) {
+    // The rows are shaped as store.js returns them, which is what buildModel takes.
+    const model = buildModel(facts, rules, overrides, remediations);
+
+    const out = path.join(__dirname, 'model.json');
+    fs.writeFileSync(out, JSON.stringify({ model, rules, settings: { domain: null, passes: 3 } }, null, 2) + '\n');
+    console.log(`wrote ${out}: ${model.accounts.length} accounts, ${model.chokepoints.length} chokepoints`);
+}
