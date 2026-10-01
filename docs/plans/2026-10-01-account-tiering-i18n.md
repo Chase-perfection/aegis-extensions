@@ -1,6 +1,6 @@
 # account-tiering : clés de traduction
 
-338 clés, toutes préfixées `at_`. Colonne FR : le texte de repli écrit dans le code. Colonne EN : la traduction à livrer dans `translations.js` du cœur.
+339 clés, toutes préfixées `at_`. Colonne FR : le texte de repli écrit dans le code. Colonne EN : la traduction à livrer dans `translations.js` du cœur.
 Les paramètres entre accolades sont identiques dans les deux langues. Les formes au pluriel sont des clés séparées (`_one` / `_many`).
 
 | Clé | FR | EN |
@@ -9,6 +9,7 @@ Les paramètres entre accolades sont identiques dans les deux langues. Les forme
 | `at_accounts_label` | Comptes · {n} | Accounts · {n} |
 | `at_banner_norules` | Aucune règle de tiering : tous les comptes sont considérés Tier 2, les administrateurs légitimes apparaissent en écart. | No tiering rule: every account is treated as Tier 2, so legitimate administrators show up as gaps. |
 | `at_banner_norules_action` | Définir les règles | Define the rules |
+| `at_banner_poll_failed` | Le suivi de l'analyse s'est arrêté : son état n'a pas pu être lu. {reason} | Tracking of the analysis stopped: its status could not be read. {reason} |
 | `at_banner_scan_failed` | La dernière analyse a échoué. {reason} | The last analysis failed. {reason} |
 | `at_banner_scanning` | Analyse en cours : la page se met à jour à la fin. | Analysis running: the page updates when it ends. |
 | `at_banner_truncated` | Chaîne tronquée à {n} niveaux : des droits plus lointains peuvent manquer. Augmentez le nombre de passes dans les paramètres de l’analyse. | Chain cut at {n} levels: rights further away may be missing. Raise the number of passes in the analysis settings. |

@@ -6,7 +6,8 @@
  * One state object, one render(). Rendering rewrites each region's HTML, so
  * every interactive element carries a `data-key` and render() puts focus back
  * on the element that had it: without that, a keyboard user would be thrown
- * to the top of the page on every click.
+ * to the top of the page on every click. For the same reason anything the user
+ * is typing lives in the state (`overrideDraft`) and is drawn back.
  *
  * Every error is read from the body's `error` code, never from the status
  * alone, so the page shows the backend's reason (no_scan_yet, facts_schema...)
@@ -19,17 +20,21 @@
     const { T, esc, icon, accountMark, errorText, dateText, translateStatic, toast } = AT.ui;
     const BASE = '/api/account-tiering';
     const POLL_MS = 2000;
+    const POLL_TRIES = 5;
     const SHOW_GAPS = 3;
     const byId = (id) => document.getElementById(id);
 
     const state = {
-        loading: true, error: null, model: null, rules: [], settings: { domain: null, passes: 3 }, scan: null, scanning: false,
+        loading: true, error: null, model: null, rules: [], settings: { domain: null, passes: 3 },
+        scan: null, scanning: false, scanError: null,
         acc: null, node: null, invSel: null, inverse: null, q: '', tier: 'all', cell: null, showAll: false,
         view: 'tree', depth: 4, hideGhost: false, ecartOnly: false, expanded: {}, showAllPoints: false, menu: null,
-        overrideOpen: false, overrideError: null
+        overrideOpen: false, overrideError: null, overrideDraft: null, saving: false
     };
     let vm = null;
     let pollTimer = null;
+    let pollFails = 0;
+    let loadSeq = 0;
 
     async function call(path, opts) {
         const o = opts || {};
@@ -52,22 +57,60 @@
         return { ok: true, body, status: res.status };
     }
 
-    function absorbModel(res) {
-        if (res.ok) {
-            state.model = res.body.model;
+    /**
+     * The view model is built from whatever the route sent. A shape it does
+     * not expect throws, and that must end as a visible error: left to
+     * propagate, it would leave the page on "loading" for good.
+     */
+    function broken(error) {
+        console.error('[account-tiering]', error);
+        state.model = null;
+        vm = null;
+        state.error = 'internal';
+    }
+
+    function buildVm(model) {
+        try {
+            vm = AT.model.buildViewModel(model, { t: T, rules: state.rules });
+            state.model = model;
             state.error = null;
-            vm = AT.model.buildViewModel(state.model, { t: T, rules: state.rules });
-            if (!vm.byId[state.acc]) {
-                const first = vm.accounts.find((a) => a.gap) || vm.accounts[0];
-                state.acc = first ? first.id : null;
-                state.node = null;
-            }
-        } else {
+        } catch (error) {
+            broken(error);
+        }
+    }
+
+    function absorbModel(res) {
+        if (!res.ok) {
             state.model = null;
             vm = null;
             state.error = res.code;
+            return;
+        }
+        buildVm(res.body.model);
+        if (vm && !vm.byId[state.acc]) {
+            const first = vm.accounts.find((a) => a.gap) || vm.accounts[0];
+            state.acc = first ? first.id : null;
+            state.node = null;
         }
     }
+
+    /**
+     * Loads overlap: a save reloads the model while a finished scan does too.
+     * Each load takes a number and only the latest one is shown, so a slow
+     * answer to an old request never replaces a newer model. Whichever load
+     * is shown also ends the "loading" state, the first one included.
+     */
+    async function loadModel(withRules) {
+        const seq = ++loadSeq;
+        const [model, rules] = await Promise.all([call('/model'), withRules ? call('/rules') : null]);
+        if (seq !== loadSeq) return;
+        if (rules && rules.ok) state.rules = rules.body.rules || [];
+        absorbModel(model);
+        state.loading = false;
+        render();
+    }
+
+    const reloadModel = () => loadModel(true);
 
     async function loadAll() {
         state.loading = true;
@@ -76,36 +119,41 @@
         if (rules.ok) state.rules = rules.body.rules || [];
         if (settings.ok) state.settings = settings.body.settings || state.settings;
         if (scan.ok) state.scan = scan.body.scan || null;
-        absorbModel(await call('/model'));
-        state.loading = false;
         if (state.scan && state.scan.status === 'running') { state.scanning = true; poll(); }
-        render();
-    }
-
-    async function reloadModel() {
-        const [rules, model] = await Promise.all([call('/rules'), call('/model')]);
-        if (rules.ok) state.rules = rules.body.rules || [];
-        absorbModel(model);
-        render();
+        await loadModel(false);
     }
 
     async function startScan() {
         if (state.scanning) return;
         const res = await call('/scan', { method: 'POST' });
         if (!res.ok && res.code !== 'scan_running') { toast(errorText(res.code), 'error'); return; }
-        state.scanning = true;
+        pollFails = 0;
+        Object.assign(state, { scanning: true, scanError: null });
         render();
         poll();
     }
+
+    /** 2 s between two reads of the scan status; `data-at-poll-ms` on #at-view shortens it for the tests. */
+    const pollDelay = () => Number(byId('at-view').dataset.atPollMs) || POLL_MS;
 
     function poll() {
         clearTimeout(pollTimer);
         pollTimer = setTimeout(async () => {
             const st = await call('/scan/status');
-            // A dropped request while the scan runs is not the scan failing: retry.
-            if (!st.ok && st.code === 'network') { poll(); return; }
-            if (st.ok) state.scan = st.body.scan || null;
-            if (state.scan && state.scan.status === 'running' && st.ok) { poll(); return; }
+            if (!st.ok) {
+                // A read that fails (dropped request, 403, 500, a proxy's HTML
+                // page) says nothing about the scan: retry. After POLL_TRIES
+                // in a row the page stops and says so; it never concludes that
+                // the scan finished from an answer it could not read.
+                pollFails += 1;
+                if (pollFails < POLL_TRIES) { poll(); return; }
+                Object.assign(state, { scanning: false, scanError: st.code });
+                render();
+                return;
+            }
+            pollFails = 0;
+            state.scan = st.body.scan || null;
+            if (state.scan && state.scan.status === 'running') { poll(); return; }
             state.scanning = false;
             if (state.scan && state.scan.status === 'failed') {
                 toast(T('at_scan_failed_toast', 'Analyse échouée : {reason}', { reason: errorText(state.scan.error_code) }), 'error');
@@ -113,12 +161,14 @@
                 return;
             }
             await reloadModel();
-            const n = vm ? vm.kpis.gaps : 0;
-            const domain = vm ? vm.domain : '';
+            // No model to show: the error card says why, and a count of gaps would be invented.
+            if (!vm) return;
+            const n = vm.kpis.gaps;
+            const domain = vm.domain;
             if (n === 0) toast(T('at_scan_done_none', 'Analyse terminée : aucun écart de tiering sur {domain}.', { domain }), 'success');
             else if (n === 1) toast(T('at_scan_done_one', 'Analyse terminée : {n} écart de tiering sur {domain}.', { n, domain }), 'success');
             else toast(T('at_scan_done_many', 'Analyse terminée : {n} écarts de tiering sur {domain}.', { n, domain }), 'success');
-        }, POLL_MS);
+        }, pollDelay());
     }
 
     function set(patch) {
@@ -126,8 +176,11 @@
         render();
     }
 
+    /** What closing the correction form resets: the form, its error and what was typed in it. */
+    const NO_OVERRIDE = { overrideOpen: false, overrideError: null, overrideDraft: null };
+
     function openAccount(id) {
-        set({ acc: id, node: null, inverse: null, invSel: null, view: state.view === 'overview' ? 'tree' : state.view, overrideOpen: false, overrideError: null, menu: null });
+        set({ acc: id, node: null, inverse: null, invSel: null, view: state.view === 'overview' ? 'tree' : state.view, menu: null, ...NO_OVERRIDE });
     }
 
     const domainShown = () => state.settings.domain || (vm && vm.domain) || T('at_domain_current', 'domaine du serveur Aegis');
@@ -135,13 +188,12 @@
     // ── Title bar and banners ────────────────────────────────────────────────
     function renderHeader() {
         const meta = byId('at-meta');
-        if (vm) {
-            meta.textContent = T('at_meta', 'Comptes à privilèges : {n} · écarts de tiering : {g} · {domain} · analyse du {date}', {
+        const line = vm
+            ? T('at_meta', 'Comptes à privilèges : {n} · écarts de tiering : {g} · {domain} · analyse du {date}', {
                 n: vm.kpis.accounts, g: vm.kpis.gaps, domain: domainShown(), date: dateText(vm.collectedAt)
-            });
-        } else {
-            meta.textContent = T('at_meta_none', 'Aucune analyse affichable · {domain}', { domain: domainShown() });
-        }
+            })
+            : T('at_meta_none', 'Aucune analyse affichable · {domain}', { domain: domainShown() });
+        meta.textContent = line;
         const scan = byId('at-scan');
         scan.disabled = state.scanning;
         scan.textContent = state.scanning ? T('at_scanning', 'Analyse en cours…') : T('at_scan', "Relancer l'analyse");
@@ -163,6 +215,9 @@
     function renderBanners() {
         const out = [];
         if (state.scanning) out.push(banner('at-banner-scanning', 'info', T('at_banner_scanning', 'Analyse en cours : la page se met à jour à la fin.')));
+        if (state.scanError) {
+            out.push(banner('at-banner-pollfail', 'error', T('at_banner_poll_failed', "Le suivi de l'analyse s'est arrêté : son état n'a pas pu être lu. {reason}", { reason: errorText(state.scanError) })));
+        }
         if (!state.scanning && state.scan && state.scan.status === 'failed' && state.error !== 'no_scan_yet') {
             out.push(banner('at-banner-scanfail', 'error', T('at_banner_scan_failed', 'La dernière analyse a échoué. {reason}', { reason: errorText(state.scan.error_code) })));
         }
@@ -286,16 +341,29 @@
         if (drewTree) AT.tree.mount();
     }
 
+    function renderBody() {
+        const c = AT.tree.compute(state, vm);
+        renderLeft();
+        renderCentre(c);
+        byId('at-panel').innerHTML = AT.panel.panelHtml(c, state);
+    }
+
     function render() {
         const focusKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null;
         renderHeader();
         renderBanners();
         renderState();
         if (vm && !state.loading && !state.error) {
-            const c = AT.tree.compute(state, vm);
-            renderLeft();
-            renderCentre(c);
-            byId('at-panel').innerHTML = AT.panel.panelHtml(c, state);
+            try {
+                renderBody();
+            } catch (error) {
+                // Same reason as in buildVm: a model that builds but cannot be
+                // drawn must show the error card, not half a page.
+                broken(error);
+                renderHeader();
+                renderBanners();
+                renderState();
+            }
         }
         if (focusKey) {
             const el = document.querySelector(`#at-view [data-key="${CSS.escape(focusKey)}"]`);
@@ -303,7 +371,7 @@
         }
     }
 
-    AT.app = { state, call, set, render, reloadModel, openAccount, get vm() { return vm; } };
+    AT.app = { state, call, set, render, reloadModel, openAccount, NO_OVERRIDE, get vm() { return vm; } };
     AT.events.wire({ startScan });
 
     function init() {
@@ -313,7 +381,7 @@
         window.onLanguageChange = function () {
             if (typeof prev === 'function') { try { prev(); } catch (_) { /* another page's handler */ } }
             translateStatic(byId('at-view'));
-            if (state.model) vm = AT.model.buildViewModel(state.model, { t: T, rules: state.rules });
+            if (state.model) buildVm(state.model);
             render();
         };
         loadAll();

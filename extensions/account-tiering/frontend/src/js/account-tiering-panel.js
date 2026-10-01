@@ -71,22 +71,31 @@
         return `<div class="at-override-shown" id="at-override-shown">${why}${meta ? `<span class="at-note" id="at-override-meta">${esc(meta)}</span>` : ''}</div>`;
     }
 
-    /** "Tier prévu" with its source, the details of a manual correction, and the correction form. */
+    /**
+     * "Tier prévu" with its source, the details of a manual correction, and the
+     * correction form. The form is drawn from `s.overrideDraft`, what the user
+     * has typed so far: the panel is rewritten on every render, and a form
+     * drawn empty would lose its text to a search keystroke or a refused save.
+     * `s.saving` disables the buttons that send, so a second click cannot send
+     * the same correction twice.
+     */
     function plannedHtml(acc, s) {
         const isOverride = acc.plannedSource && acc.plannedSource.type === 'override';
+        const draft = s.overrideDraft || { tier: acc.planned, reason: '' };
+        const busy = s.saving ? ' disabled' : '';
         const form = s.overrideOpen ? `<form class="at-override-form" id="at-override-form" novalidate>
                 <label class="at-label" for="at-override-tier">${esc(T('at_override_tier', 'Tier prévu corrigé'))}</label>
-                <select class="at-select" id="at-override-tier" name="tier">${[0, 1, 2].map((t) => `<option value="${t}"${t === acc.planned ? ' selected' : ''}>${esc(T('at_tier_n', 'Tier {tier}', { tier: t }))}</option>`).join('')}</select>
+                <select class="at-select" id="at-override-tier" name="tier" data-key="override-tier">${[0, 1, 2].map((t) => `<option value="${t}"${t === draft.tier ? ' selected' : ''}>${esc(T('at_tier_n', 'Tier {tier}', { tier: t }))}</option>`).join('')}</select>
                 <label class="at-label" for="at-override-reason">${esc(T('at_override_reason', 'Motif (obligatoire)'))}</label>
-                <textarea class="at-input at-textarea" id="at-override-reason" name="reason" maxlength="256" rows="3" required></textarea>
+                <textarea class="at-input at-textarea" id="at-override-reason" name="reason" data-key="override-reason" maxlength="256" rows="3" required>${esc(draft.reason)}</textarea>
                 <p class="at-field-error" id="at-override-error" role="alert"${s.overrideError ? '' : ' hidden'}>${esc(s.overrideError ? AT.ui.errorText(s.overrideError) : '')}</p>
                 <div class="at-row-actions">
                     <button type="button" class="at-btn" data-act="override-cancel" data-key="override-cancel">${esc(T('at_cancel', 'Annuler'))}</button>
-                    <button type="submit" class="at-btn at-btn-ink" data-key="override-save">${esc(T('at_override_save', 'Enregistrer la correction'))}</button>
+                    <button type="submit" class="at-btn at-btn-ink" data-key="override-save"${busy}>${esc(T('at_override_save', 'Enregistrer la correction'))}</button>
                 </div></form>` : '';
         const actions = s.overrideOpen ? '' : `<div class="at-row-actions">
                 <button type="button" class="at-link" data-act="override-open" data-key="override-open">${esc(T('at_override_open', 'Corriger le tier prévu'))}</button>
-                ${isOverride ? `<button type="button" class="at-link" data-act="override-remove" data-key="override-remove">${esc(T('at_override_remove', 'Retirer la correction'))}</button>` : ''}</div>`;
+                ${isOverride ? `<button type="button" class="at-link" data-act="override-remove" data-key="override-remove"${busy}>${esc(T('at_override_remove', 'Retirer la correction'))}</button>` : ''}</div>`;
         return `<section class="at-block at-planned" id="at-planned" aria-labelledby="at-planned-h">
             <h3 class="at-label" id="at-planned-h">${esc(T('at_planned_label', 'Tier prévu'))}</h3>
             <p class="at-text"><strong>${esc(T('at_tier_n', 'Tier {tier}', { tier: acc.planned }))}</strong> · <span id="at-planned-source">${esc(acc.sourceLabel)}</span></p>

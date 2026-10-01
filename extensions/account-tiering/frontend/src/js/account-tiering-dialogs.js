@@ -9,13 +9,21 @@
  * - "Règles de tiering": the ordered rule table (PUT /rules) and, on a second
  *   tab, the scan settings (PUT /settings, both fields always sent).
  *
- * Both open through AT.ui.openDialog (focus trap, Escape, focus return).
+ * Both open through AT.ui.openDialog (focus trap, Escape, focus return). Each
+ * button that sends a request is disabled until the answer is back.
  */
 (function () {
     'use strict';
 
     const AT = (window.AccountTiering = window.AccountTiering || {});
     const { T, esc, icon, errorText, openDialog, toast, copyText } = AT.ui;
+
+    /**
+     * Re-enables a button after a refused request and puts focus back on it:
+     * disabling it dropped the focus, and from the body the next Tab would
+     * leave the dialog.
+     */
+    const giveBack = (btn) => { btn.disabled = false; btn.focus(); };
 
     const closeBtn = () => `<button type="button" class="at-round-btn" data-dlg-close data-key="dlg-close" aria-label="${esc(T('at_close', 'Fermer'))}">${icon('close')}</button>`;
 
@@ -56,7 +64,7 @@
                 btn.disabled = true;
                 const res = await AT.app.call('/remediations/' + encodeURIComponent(acc.sid), { method: 'POST' });
                 if (!res.ok) {
-                    btn.disabled = false;
+                    giveBack(btn);
                     const err = dlg.el.querySelector('#at-fix-error');
                     err.textContent = errorText(res.code);
                     err.hidden = false;
@@ -186,25 +194,28 @@
                 redraw(`rule-pattern:${draft.length - 1}`);
                 return;
             }
-            if (t.closest('#at-rules-save')) {
+            // Both saves disable their button for the time of the request, as
+            // the remediation confirm does: a double click sends one request.
+            const save = t.closest('#at-rules-save, #at-set-save');
+            if (!save || save.disabled) return;
+            save.disabled = true;
+            if (save.id === 'at-rules-save') {
                 const res = await app.call('/rules', { method: 'PUT', json: { rules: draft.map((r) => ({ kind: r.kind, pattern: r.pattern, tier: r.tier })) } });
-                if (!res.ok) { fail('#at-rules-error', res.code); return; }
+                if (!res.ok) { giveBack(save); fail('#at-rules-error', res.code); return; }
                 app.state.rules = res.body.rules || [];
                 dlg.close();
                 toast(T('at_rules_saved', 'Règles enregistrées : les tiers prévus sont recalculés.'), 'success');
                 app.reloadModel();
                 return;
             }
-            if (t.closest('#at-set-save')) {
-                const domain = el.querySelector('#at-set-domain').value.trim();
-                const passes = Number.parseInt(el.querySelector('#at-set-passes').value, 10);
-                const res = await app.call('/settings', { method: 'PUT', json: { domain, passes } });
-                if (!res.ok) { fail('#at-set-error', res.code); return; }
-                app.state.settings = res.body.settings || { domain: domain || null, passes };
-                dlg.close();
-                toast(T('at_set_saved', 'Paramètres enregistrés : ils servent à la prochaine analyse.'), 'success');
-                app.render();
-            }
+            const domain = el.querySelector('#at-set-domain').value.trim();
+            const passes = Number.parseInt(el.querySelector('#at-set-passes').value, 10);
+            const res = await app.call('/settings', { method: 'PUT', json: { domain, passes } });
+            if (!res.ok) { giveBack(save); fail('#at-set-error', res.code); return; }
+            app.state.settings = res.body.settings || { domain: domain || null, passes };
+            dlg.close();
+            toast(T('at_set_saved', 'Paramètres enregistrés : ils servent à la prochaine analyse.'), 'success');
+            app.render();
         });
     }
 

@@ -15,6 +15,11 @@
         const app = () => AT.app;
         const st = () => AT.app.state;
         const inView = (e) => e.target.closest && e.target.closest('#at-view') && !e.target.closest('#at-dialog-root');
+        const focusKey = (key) => {
+            const el = document.querySelector(`#at-view [data-key="${key}"]`);
+            if (el) el.focus();
+            return el;
+        };
 
         function expandKey() {
             const s = st();
@@ -28,23 +33,46 @@
             return (c && point.select.find((id) => c.G.y[id] != null)) || null;
         }
 
-        async function saveOverride(form) {
+        /**
+         * `saving` is the in-flight guard of both correction requests: the
+         * panel draws its buttons disabled from it, and a second submit that
+         * still gets through (Enter in the form) stops here.
+         */
+        async function saveOverride() {
             const s = st();
-            const tier = Number(form.querySelector('#at-override-tier').value);
-            const reason = form.querySelector('#at-override-reason').value.trim();
-            if (!reason || reason.length > 256) { app().set({ overrideError: 'reason_required' }); return; }
-            const res = await app().call('/overrides/' + encodeURIComponent(s.acc), { method: 'PUT', json: { tier, reason } });
-            if (!res.ok) { app().set({ overrideError: res.code }); return; }
-            Object.assign(s, { overrideOpen: false, overrideError: null });
+            if (s.saving) return;
+            const draft = s.overrideDraft || { tier: null, reason: '' };
+            const reason = draft.reason.trim();
+            const refuse = (code) => {
+                app().set({ saving: false, overrideError: code });
+                // Back on the field to correct, caret after what is already there.
+                const field = focusKey('override-reason');
+                if (field) field.setSelectionRange(field.value.length, field.value.length);
+            };
+            if (!reason || reason.length > 256) { refuse('reason_required'); return; }
+            app().set({ saving: true, overrideError: null });
+            const res = await app().call('/overrides/' + encodeURIComponent(s.acc), { method: 'PUT', json: { tier: draft.tier, reason } });
+            if (!res.ok) { refuse(res.code); return; }
+            Object.assign(s, { saving: false, ...app().NO_OVERRIDE });
             toast(T('at_override_saved', 'Tier prévu corrigé : les écarts sont recalculés.'), 'success');
             await app().reloadModel();
+            focusKey('override-open');
         }
 
         async function removeOverride() {
+            if (st().saving) return;
+            app().set({ saving: true });
             const res = await app().call('/overrides/' + encodeURIComponent(st().acc), { method: 'DELETE' });
-            if (!res.ok) { toast(errorText(res.code), 'error'); return; }
+            st().saving = false;
+            if (!res.ok) {
+                app().render();
+                toast(errorText(res.code), 'error');
+                focusKey('override-remove');
+                return;
+            }
             toast(T('at_override_removed', 'Correction retirée : le tier prévu revient aux règles.'), 'success');
             await app().reloadModel();
+            focusKey('override-open');
         }
 
         document.addEventListener('click', (e) => {
@@ -90,7 +118,7 @@
                     delete ex['g:' + ek];
                     app().set({ expanded: ex });
                 } else {
-                    app().set(s.inverse != null ? { invSel: node.dataset.node } : { node: node.dataset.node, overrideOpen: false, overrideError: null });
+                    app().set(s.inverse != null ? { invSel: node.dataset.node } : { node: node.dataset.node, ...app().NO_OVERRIDE });
                 }
                 return;
             }
@@ -111,8 +139,13 @@
             if (act === 'inv-0' || act === 'inv-1') { app().set({ view: 'tree', inverse: Number(act.slice(4)), invSel: null }); return; }
             if (act === 'points-toggle') { app().set({ showAllPoints: !s.showAllPoints }); return; }
             if (act === 'fix-open') { AT.dialogs.openRemediation(app().vm.byId[s.acc]); return; }
-            if (act === 'override-open') { app().set({ overrideOpen: true, overrideError: null }); document.getElementById('at-override-reason').focus(); return; }
-            if (act === 'override-cancel') { app().set({ overrideOpen: false, overrideError: null }); return; }
+            if (act === 'override-open') {
+                const acc = app().vm.byId[s.acc];
+                app().set({ overrideOpen: true, overrideError: null, overrideDraft: { tier: acc.planned, reason: '' } });
+                focusKey('override-reason');
+                return;
+            }
+            if (act === 'override-cancel') { app().set(app().NO_OVERRIDE); focusKey('override-open'); return; }
             if (act === 'override-remove') removeOverride();
         });
 
@@ -123,16 +156,19 @@
                 const s = st();
                 app().set({ hideGhost: e.target.checked, node: s.node === 'ghost' ? null : s.node });
             }
+            if (e.target.id === 'at-override-tier' && st().overrideDraft) st().overrideDraft.tier = Number(e.target.value);
         });
 
         document.addEventListener('input', (e) => {
+            // Kept as typed, without a render: the next one, whatever causes it, draws the form from this.
+            if (e.target.id === 'at-override-reason' && st().overrideDraft) { st().overrideDraft.reason = e.target.value; return; }
             if (e.target.id === 'at-search') app().set({ q: e.target.value });
         });
 
         document.addEventListener('submit', (e) => {
             if (e.target.id !== 'at-override-form') return;
             e.preventDefault();
-            saveOverride(e.target);
+            saveOverride();
         });
 
         document.addEventListener('keydown', (e) => {

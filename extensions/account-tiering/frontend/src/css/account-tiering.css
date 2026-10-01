@@ -87,6 +87,9 @@
 .at-x-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; background: transparent; color: var(--ag-muted); cursor: pointer; }
 .at-link { padding: 0; border: none; background: transparent; color: var(--ag-accent); text-decoration: underline; font-size: var(--ag-fs-body); cursor: pointer; text-align: left; }
 .at-link:hover { color: var(--ag-accent-hover); }
+/* While a request runs, the controls that sent it are disabled and say so. */
+.at-link:disabled { color: var(--ag-disabled); cursor: default; }
+.at-btn-ink:disabled { background: var(--ag-muted); border-color: var(--ag-muted); color: var(--ag-on-ink); }
 .at-select { padding: 0 var(--ag-space-2); }
 .at-input { width: 100%; padding: 0 var(--ag-space-3); }
 .at-input-num { width: 96px; }
