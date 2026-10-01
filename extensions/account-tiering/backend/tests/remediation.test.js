@@ -41,6 +41,8 @@ test('GPO links give a console section, not a command', () => {
         { mechanism: 'gpoEdit', gpo: 'Serveurs - admins', section: 'delegation' });
     const local = remediationFor({ from: sid(1200), to: 'gpolocal:' + g, kind: 'gpoLocal', detail: { gpo: g, localGroup: 'S-1-5-32-544', source: 'GroupsXml' } }, F);
     assert.strictEqual(local.section, 'localUsersAndGroups');
+    const restricted = remediationFor({ from: sid(1200), to: 'gpolocal:' + g, kind: 'gpoLocal', detail: { gpo: g, localGroup: 'S-1-5-32-544', source: 'GptTmpl' } }, F);
+    assert.strictEqual(restricted.section, 'restrictedGroups');
 });
 
 test('psQuote doubles straight and curly single quotes and leaves the rest alone', () => {
