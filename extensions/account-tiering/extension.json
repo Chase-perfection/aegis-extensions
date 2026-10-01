@@ -1,0 +1,15 @@
+{
+  "id": "account-tiering",
+  "name": "Account Tiering",
+  "version": 1,
+  "release": "0.0.0",
+  "page": "account-tiering.html",
+  "icon": "users",
+  "labelKey": "nav_account_tiering",
+  "descKey": "desc_account_tiering",
+  "routePrefixes": ["/api/account-tiering"],
+  "backend": "backend/routes.js",
+  "navSlot": "inventory",
+  "requiresHostOptIn": false,
+  "signature": null
+}

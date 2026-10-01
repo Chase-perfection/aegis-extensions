@@ -1,0 +1,13 @@
+{
+  "id": "account-tiering",
+  "name": "Account Tiering",
+  "labelKey": "nav_account_tiering",
+  "descKey": "desc_account_tiering",
+  "icon": "users",
+  "page": "account-tiering.html",
+  "category": "Compliance",
+  "manifestVersion": 1,
+  "routePrefixes": ["/api/account-tiering"],
+  "requiresHostOptIn": false,
+  "channel": "stable"
+}
