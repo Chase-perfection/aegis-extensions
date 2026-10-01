@@ -21,13 +21,14 @@
  *
  * The swap is two slots, not one. A new version starts on the port the running
  * one is not using, answers a health check there, and only then becomes the
- * proxy's target; the old process is killed after that. A single port would mean
- * every push taking the site down for as long as the application takes to boot,
- * which for a Next.js server is seconds an intranet user would notice.
+ * proxy's target. A single port would mean every push taking the site down for
+ * as long as the application takes to boot, which for a Next.js server is
+ * seconds an intranet user would notice. The outgoing process then stays, as
+ * `draining`, for the visitors already on it (see DRAIN_IDLE_MS below).
  *
  * ponytail: no WebSocket upgrade, no streaming request bodies beyond what
- * `pipe` gives, one process per project and no autoscaling. Each of those is a
- * second server on the same machine; ask before adding one.
+ * `pipe` gives, two processes per project at most and no autoscaling. Each of
+ * those is a second server on the same machine; ask before adding one.
  */
 
 'use strict';
@@ -64,6 +65,26 @@ const HEALTH_INTERVAL_MS = 500;
 /** How long the outgoing process keeps serving after the new one took over. */
 const DRAIN_MS = 5000;
 
+/*
+ * A deployment keeps the outgoing version for the people still on it.
+ *
+ * Killing it five seconds after the flip cut whoever was halfway through a form,
+ * so a push had to wait for nobody to be using the site. Now the outgoing
+ * process stays as `draining`: the proxy keeps sending it the visitors whose
+ * affinity cookie names it, and new visitors go to the new version. It is
+ * stopped once nobody has used it for DRAIN_IDLE_MS, or DRAIN_MAX_MS after the
+ * flip whatever happens, which bounds what the machine holds.
+ *
+ * Two versions at most. A deployment that arrives while one is draining is
+ * refused with `slot_busy` and waits (deployService); only a forced restart
+ * (a rollback, "deploy now") stops the draining one first. A third process
+ * would need a third internal port per site, and every port is the site's
+ * resource, not this module's.
+ */
+const DRAIN_IDLE_MS = Number(process.env.AEGIS_DRAIN_IDLE_MS || 30 * 60 * 1000);
+const DRAIN_MAX_MS = Number(process.env.AEGIS_DRAIN_MAX_MS || 8 * 60 * 60 * 1000);
+const REAP_EVERY_MS = 60 * 1000;
+
 /** The accounts a server process may run as. Empty means the runtime is off. */
 function accounts() {
     return String(process.env.AEGIS_RUNTIME_ACCOUNTS || '')
@@ -97,8 +118,14 @@ function portFor(sitePort, slot, sitesBase, range) {
     return runtimeBase() + (index * 2) + (slot === 1 ? 1 : 0);
 }
 
-/** `<slug>/<projectId>` -> { slot, port, child, account, startedAt, proxyKey }. */
+/** `<slug>/<projectId>` -> { slot, port, child, account, startedAt, proxyKey, sha }. */
 const running = new Map();
+
+/** `<slug>/<projectId>` -> the outgoing version, plus `since` and `lastSeen`. */
+const draining = new Map();
+
+/** Called with (slug, projectId) when a draining version is stopped. */
+const freeListeners = [];
 
 function key(slug, projectId) {
     return `${slug}/${projectId}`;
@@ -110,14 +137,82 @@ function targetFor(slug, projectId) {
     return held ? held.port : null;
 }
 
-/** The port and shared proxy key for one active process, or null. */
-function targetForRequest(slug, projectId) {
-    const held = running.get(key(slug, projectId));
-    return held ? { port: held.port, proxyKey: held.proxyKey } : null;
+/**
+ * Where one request goes: the port, the proxy key, and the version it reaches.
+ *
+ * `release` is the visitor's affinity cookie. When it names the draining
+ * version, the visitor stays on it and the request counts as activity, unless
+ * `background` says it is a poll and not a person. Any other value, or none,
+ * reaches the active version.
+ */
+function targetForRequest(slug, projectId, opts) {
+    const k = key(slug, projectId);
+    const o = opts || {};
+    const old = draining.get(k);
+    if (o.release && old && old.sha && o.release === old.sha) {
+        if (!o.background) old.lastSeen = Date.now();
+        return { port: old.port, proxyKey: old.proxyKey, sha: old.sha, draining: true };
+    }
+    const held = running.get(k);
+    return held ? { port: held.port, proxyKey: held.proxyKey, sha: held.sha || null, draining: false } : null;
+}
+
+/** The version new visitors get and the one still serving its own, for the page. */
+function versions(slug, projectId) {
+    const k = key(slug, projectId);
+    const held = running.get(k);
+    const old = draining.get(k);
+    return {
+        active: held ? (held.sha || null) : null,
+        draining: old ? { sha: old.sha || null, since: old.since, lastSeen: old.lastSeen } : null
+    };
 }
 
 function isRunning(slug, projectId) {
     return running.has(key(slug, projectId));
+}
+
+function isDraining(slug, projectId) {
+    return draining.has(key(slug, projectId));
+}
+
+/** Registers `fn(slug, projectId)`, called each time a draining version stops. */
+function onSlotFree(fn) {
+    freeListeners.push(fn);
+}
+
+function stopDraining(k, why) {
+    const old = draining.get(k);
+    if (!old) return false;
+    draining.delete(k);
+    try { old.child.kill(); } catch (_) { /* already gone */ }
+    if (why) console.log(`[Deploy] ${k}: ${String(old.sha || '').slice(0, 8)} stopped (${why})`);
+    const cut = k.indexOf('/');
+    const slug = k.slice(0, cut);
+    const projectId = k.slice(cut + 1);
+    freeListeners.forEach((fn) => {
+        try { fn(slug, projectId); } catch (e) { console.warn(`[Deploy] ${k}: after drain: ${e.message}`); }
+    });
+    return true;
+}
+
+/**
+ * Stops every draining version nobody uses any more. Takes `now` so the
+ * thresholds are testable without waiting thirty minutes.
+ */
+function reap(now) {
+    const t = now === undefined ? Date.now() : now;
+    Array.from(draining.entries()).forEach(([k, old]) => {
+        if (t - old.lastSeen >= DRAIN_IDLE_MS) stopDraining(k, 'idle');
+        else if (t - old.since >= DRAIN_MAX_MS) stopDraining(k, 'held too long');
+    });
+}
+
+let reaper = null;
+function ensureReaper() {
+    if (reaper) return;
+    reaper = setInterval(() => reap(), REAP_EVERY_MS);
+    if (reaper.unref) reaper.unref();
 }
 
 /**
@@ -208,12 +303,24 @@ async function startProcess({ dir, account, startCmd, port, env, spawn, report, 
  * one. A new process that never answers leaves the old one exactly where it was
  * and throws, so the deployment fails with the site still up.
  */
-async function restart({ slug, project, dir, startCmd, env, spawn, report, drainMs, dataDir }) {
+async function restart({ slug, project, dir, startCmd, env, spawn, report, drainMs, dataDir, sha, keep, force }) {
     if (!isEnabled()) {
         throw Object.assign(new Error('the node runtime is not enabled on this host'),
             { code: 'runtime_disabled' });
     }
     const k = key(slug, project.id);
+    // Two versions at most. A deployment that would keep the outgoing one
+    // while another still drains waits for it; anything else -- a rollback, a
+    // forced deployment, a restart that does not keep -- stops it first.
+    if (draining.has(k)) {
+        if (keep && !force) {
+            const old = draining.get(k);
+            throw Object.assign(
+                new Error(`${String(old.sha || 'the previous version').slice(0, 8)} is still serving its visitors`),
+                { code: 'slot_busy' });
+        }
+        stopDraining(k, 'replaced');
+    }
     const previous = running.get(k) || null;
     const slot = previous && previous.slot === 0 ? 1 : 0;
     const port = portFor(project.port, slot);
@@ -224,9 +331,13 @@ async function restart({ slug, project, dir, startCmd, env, spawn, report, drain
         dir, account, startCmd, port, env, spawn, report, dataDir, proxyKey
     });
 
-    running.set(k, { slot, port, child, account, startedAt: Date.now(), proxyKey });
+    running.set(k, { slot, port, child, account, startedAt: Date.now(), proxyKey, sha: sha || null });
 
-    if (previous) {
+    if (previous && keep) {
+        const now = Date.now();
+        draining.set(k, Object.assign({}, previous, { since: now, lastSeen: now }));
+        ensureReaper();
+    } else if (previous) {
         // Killed on a timer, not at once: a request the old process is halfway
         // through answering is a page somebody is looking at.
         const grace = drainMs === undefined ? DRAIN_MS : drainMs;
@@ -243,9 +354,17 @@ async function restart({ slug, project, dir, startCmd, env, spawn, report, drain
 
 /** Stops a project's process, if it has one. */
 function stop(slug, projectId) {
-    const held = running.get(key(slug, projectId));
-    if (!held) return false;
-    running.delete(key(slug, projectId));
+    const k = key(slug, projectId);
+    // The draining version goes too: a project that is stopped or deleted
+    // must not keep a process on the machine for its last visitors.
+    const hadOld = draining.has(k);
+    if (hadOld) {
+        try { draining.get(k).child.kill(); } catch (_) { /* already gone */ }
+        draining.delete(k);
+    }
+    const held = running.get(k);
+    if (!held) return hadOld;
+    running.delete(k);
     try { held.child.kill(); } catch (_) { /* already gone */ }
     return true;
 }
@@ -388,9 +507,11 @@ function spawnSandboxed({ dir, account, startCmd, port, env, dataDir, proxyKey }
 
 module.exports = {
     isEnabled, accounts, portFor, targetFor, targetForRequest, isRunning, restart, stop, health, waitHealthy,
+    versions, isDraining, onSlotFree, reap, DRAIN_IDLE_MS, DRAIN_MAX_MS,
     accountFor, startProcess, spawnSandboxed, grantAccess, grantData, homeDirFor,
     HEALTH_TIMEOUT_MS, DRAIN_MS, DEFAULT_RUNTIME_BASE, runtimeBase,
     // Test seam: the flip is about which process the proxy points at, and a
     // test cannot reach that state without starting two of them.
-    _running: running
+    _running: running,
+    _draining: draining
 };

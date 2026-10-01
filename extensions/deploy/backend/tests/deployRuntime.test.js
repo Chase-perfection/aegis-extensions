@@ -25,6 +25,11 @@ const http = require('http');
 const childProcess = require('child_process');
 const { EventEmitter } = require('events');
 
+// A range of its own: the default base (3200) is a real Aegis's, and a
+// development machine running one -- or anything else on 3200 -- made the
+// listeners below fail with EADDRINUSE, which read as a broken runtime.
+process.env.AEGIS_RUNTIME_PORT_BASE = process.env.AEGIS_TEST_RUNTIME_PORT_BASE || '47200';
+
 const machineStore = require('../machineStore');
 const runtime = require('../runtime');
 
