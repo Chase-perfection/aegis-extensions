@@ -20,6 +20,17 @@ A project with a start command is a different animal. Aegis publishes the
 folder and starts your command in it, then proxies to it. There is no separate
 switch: the command is the reason.
 
+Two things get installed, by two different owners. What Deploy itself needs on
+the server, git and, for applications, Python or Node, Deploy installs: the
+store drawer lists it and installs what is missing, for all users. What one site
+needs, `openpyxl` for KPI or `express` for a Node app, is that site's business.
+The branch declares it (a `requirements.txt`, a `package.json`) and the install
+command installs it. When a site served by a process declares packages and has
+no install command, Deploy stops before publishing and asks on the project page:
+**"KPI Usine needs openpyxl to run. Do you want to install it?"** Yes saves the
+install command it worked out and deploys again; No changes nothing. Either way
+the version that was serving keeps serving while you decide.
+
 Optional, in rough order of how often you will want it: environment variables,
 encrypted at rest; a hostname so the site answers by name through one shared
 listener; a TLS certificate, given as paths so a renewal is picked up by a
@@ -100,9 +111,23 @@ part in a project served as a process. The build skips it on its own and says so
 in the console, so the install command above needs no editing. See
 **Dependencies the build skips** in `DEPLOY-CONTRACT.md`.
 
+**Only `aegis` carries `aegis.deploy.json`.** A project pointed at `main`, or at
+`deploy-aegis` (the same commit as `main` today), gets no install command from
+the branch, and `requirements.txt` is in `packaging/api/`, not at the root where
+creation looks. Before 0.2.8 that project passed every stage and then died on
+start with `ModuleNotFoundError: No module named 'openpyxl'`, and the previous
+version was put back. Deploy now reads the requirements beside the start script,
+refuses before publishing with `needs_dependencies`, and asks whether to
+install openpyxl. Answer Yes, or point the project at `aegis`.
+
+The manifest says `pip install`; `python -m pip install` is the safer spelling,
+because a Python installed for all users does not always put its `Scripts\`
+folder, where `pip.exe` lives, on the PATH. The command Deploy proposes uses it.
+
 Checklist before handing out the site:
 
-1. Confirm the repository is on `aegis` and the install command completes.
+1. Confirm the repository is on `aegis` and the install command completes. On
+   another branch, expect the openpyxl question on the first deployment.
 2. Confirm the process starts with `python packaging/api/kpi_api.py` and the
    health check answers through the Deploy URL.
 3. Confirm the deployed data directory contains `kpi.db` and that a migration
@@ -196,11 +221,48 @@ Once per project, in the form or in `aegis.deploy.json` on the branch:
    `python -m pip install --no-cache-dir -r requirements.txt --target .` or
    `npm ci`. `--target .` matters for Python: the runtime account has no
    site-packages of its own, so the packages must sit beside the code.
+   Never `pip install` by hand on the server instead: a package installed in
+   your own profile, or in any one account's, is invisible to the runtime
+   account, and the next deployment would not have it either. Left empty,
+   Deploy looks for what the site declares and asks (below).
 2. **Build command**: empty unless something must be compiled.
 3. **Start command**: run from `current/`, so paths are relative to the
    repository root, for example `python packaging/api/kpi_api.py` or
    `node server.js`.
 4. **Database file** and **migrations directory**, if the application has them.
+
+### Who installs what
+
+| Needed by | Example | Installed by | When |
+|---|---|---|---|
+| Deploy, on the server | git, Python, Node | The store drawer on the Deploy card, for all users, from pinned installers | Once per host, before the first project that needs it |
+| One site | `openpyxl`, `express` | The project's install command, into `current/` | On every deployment of that site |
+
+When a project has a start command and no install command, Deploy looks for
+what the site declares before it publishes anything:
+
+- for `python <script>`, the nearest `requirements.txt` from the script's folder
+  up to the repository root (`packaging/api/requirements.txt` for KPI);
+- for `node`, `npm` and the like, the nearest `package.json` with
+  `dependencies` and no committed `node_modules`.
+
+Packaging-only entries such as PyInstaller are not counted. If something is
+left, the deployment is refused with `needs_dependencies`, nothing is published,
+and the project card, its overview and the deployment console ask:
+
+> **KPI Usine needs openpyxl to run. Do you want to install it?**
+> Declared in packaging/api/requirements.txt. Yes runs this before every
+> deployment of this site:
+> `python -m pip install --no-cache-dir -r packaging/api/requirements.txt --target .`
+>
+> [Yes, install and deploy] [No]
+
+**Yes** writes that command into the project's Settings, where you can read and
+change it, and deploys again; every later push installs the same way. **No**
+changes nothing: the previous version keeps serving, and this one will not start
+until an install command exists, in Settings or in `aegis.deploy.json`. A
+preview branch cannot answer for itself, since it deploys the way its production
+project does: answer there. Only admins see the buttons.
 
 What the application must do:
 
@@ -227,5 +289,16 @@ what the application printed before it stopped.
 Every refusal has a code and a fix, listed in
 [DEPLOY-CONTRACT.md](DEPLOY-CONTRACT.md). The ones you are most likely to meet
 first: `runtime_disabled` and `no_runtime_account` mean the host has not been
-told to allow application processes, `start_failed` means your command exited
-before answering, and `unhealthy` means nothing answered within 60 seconds.
+told to allow application processes, `needs_dependencies` means the site
+declares packages that nothing installs (answer the question on the project
+page), `start_failed` means your command exited before answering, and
+`unhealthy` means nothing answered within 60 seconds.
+
+A `start_failed` whose console ends in `ModuleNotFoundError` or
+`Cannot find module` is the same problem the question exists for, on a project
+Deploy could not read: the install command is missing, or does not install
+that package. Fix the install command, not the server. One exception: on Deploy
+0.2.7 and older, a Python script in a subfolder (KPI's
+`packaging/api/kpi_api.py`) did not see the packages pip had installed at the
+site root, even with a correct install command. The install log shows the
+package installed; updating Deploy to 0.2.8 is the fix.

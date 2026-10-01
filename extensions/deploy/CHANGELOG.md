@@ -2,6 +2,44 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.8
+
+**A Python site started from a subfolder finds the packages pip installed.**
+The install Deploy proposes, `pip install --target .`, puts packages at the
+root of the site, and `python packaging/api/kpi_api.py` puts only
+`packaging/api/` on `sys.path`. KPI installed openpyxl on every deployment and
+then died on start with `ModuleNotFoundError: No module named 'openpyxl'`, and
+the previous version was put back. The process now gets the site root first on
+`PYTHONPATH`, ahead of any the project sets. This fix was on `main` after 0.2.7
+was cut and had never shipped.
+
+**Build accounts are created on hardened hosts.** Their passwords meet a
+14-character domain policy, and their logon rights go through
+`LsaAddAccountRights` instead of `secedit`.
+
+**Deploy asks before installing what a site needs.** What Deploy needs on the
+server, git, Python and Node, it installs from the store drawer, as before. What
+one site needs is that site's decision. A project with a start command and no
+install command, whose branch declares packages (the nearest `requirements.txt`
+from the start script up to the root, or `package.json` dependencies), is
+refused with `needs_dependencies` before anything is published, and the card,
+the overview and the console ask: "kpi-briconord needs openpyxl to run. Do you
+want to install it?" Yes saves the install command Deploy worked out
+(`python -m pip install ... --target .`, or the lockfile's install) in the
+project's Settings and deploys again; No changes nothing. Packaging-only
+entries such as PyInstaller are not counted. Any install command, typed or
+declared, is an answer and is never questioned.
+
+**The build console follows the build.** It stays anchored to its last line;
+scrolling up to read something lets go of it, scrolling back to the bottom
+anchors it again. Every poll used to take the log out of the page and put it
+back, which reset its scroll to the first line, so the reader was pinned to the
+top.
+
+**The build console prints each line once.** A poll slower than half a second
+was overtaken by the next one, both asked for the lines after the same cursor,
+and every line came twice: a deployment read as if it had run several times.
+
 ## 0.2.7
 
 **A project served by a process starts.** Every Node or Python project failed

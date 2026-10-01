@@ -1107,6 +1107,9 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         previousSha: p.previousSha || null,
         deployedAt: p.deployedAt || null,
         lastError: p.lastError || null,
+        // What the branch needs and nothing installs, while that is the last
+        // refusal. The card asks the question from it.
+        needs: p.lastError === 'needs_dependencies' ? (p.needs || null) : null,
         failureCount: p.failureCount || 0,
         // Whether the sweep has stopped retrying the commit that keeps failing,
         // so the card can say so. Without it a project the poller has given up
@@ -1474,7 +1477,9 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 detail: e.detail || e.message,
                 // Set when the refusal came with a folder worth pointing at, so
                 // the page can name it instead of asking the operator to guess.
-                suggestRootDir: e.rootDir || undefined
+                suggestRootDir: e.rootDir || undefined,
+                // What to install, when the refusal is `needs_dependencies`.
+                needs: e.needs || undefined
             });
         }
     });
@@ -1590,7 +1595,9 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 detail: e.detail || e.message,
                 // Set when the refusal came with a folder worth pointing at, so
                 // the page can name it instead of asking the operator to guess.
-                suggestRootDir: e.rootDir || undefined
+                suggestRootDir: e.rootDir || undefined,
+                // What to install, when the refusal is `needs_dependencies`.
+                needs: e.needs || undefined
             });
         }
     });
@@ -1729,7 +1736,9 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 runId: run.id,
                 branch,
                 detail: e.detail || e.message,
-                suggestRootDir: e.rootDir || undefined
+                suggestRootDir: e.rootDir || undefined,
+                // What to install, when the refusal is `needs_dependencies`.
+                needs: e.needs || undefined
             });
         }
     });

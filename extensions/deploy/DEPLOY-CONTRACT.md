@@ -228,6 +228,7 @@ no index in any folder.
 | `bad_site_config` | The `vercel.json` in that branch will not parse | Fix the JSON, or remove the file |
 | `deploy_failed` | The clone itself failed, meaning git exited non-zero | Check the branch exists and github.com is reachable |
 | `build_failed` | The install or build command exited non-zero | Read its output in the build console |
+| `needs_dependencies` | The site has a start command, declares packages (`requirements.txt` near the script, `package.json` dependencies) and has no install command | Answer Yes to the question on the project page, or set an install command in Settings or `aegis.deploy.json` |
 | `build_account_unconfigured` | The sandbox accounts were never created on this host | Run `backend/build/setup/Create-BuildAccounts.ps1`, or drop the build command |
 | `tool_missing` | git or pwsh could not be started | Put both on the PATH of the account Aegis runs as, SYSTEM on an installed host |
 | `github_auth_failed` | GitHub refused the App credentials | Reconnect the App, or check it is still installed on the repository |
@@ -412,6 +413,22 @@ worse than asking. A branch that needs one declares it in `aegis.deploy.json`.
 The three layers, in the order they are consulted: what the operator typed,
 then `aegis.deploy.json`, then this. Each fills only what the one before it left
 empty, so nothing ever overwrites a decision somebody made.
+
+**What a process needs is asked, not filled in.** The table above reads the root
+of the branch, once, at creation. A project served by a process can keep its
+dependencies elsewhere (KPI: `packaging/api/requirements.txt`, beside
+`kpi_api.py`), and installing packages is a decision about the site, not a
+guess Deploy should make silently. So on every deployment of a project with a
+start command and an empty install command, `backend/siteNeeds.js` looks for
+the nearest `requirements.txt` from the start script's folder up to the root,
+or the nearest `package.json` with `dependencies` and no `node_modules`. If one
+declares a package that runs at run time (packaging-only ones, see
+**Dependencies the build skips**, are not counted), the deployment stops before
+the build with `needs_dependencies`, nothing is published, and the page asks
+"<site> needs <packages> to run. Do you want to install it?" with the command it
+would run. Yes saves that command as the project's install command and
+redeploys; No leaves everything as it is. Any install command, typed or
+declared, counts as the answer and is never second-guessed.
 
 ## Your case: `Chase-perfection/portail-interne`
 
@@ -1035,7 +1052,9 @@ say the same thing and a third state when the two disagree.
 
 ### What happens on a deployment
 
-Clone, install and build exactly as before. Then, instead of looking for an
+Clone, install and build exactly as before; with no install command, first
+check that the site declares nothing it needs installed (`needs_dependencies`,
+see **What Aegis works out on its own**). Then, instead of looking for an
 `index.html`, Aegis publishes the folder and starts the command in it. The
 acceptance test is the application answering: a version that crashes on boot, or
 that never listens, is refused, the folder is swapped back, and the version that
@@ -1103,6 +1122,7 @@ deployment fails with `start_failed`, and the previous version keeps serving.
 | `... (Windows error 1314, ...)` | The Aegis backend runs as neither LocalSystem nor an administrator | Run the Aegis service as LocalSystem |
 | `... (Windows error 5, ...)` | The account cannot open `current/` or `cmd.exe` | Run the host setup again |
 | `the application exited with code N` | The command started, then stopped | Read the lines above it: they are the application's own output |
+| `ModuleNotFoundError: No module named '...'` / `Cannot find module '...'` above that line | A package the code imports was never installed into `current/`, or (Deploy 0.2.7 and older, Python script in a subfolder) was installed at the root where Python did not look | Add it to the requirements or `package.json` the install command reads, or fix the install command. If the install log shows it installed, update Deploy to 0.2.8, which puts the site root on `PYTHONPATH`. Installing it by hand on the server does not reach the runtime account |
 | `nothing answered on port ... within 60s` | The application runs but listens somewhere else | Listen on `PORT` and `HOST` from the environment |
 
 ### Native KPI pattern
@@ -1123,6 +1143,12 @@ nobody chose. The two run side by side until the switch. Use these values:
   "migrationsDir": "migrations"
 }
 ```
+
+Only `aegis` declares these in `aegis.deploy.json`. A project on `main` or
+`deploy-aegis` has no install command from the branch; its first deployment
+stops on `needs_dependencies` and asks to install openpyxl, which is the answer
+to give. `python -m pip install` is the spelling Deploy proposes and the safer
+one: plain `pip` needs Python's `Scripts\` folder on the PATH.
 
 `kpi.db` is created under the per-project `AEGIS_DATA_DIR`. Deploy keeps that
 directory across code deployments, and plays the SQL files from `migrations`
@@ -1269,6 +1295,7 @@ no process is running answers 503 and never falls through to the files, since
 `current/` for a server-rendered application is its source.
 
 Refusals: `runtime_disabled`, `no_start_cmd`, `no_runtime_account`,
+`needs_dependencies` (packages declared, nothing installs them),
 `start_failed` (the command exited before answering), `unhealthy` (nothing
 answered within 60 seconds), `runtime_acl_failed`, `bad_site_port`.
 
@@ -1330,6 +1357,7 @@ The order the rest arrives in, and what each one costs, is
 | Previews: expiry, the shared deletion | `backend/previews.js` |
 | The site listeners, the host-name router, the runtime proxy | `backend/siteServer.js` |
 | Application processes: ports, accounts, the flip | `backend/runtime.js` |
+| What a process site declares and nothing installs | `backend/siteNeeds.js` |
 | The sandbox a process runs in | `backend/runtime/run-sandboxed-server.ps1` |
 | Routes and refusal codes | `backend/routes.js` |
 | Build console: stages, log ring, cancel | `backend/runs.js` |

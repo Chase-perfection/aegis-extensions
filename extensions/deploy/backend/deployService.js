@@ -51,6 +51,10 @@ const NAMED = [
     'build_failed', 'runtime_missing', 'build_account_unconfigured', 'sandbox_unavailable', 'bad_site_config', 'bad_deploy_manifest',
     'runtime_disabled', 'no_runtime_account', 'start_failed', 'unhealthy', 'bad_site_port',
     'migration_failed', 'migrations_unsupported',
+    // The branch declares packages its start command imports and the project
+    // has no install command. Carries `needs`, which the page turns into the
+    // yes-or-no question.
+    'needs_dependencies',
     // An App that cannot get a token for this repository. 401 and 403 are named
     // below, but GitHub answers 404 for an installation that is not this App's,
     // and that landed in deploy_failed, which is the sentence about the branch.
@@ -215,6 +219,7 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
             currentSha: project.lastSha || null,
             previousSha: project.previousSha || null,
             runtime: project.runtime === 'node' ? 'node' : 'static',
+            startCmd: project.startCmd || '',
             report,
             signal: run ? run.controller.signal : undefined
         });
@@ -375,6 +380,8 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
             deployedAt: Date.now(),
             failureCount: 0,
             lastError: null,
+            // Answered, or no longer asked: the question leaves the card.
+            needs: null,
             // Ce commit passe : ce qui avait echoue avant n'a plus a bloquer
             // quoi que ce soit.
             lastFailedSha: null,
@@ -405,9 +412,18 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
         const failedSha = cancelled ? null : ((run && run.sha) || headSha || null);
         const repeat = !!failedSha && failedSha === project.lastFailedSha;
 
+        // The question the page asks, kept on the record because a push
+        // deploys with nobody watching: the card is where the operator meets
+        // it. A preview cannot answer it, its settings are its parent's.
+        const needs = reason === 'needs_dependencies' && e.needs
+            ? Object.assign({}, e.needs, { preview: !!project.parentId })
+            : null;
+        if (run && needs) run.needs = needs;
+
         projectStore.saveProject(tenantPaths, Object.assign({}, project, {
             failureCount: (project.failureCount || 0) + 1,
             lastError: reason,
+            needs,
             // Compte par commit, a cote de `failureCount` qui compte les echecs
             // consecutifs quels qu'ils soient (un GitHub injoignable en fait
             // partie). C'est celui-ci que `decide` lit, parce que la question

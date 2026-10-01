@@ -294,6 +294,9 @@ function snapshot(run, after) {
         actor: run.actor,
         status: run.status,
         error: run.error,
+        // Set when the run stopped on `needs_dependencies`: what to install,
+        // so the console can ask without reading the project record.
+        needs: run.needs || null,
         startedAt: run.startedAt,
         endedAt: run.endedAt,
         stages: run.stages.map((s) => ({

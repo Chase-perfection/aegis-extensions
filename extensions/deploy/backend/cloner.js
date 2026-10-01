@@ -237,6 +237,7 @@ const siteConfig = require('./siteConfig');
 const accessPolicy = require('./accessPolicy');
 const manifestLive = require('./manifestLive');
 const deployManifest = require('./deployManifest');
+const siteNeeds = require('./siteNeeds');
 
 /** Where sandboxed builds happen -- fixed, machine-level, not tenant-scoped. See the design doc's "Sandbox identity" section for why. */
 function buildWorkspaceRoot() {
@@ -295,7 +296,7 @@ const SILENT = { stage() { }, log() { } };
  */
 async function cloneToCurrent(args) {
     const { token, repoFullName, branch, projectDir, currentDir, buildEnvFor,
-        currentSha, previousSha, runtime, build, report, signal } = args;
+        currentSha, previousSha, runtime, startCmd, build, report, signal } = args;
     // These four are `let` because the manifest in the clone may replace them
     // below, before the served directory is chosen and before the build runs.
     let { rootDir, installCmd, buildCmd, outputDir } = args;
@@ -348,6 +349,21 @@ async function cloneToCurrent(args) {
             }
             if (!fs.existsSync(served)) {
                 throw Object.assign(new Error(`no ${rootDir} in this branch`), { code: 'no_root_dir' });
+            }
+        }
+
+        // A process with no install command, in a branch that declares what
+        // it imports: refused here, before the build and before the publish,
+        // so the version on the port keeps serving while the operator answers.
+        // Starting it anyway is what produced a ModuleNotFoundError after every
+        // stage had passed. `siteNeeds.js` says why this is asked, not assumed.
+        if (runtime === 'node') {
+            const needs = siteNeeds.find({ root: served, startCmd, installCmd });
+            if (needs) {
+                say.log(siteNeeds.sentence(needs));
+                throw Object.assign(
+                    new Error(`${needs.file} declares what this site needs and nothing installs it`),
+                    { code: 'needs_dependencies', needs });
             }
         }
 

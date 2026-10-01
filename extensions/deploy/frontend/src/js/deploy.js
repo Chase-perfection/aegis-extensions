@@ -1101,6 +1101,11 @@
             'deploy_ref_tool_missing', 'git or pwsh could not be started'],
         runtime_missing: ['deploy_new_runtime_missing', 'Python or Node is not installed for all users on this server. Open the Deploy extension in Extensions and click Install what is missing.',
             'deploy_ref_runtime_missing', 'A runtime the build needs is not installed for all users'],
+        // What the server needs is Deploy's to install (the line above). What
+        // one site needs is a question about that site, asked with Yes and No
+        // under this sentence wherever it is shown: see `needsQuestion`.
+        needs_dependencies: ['deploy_new_needs_deps', 'This site needs packages that nothing installs, so nothing was published and the version that was serving still is. Answer the question on the project to install them.',
+            'deploy_ref_needs_deps', 'The site needs packages nothing installs'],
         github_auth_failed: ['deploy_new_gh_auth', 'GitHub refused the App credentials. Reconnect the App, or check it is still installed on that repository.',
             'deploy_ref_gh_auth', 'GitHub refused the App credentials'],
         busy: ['deploy_new_busy', 'This project is already deploying. Wait for the deployment in progress to finish.',
@@ -1699,6 +1704,7 @@
             body.appendChild(el('p', 'dep-card-error',
                 entry ? tr(entry[0], entry[1]) : p.lastError));
         }
+        if (p.needs) body.appendChild(needsQuestion(p.id, p.name, p.needs));
 
         // Said out loud, because the alternative is a card that looks exactly
         // like one about to be retried. A refusal about what the branch holds
@@ -1888,6 +1894,124 @@
             });
     }
 
+    /**
+     * "kpi-briconord needs openpyxl to run. Install it?" and two buttons.
+     *
+     * What the server needs (git, Python, Node) Deploy installs from the store
+     * drawer, because Deploy is what needs it. What one site needs is that
+     * site's decision, so it is asked. The backend has already worked out the
+     * answer -- which file, which packages, which command -- and refused before
+     * publishing, so nothing is down while the question waits.
+     *
+     * Yes writes the install command into the project's settings, where it is
+     * visible and can be changed, then deploys again. It is not a one-off: the
+     * same command runs on every deployment after, which is what makes the
+     * next push work too. No changes nothing, and says what that means.
+     *
+     * A preview cannot answer: its settings are its parent's.
+     */
+    function needsQuestion(projectId, projectName, needs) {
+        var box = el('div', 'dep-needs');
+        var list = needs.packages && needs.packages.length
+            ? packageList(needs.packages)
+            : tr('deploy_needs_what_file', 'what $1 lists').replace('$1', needs.file);
+
+        box.appendChild(el('p', 'dep-needs-question',
+            tr('deploy_needs_question', '$1 needs $2 to run. Do you want to install it?')
+                .replace('$1', projectName || projectId)
+                .replace('$2', list)));
+
+        var how = el('p', 'dep-needs-how', '');
+        how.appendChild(document.createTextNode(
+            tr('deploy_needs_how', 'Declared in $1. Yes runs this before every deployment of this site:')
+                .replace('$1', needs.file) + ' '));
+        how.appendChild(el('code', 'dep-code', needs.installCmd));
+        box.appendChild(how);
+
+        if (needs.preview) {
+            box.appendChild(el('p', 'dep-note', tr('deploy_needs_preview',
+                'A branch deploys the way its production project does. Answer on the production project, then remove and redeploy this branch.')));
+            return box;
+        }
+
+        var note = el('p', 'dep-note', '');
+        note.hidden = true;
+        var actions = el('div', 'dep-card-actions');
+        var yes = el('button', 'dep-btn dep-btn-small', tr('deploy_needs_yes', 'Yes, install and deploy'));
+        var no = el('button', 'dep-btn dep-btn-ghost dep-btn-small', tr('deploy_needs_no', 'No'));
+        yes.type = 'button';
+        no.type = 'button';
+        yes.disabled = !isAdmin;
+        no.disabled = !isAdmin;
+
+        yes.addEventListener('click', function () {
+            yes.disabled = true;
+            no.disabled = true;
+            note.hidden = false;
+            note.textContent = tr('deploy_auth_working', 'Saving.');
+            window.api('/api/deploy/projects/' + encodeURIComponent(projectId) + '/settings', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ installCmd: needs.installCmd })
+            })
+                .then(function (r) { return readJson(r, 'settings'); })
+                .then(function (data) {
+                    if (!(data && data.success)) {
+                        yes.disabled = !isAdmin;
+                        no.disabled = !isAdmin;
+                        note.textContent = settingsRefusal(data && data.error);
+                        return;
+                    }
+                    note.hidden = true;
+                    redeploy(projectId, yes, null);
+                })
+                .catch(function (e) {
+                    yes.disabled = !isAdmin;
+                    no.disabled = !isAdmin;
+                    note.textContent = settingsRefusal(null);
+                    console.error('[Deploy] installing what the site needs failed:', e);
+                });
+        });
+
+        no.addEventListener('click', function () {
+            actions.hidden = true;
+            note.hidden = false;
+            note.textContent = tr('deploy_needs_declined',
+                'Nothing installed. The version that was serving still is, and this one will not start without $1. Declare an install command in aegis.deploy.json or in Settings when you are ready.')
+                .replace('$1', list);
+        });
+
+        actions.appendChild(yes);
+        actions.appendChild(no);
+        box.appendChild(actions);
+        box.appendChild(note);
+        return box;
+    }
+
+    /** "openpyxl", or the first six and "and 3 more". Same cut as the backend's. */
+    function packageList(packages) {
+        var max = 6;
+        if (packages.length <= max) return packages.join(', ');
+        return packages.slice(0, max).join(', ') + ' '
+            + tr('deploy_needs_more', 'and $1 more').replace('$1', String(packages.length - max));
+    }
+
+    /**
+     * The question again, under the console's refusal line, because that is
+     * where the operator is looking when a deployment they clicked stops on it.
+     * Cleared on every poll that has nothing to ask, so a new run never shows
+     * the previous one's question.
+     */
+    function consoleNeeds(run) {
+        var note = document.getElementById('deploy-run-note');
+        var old = document.getElementById('deploy-run-needs');
+        if (old) old.parentNode.removeChild(old);
+        if (!note || run.status === 'running' || run.error !== 'needs_dependencies' || !run.needs) return;
+        var box = needsQuestion(run.projectId, run.projectName, run.needs);
+        box.id = 'deploy-run-needs';
+        note.parentNode.insertBefore(box, note.nextSibling);
+    }
+
     // --- The build console --------------------------------------------------
 
     /**
@@ -1907,6 +2031,20 @@
     var runClockTimer = null;
     var currentRun = null;
     var runCursor = 0;
+    /**
+     * One poll at a time. A poll slower than RUN_POLL_MS used to be overtaken by
+     * the next one, both asked for the lines after the same cursor, and every
+     * line arrived twice: the console read as the deployment repeating itself.
+     */
+    var runPolling = false;
+    /** The run the console shows now. An answer about another one is dropped. */
+    var runShown = null;
+    /**
+     * Whether the log follows its last line. On by default, off while the
+     * reader has scrolled up to read something, on again once they scroll back
+     * to the bottom.
+     */
+    var runFollow = true;
     /** Consecutive 404s tolerated while the backend is still resolving the repository. */
     var runMisses = 0;
     var RUN_MISS_LIMIT = 40;
@@ -2054,11 +2192,18 @@
         // below the list rather than under the running stage, because moving a
         // scrollable node between parents resets its scroll, and losing the
         // reader's place mid-error is worse than the nesting is worth.
+        //
+        // Nor is it taken out and put back. It used to be, around a
+        // `textContent = ''` on the list, and a node out of the document loses
+        // its scroll position: every poll put the log back at its first line,
+        // so it could never follow the build and the reader was pinned to the
+        // top. The stages are now removed around it and inserted before it.
         var stagesBox = document.getElementById('deploy-run-stages');
         var logBox = document.getElementById('deploy-run-log');
-        var keepLog = logBox && !resync ? logBox : null;
-        if (keepLog) keepLog.remove();
-        stagesBox.textContent = '';
+        var keepLog = logBox && !resync && logBox.parentNode === stagesBox ? logBox : null;
+        Array.prototype.slice.call(stagesBox.childNodes).forEach(function (n) {
+            if (n !== keepLog) stagesBox.removeChild(n);
+        });
 
         run.stages.forEach(function (s) {
             // A skipped stage is not a stage. A static site installs nothing and
@@ -2077,29 +2222,37 @@
             }
             wrap.appendChild(head);
             if (s.detail) wrap.appendChild(el('p', 'dep-stage-detail', s.detail));
-            stagesBox.appendChild(wrap);
+            stagesBox.insertBefore(wrap, keepLog);
         });
 
-        var log = keepLog || el('div', 'dep-log');
-        log.id = 'deploy-run-log';
-        stagesBox.appendChild(log);
+        var log = keepLog;
+        if (!log) {
+            log = el('div', 'dep-log');
+            log.id = 'deploy-run-log';
+            log.addEventListener('scroll', function () {
+                runFollow = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
+            });
+            stagesBox.appendChild(log);
+            runFollow = true;
+        }
 
-        var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
         (lines || []).forEach(function (line) {
             var node = el('div', 'dep-log-line');
             node.appendChild(el('span', 'dep-log-at', new Date(line.at).toTimeString().slice(0, 8)));
             node.appendChild(el('span', 'dep-log-text', line.text));
             log.appendChild(node);
         });
-        // Follows the tail only while the reader is already at the tail, so
-        // scrolling back to read an earlier error is not undone by the next line.
-        if (atBottom) log.scrollTop = log.scrollHeight;
         var placeholder = log.querySelector('.dep-log-wait');
         if (placeholder && log.childNodes.length > 1) placeholder.remove();
         else if (!log.childNodes.length) {
             log.appendChild(el('div', 'dep-log-line dep-log-wait',
                 tr('deploy_run_waiting', 'Waiting for output.')));
         }
+        // Anchored to the last line, so what is happening now is what is on
+        // screen. Scrolling up to read an earlier error lets go of it, and the
+        // next line does not snatch the reader back; scrolling to the bottom
+        // anchors it again.
+        if (runFollow) log.scrollTop = log.scrollHeight;
 
         var meta = document.getElementById('deploy-run-meta');
         meta.textContent = '';
@@ -2122,8 +2275,11 @@
     }
 
     function pollRun(runId) {
+        if (runPolling) return Promise.resolve();
+        runPolling = true;
         return window.api('/api/deploy/runs/' + encodeURIComponent(runId) + '?after=' + runCursor)
             .then(function (r) {
+                if (runId !== runShown) return null;
                 if (r.status === 404) {
                     runMisses += 1;
                     if (runMisses < RUN_MISS_LIMIT) return null;
@@ -2136,10 +2292,18 @@
                 return readJson(r, 'run');
             })
             .then(function (data) {
-                if (!data || !data.success) return undefined;
+                if (!data || !data.success || runId !== runShown) return undefined;
                 var run = data.run;
                 currentRun = run;
-                runCursor = run.cursor;
+                // The answer covers [cursor - lines, cursor). Anything below
+                // the cursor this page already holds is painted, and is cut
+                // rather than painted twice.
+                var lines = run.lines || [];
+                if (!run.resync) {
+                    var from = run.cursor - lines.length;
+                    if (from < runCursor) lines = lines.slice(runCursor - from);
+                }
+                runCursor = run.resync ? run.cursor : Math.max(runCursor, run.cursor);
 
                 var wasRunning = Object.prototype.hasOwnProperty.call(runningRuns, runId);
                 markRun(runId, run.projectId, run.status === 'running');
@@ -2149,7 +2313,7 @@
                     loadProjects();
                 }
 
-                paintRun(run, run.lines, run.resync);
+                paintRun(run, lines, run.resync);
                 if (run.status !== 'running') {
                     stopRunPolling();
                     if (run.error) {
@@ -2157,6 +2321,7 @@
                         consoleNote(entry ? tr(entry[0], entry[1]) : run.error);
                     }
                 }
+                consoleNeeds(run);
                 return undefined;
             })
             .catch(function (e) {
@@ -2168,7 +2333,8 @@
                 consoleNote(tr('deploy_run_unreadable',
                     'Aegis stopped answering about this deployment. Restart the backend if it has not been restarted since the last update, then reopen this console.'));
                 console.error('[Deploy] run poll failed:', e);
-            });
+            })
+            .then(function () { runPolling = false; });
     }
 
     /**
@@ -2200,6 +2366,7 @@
 
     function openConsole(runId) {
         if (!runId) return goTo('runs');
+        runShown = runId;
         runCursor = 0;
         runMisses = 0;
         currentRun = pendingRun();
@@ -2572,6 +2739,7 @@
             wrap.appendChild(el('p', 'dep-card-error',
                 entry ? tr(entry[0], entry[1]) : project.lastError));
         }
+        if (project.needs) wrap.appendChild(needsQuestion(project.id, project.name, project.needs));
 
         // Active branches, the way the overview shows them: what else is
         // deployed from this repository, with a link into the tab that manages
@@ -4461,7 +4629,7 @@
         'no_index', 'not_a_site', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink', 'bad_site_config',
         'bad_deploy_manifest',
         'no_free_port', 'deploy_failed', 'build_failed', 'build_account_unconfigured', 'sandbox_unavailable',
-        'tool_missing', 'runtime_missing', 'github_auth_failed', 'github_unreachable', 'busy', 'branch_gone'
+        'tool_missing', 'runtime_missing', 'needs_dependencies', 'github_auth_failed', 'github_unreachable', 'busy', 'branch_gone'
     ];
 
     var refusalsPainted = false;

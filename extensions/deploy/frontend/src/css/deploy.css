@@ -1074,6 +1074,34 @@ select.dep-input option:disabled {
     line-height: 1.5;
 }
 
+/* The question a refusal for missing packages asks. Ink, not red: the red
+   line above it is the refusal, this is the way out of it. */
+.dep-needs {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-top: var(--space-sm);
+    padding: var(--space-sm);
+    border: 1px solid var(--ag-border-strong, var(--dep-line-strong));
+    border-radius: var(--ag-r-input, 7px);
+}
+
+.dep-needs-question {
+    margin: 0;
+    color: var(--text-main);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.dep-needs-how {
+    margin: 0;
+    color: var(--zinc-400);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
 /* Sits under the refusal it qualifies, and in ink rather than in red: the
    refusal above is the problem, this is only what Aegis has stopped doing
    about it. Two reds in a row would read as two separate failures. */
