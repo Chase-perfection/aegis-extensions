@@ -10,6 +10,7 @@
 
     const AT = (window.AccountTiering = window.AccountTiering || {});
     const { T, errorText, toast } = AT.ui;
+    const SEARCH_MS = 150;
 
     function wire(hooks) {
         const app = () => AT.app;
@@ -20,6 +21,7 @@
             if (el) el.focus();
             return el;
         };
+        let searchTimer = null;
 
         function expandKey() {
             const s = st();
@@ -89,6 +91,7 @@
             if (on('#at-export-menu a')) { app().set({ menu: null }); return; }
             if (on('#at-search-clear')) {
                 const input = document.getElementById('at-search');
+                clearTimeout(searchTimer);
                 input.value = '';
                 app().set({ q: '' });
                 input.focus();
@@ -138,6 +141,7 @@
             const act = on('[data-act]') && on('[data-act]').dataset.act;
             if (act === 'inv-0' || act === 'inv-1') { app().set({ view: 'tree', inverse: Number(act.slice(4)), invSel: null }); return; }
             if (act === 'points-toggle') { app().set({ showAllPoints: !s.showAllPoints }); return; }
+            if (act === 'left-more') { app().set({ leftLimit: s.leftLimit + AT.left.STEP }); return; }
             if (act === 'fix-open') { AT.dialogs.openRemediation(app().vm.byId[s.acc]); return; }
             if (act === 'override-open') {
                 const acc = app().vm.byId[s.acc];
@@ -162,7 +166,13 @@
         document.addEventListener('input', (e) => {
             // Kept as typed, without a render: the next one, whatever causes it, draws the form from this.
             if (e.target.id === 'at-override-reason' && st().overrideDraft) { st().overrideDraft.reason = e.target.value; return; }
-            if (e.target.id === 'at-search') app().set({ q: e.target.value });
+            if (e.target.id !== 'at-search') return;
+            // Filtering redraws the three regions: once the typing pauses, not
+            // once per key. The input itself is static markup, so it keeps its
+            // focus and its caret through the redraw.
+            const q = e.target.value;
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => app().set({ q }), SEARCH_MS);
         });
 
         document.addEventListener('submit', (e) => {

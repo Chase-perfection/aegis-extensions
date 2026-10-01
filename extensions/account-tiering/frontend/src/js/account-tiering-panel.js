@@ -19,6 +19,7 @@
         gpo: [['MITRE-T1484.001', 'https://attack.mitre.org/techniques/T1484/001/']]
     };
     const LIM = 8;
+    const ROWS_MAX = 50;
     const pl = (n, one, many, params) => T(n === 1 ? one[0] : many[0], n === 1 ? one[1] : many[1], { n, ...(params || {}) });
     const tierFact = (label, tier, danger) => ({ label, value: T('at_tier_n', 'Tier {tier}', { tier }), danger });
     const GAIN = () => [T('at_gain_0', 'le contrôle du domaine'), T('at_gain_1', "l'administration de serveurs"), T('at_gain_2', "l'accès aux postes de travail")];
@@ -215,10 +216,14 @@
             facts: [{ label: T('at_fact_accounts', 'Comptes'), value: String(nA) }, { label: T('at_fact_gaps', 'En écart'), value: String(nE), danger: nE > 0 },
                 { label: T('at_fact_groups', 'Groupes'), value: String(groupsIn.length) }]
         };
-        const rows = accIn.slice().sort((p, q) => (p.effective - p.planned) - (q.effective - q.planned)).map((a) => `<button type="button" class="at-prow" data-open-account="${esc(a.id)}" data-key="prow:${esc(a.id)}">
+        // The widest gaps first, and ROWS_MAX of them: on a large domain a whole
+        // tier reaches the selected node, and the panel is not the place to list it.
+        const rows = accIn.slice().sort((p, q) => (p.effective - p.planned) - (q.effective - q.planned)).slice(0, ROWS_MAX).map((a) => `<button type="button" class="at-prow" data-open-account="${esc(a.id)}" data-key="prow:${esc(a.id)}">
             <span class="at-prow-top"><span class="at-strong">${esc(a.name)}</span>${accountMark(a)}</span>
             <span class="at-mono">${esc(T('at_row_gap', '{sam} · prévu T{planned} → T{effective}', { sam: a.sam, planned: a.planned, effective: a.effective }))}</span></button>`).join('');
-        const accounts = nA ? `<div class="at-block">${sectionHead(T('at_accounts_label', 'Comptes · {n}', { n: nA }))}${rows}<span class="at-note">${esc(T('at_accounts_hint', 'Cliquez un compte pour ouvrir son arbre.'))}</span></div>` : '';
+        const more = nA > ROWS_MAX ? `<span class="at-note" id="at-panel-more">${esc(pl(nA - ROWS_MAX,
+            ['at_accounts_more_one', '+ {n} autre compte : la recherche le retrouve.'], ['at_accounts_more_many', '+ {n} autres comptes : la recherche les retrouve.']))}</span>` : '';
+        const accounts = nA ? `<div class="at-block">${sectionHead(T('at_accounts_label', 'Comptes · {n}', { n: nA }))}${rows}${more}<span class="at-note">${esc(T('at_accounts_hint', 'Cliquez un compte pour ouvrir son arbre.'))}</span></div>` : '';
         return head(P) + accounts + refsHtml(mechsIn.map((M) => M.m));
     }
 

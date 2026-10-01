@@ -12,6 +12,39 @@ const group = (rid, name, extra) => ({ sid: sid(rid), sam: name, name, dn: `CN=$
 const scan = { domain: 'corp.local', domainSid: D, collectedAt: '2026-09-30T08:12:00Z', passes: 3, truncated: false, unreadable: [] };
 
 /**
+ * `n` accounts that all reach Tier 0 through one of ten groups nested in
+ * Domain Admins. One in four is planned Tier 2, so it is a gap; the others are
+ * planned Tier 0 and compliant.
+ */
+function bigModel(n) {
+    const da = sid(512);
+    const groups = [group(512, 'Admins du domaine', { target: true })];
+    const links = [];
+    for (let g = 0; g < 10; g += 1) {
+        groups.push(group(1100 + g, `GG-Admins-${String(g).padStart(2, '0')}`));
+        links.push(member(sid(1100 + g), da));
+    }
+    const accounts = [];
+    for (let i = 0; i < n; i += 1) {
+        const gap = i % 4 === 0;
+        const mine = sid(1100 + (i % 10));
+        const num = String(i).padStart(4, '0');
+        links.push(member(sid(10000 + i), mine));
+        accounts.push({
+            sid: sid(10000 + i), sam: `compte-${num}`, name: `Compte ${num}`, dn: `CN=Compte ${num},OU=Utilisateurs,DC=corp,DC=local`,
+            kind: 'user', enabled: true, planned: gap ? 2 : 0, plannedSource: { type: gap ? 'default' : 'rule', ruleId: 'r1' },
+            effective: 0, status: gap ? 'gap' : 'ok', severity: gap ? 'critical' : null,
+            path: [member(sid(10000 + i), mine), member(mine, da)], remediationProposed: false
+        });
+    }
+    const gaps = accounts.filter((a) => a.status === 'gap').length;
+    return {
+        scan, accounts, groups, objects: [], links, chokepoints: [],
+        matrix: [[n - gaps, 0, 0], [0, 0, 0], [gaps, 0, 0]], keyFigures: { accounts: n, chokepoints: 0 }, rulesCount: 1
+    };
+}
+
+/**
  * Two holders of the same right, twice over. Nora Lambert sits in two groups
  * that each hold WriteDacl on AdminSDHolder; Omar Renaud sits in two groups
  * that can each edit the same GPO. Four links to cut, so four mechanisms and
@@ -45,4 +78,4 @@ function twoHoldersModel() {
     };
 }
 
-module.exports = { twoHoldersModel, sid };
+module.exports = { bigModel, twoHoldersModel, sid };

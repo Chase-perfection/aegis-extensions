@@ -343,7 +343,13 @@
 
         const accounts = accountsIn.map(accountView);
         const byId = {};
-        for (const a of accounts) byId[a.id] = a;
+        // Counted here, once per model: the left list shows them on every
+        // render, and four passes over 5,000 accounts per keystroke add up.
+        const tierCounts = [0, 0, 0];
+        for (const a of accounts) {
+            byId[a.id] = a;
+            if (tierCounts[a.effective] != null) tierCounts[a.effective] += 1;
+        }
 
         // The backend lists only the points to fix (a gap goes through, or the
         // holder is broad), already sorted: shown as they come.
@@ -386,7 +392,7 @@
             domain: scan.domain || '', collectedAt: scan.collectedAt || null, passes: scan.passes || null,
             truncated: Boolean(scan.truncated), unreadable: Array.isArray(scan.unreadable) ? scan.unreadable : [],
             rulesCount: typeof m.rulesCount === 'number' ? m.rulesCount : 0,
-            accounts, byId, points, matrix,
+            accounts, byId, tierCounts, points, matrix,
             uncollected: Math.max(0, (kf.accounts || accounts.length) - accounts.length),
             kpis: {
                 accounts: accounts.length, gaps,

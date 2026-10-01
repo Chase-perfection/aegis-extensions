@@ -13,13 +13,81 @@ if (!P.available) {
     test('the Arbre des comptes page: models the fixture does not hold', { skip: P.why }, () => {});
     return;
 }
-const { fixture, API, open, count, text, click } = P;
-const { twoHoldersModel, sid } = require('./models');
+const { fixture, API, open, pause, count, text, focused, click } = P;
+const { bigModel, twoHoldersModel, sid } = require('./models');
 
 before(P.start);
 after(P.stop);
 
 const withModel = (model, rules) => open({ [`${API}/model`]: { success: true, model }, ...(rules ? { [`${API}/rules`]: { success: true, rules } } : {}) });
+
+test('a large domain: the left list draws a bounded number of rows, and more on request', async () => {
+    const { page, close, pageErrors } = await withModel(bigModel(2000));
+    const counts = await page.$$eval('[data-tierf] .at-mono', (els) => els.map((e) => e.textContent));
+    assert.deepStrictEqual(counts, ['2000', '2000', '0', '0'], 'the filter counts are the whole domain');
+    assert.match(await text(page, '#at-list-gaps .at-rule-head'), /500/);
+    assert.match(await text(page, '#at-list-ok .at-rule-head'), /1500/);
+    assert.strictEqual(await count(page, '#at-list-gaps .at-arow'), 3);
+    assert.strictEqual(await count(page, '#at-list-ok .at-arow'), 100);
+    assert.strictEqual(await count(page, '#at-left-dyn .at-arow'), 103);
+    assert.match(await text(page, '#at-more-ok'), /100 comptes de plus/);
+    await click(page, '#at-more-ok');
+    assert.strictEqual(await count(page, '#at-list-ok .at-arow'), 200);
+    assert.strictEqual(await focused(page), '#at-more-ok', 'the control keeps focus, to ask for more again');
+    // Unfolding the gaps is bounded the same way.
+    await click(page, '#at-more');
+    assert.strictEqual(await count(page, '#at-list-gaps .at-arow'), 200);
+    assert.ok(await page.$('#at-more-gaps'));
+    // A filter starts again from the first hundred, and a short list has no control.
+    await click(page, '[data-tierf="0"]');
+    assert.strictEqual(await count(page, '#at-list-ok .at-arow'), 100);
+    await click(page, '[data-tierf="1"]');
+    assert.strictEqual(await count(page, '#at-left-dyn .at-arow'), 0);
+    assert.strictEqual(await page.$('#at-more-ok'), null);
+    await close();
+    assert.deepStrictEqual(pageErrors, []);
+});
+
+test('typing in the search redraws once the typing pauses, and keeps focus and caret', async () => {
+    const { page, close } = await withModel(bigModel(2000));
+    await page.evaluate(() => {
+        window.atDraws = 0;
+        new MutationObserver(() => { window.atDraws += 1; }).observe(document.getElementById('at-left-dyn'), { childList: true });
+    });
+    await page.type('#at-search', 'compte-00');
+    await pause(450);
+    const draws = await page.evaluate(() => window.atDraws);
+    assert.ok(draws >= 1 && draws <= 3, `nine keystrokes, ${draws} redraws of the list`);
+    assert.strictEqual(await focused(page), '#at-search');
+    assert.deepStrictEqual(await page.$eval('#at-search', (el) => [el.value, el.selectionStart]), ['compte-00', 9]);
+    // compte-0000 to compte-0099: 25 gaps, 75 compliant.
+    assert.strictEqual(await count(page, '#at-list-ok .at-arow'), 75);
+    assert.strictEqual(await page.$('#at-more-ok'), null);
+    assert.strictEqual(await page.$eval('#at-search-clear', (el) => el.hidden), false);
+    // Clearing does not wait.
+    await page.click('#at-search-clear');
+    assert.strictEqual(await count(page, '#at-list-ok .at-arow'), 100);
+    assert.strictEqual(await focused(page), '#at-search');
+    await close();
+});
+
+test('a large domain: the inverted tree, its panel and its list draw a bounded number of accounts', async () => {
+    const { page, close, pageErrors } = await withModel(bigModel(2000));
+    await click(page, '#at-inverse');
+    assert.strictEqual(await count(page, '.at-node[data-node^="a:"]'), 11, 'folded at first');
+    assert.strictEqual(await page.$eval('[data-node="cl:a"]', (el) => el.dataset.nodeAct), 'expand-a');
+    assert.ok(await count(page, '#at-panel .at-prow') <= 50, 'the panel lists a bounded number of accounts');
+    assert.match(await text(page, '#at-panel-more'), /1950 autres comptes/);
+    await click(page, '[data-node="cl:a"]');
+    assert.strictEqual(await count(page, '.at-node[data-node^="a:"]'), 200, 'unfolded: two hundred, not two thousand');
+    assert.match(await text(page, '[data-node="cl:a"]'), /\+ 1800 comptes\s*200 dessinés au plus/);
+    assert.strictEqual(await page.$eval('[data-node="cl:a"]', (el) => el.dataset.nodeAct || null), null, 'the note is not an offer to unfold more');
+    await click(page, '[data-viewbtn="list"]');
+    assert.strictEqual(await count(page, '#at-list .at-lrow'), 300);
+    assert.match(await text(page, '#at-list-more'), /1700 autres chemins/);
+    await close();
+    assert.deepStrictEqual(pageErrors, []);
+});
 
 test('two holders of one right are two mechanisms: two nodes, two rows, no shared key', async () => {
     const { page, close } = await withModel(twoHoldersModel());

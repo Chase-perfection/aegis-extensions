@@ -218,6 +218,12 @@ test('a membership stays one mechanism per group, as the backend keys its chokep
     }
 });
 
+test('the number of accounts per effective tier is counted once, in the view model', () => {
+    assert.deepStrictEqual(vm.tierCounts, [0, 1, 2].map((t) => vm.accounts.filter((a) => a.effective === t).length));
+    assert.strictEqual(vm.tierCounts.reduce((s, n) => s + n, 0), vm.accounts.length);
+    assert.deepStrictEqual(buildViewModel({}).tierCounts, [0, 0, 0]);
+});
+
 test('the real backend flags its targets, and only them', () => {
     const flagged = fixture.model.groups.filter((g) => g.target).map((g) => g.name);
     assert.deepStrictEqual(flagged, ['Admins du domaine']);

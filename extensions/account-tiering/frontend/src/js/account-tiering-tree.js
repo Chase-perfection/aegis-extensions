@@ -22,6 +22,7 @@
     const { sevOf, worst } = AT.model;
 
     const view = { x: 0, y: 0, z: 1, key: null, bottom: 600, ms: 0.1, moved: false, drag: null, W: 0, H: 0, origin: null };
+    const LIST_MAX = 300;
     let observer = null;
 
     /** The graph, the selection and its highlight for the current state. Shared with the panel. */
@@ -60,6 +61,14 @@
             };
         }
         if (id === 'cl:a') {
+            // Past the cap the node is a note, not an offer: there is nothing
+            // more to unfold. Short texts, the box is 220px wide.
+            if (G.capA) {
+                return {
+                    title: plural(G.colA.length, ['at_cap_accounts_one', '+ {n} compte'], ['at_cap_accounts_many', '+ {n} comptes']),
+                    sub: T('at_cap_accounts_sub', '{max} dessinés au plus', { max: Gr.AOPEN }), icon: 'group', soft: true
+                };
+            }
             return { title: T('at_fold_accounts', '+ {n} comptes', { n: G.colA.length }), sub: T('at_fold_click', 'cliquer pour déplier'), icon: 'plus', soft: true, act: 'expand-a' };
         }
         if (id.startsWith('g:')) {
@@ -361,7 +370,12 @@
 
     function listHtml(c) {
         const rows = [];
+        let total = 0;
         c.G.A.forEach((e) => e.ms.slice().sort((p, q) => p.tier - q.tier).forEach((m) => {
+            total += 1;
+            // The inverted list of a large domain is one row per account and
+            // more: past LIST_MAX the rest is counted, not drawn.
+            if (total > LIST_MAX) return;
             const id = 'm:' + m.key;
             const on = c.sel === id;
             const g = e.acc.groups.find((x) => x.key === m.gk) || { name: '' };
@@ -382,7 +396,10 @@
             ? [['at_lh_account', 'Compte'], ['at_lh_mech_via', 'Mécanisme · via'], ['at_lh_rel', 'Relation'], ['at_lh_tier', 'Tier atteint'], ['at_lh_gap', 'Écart']]
             : [['at_lh_group', 'Groupe'], ['at_lh_mech', 'Mécanisme'], ['at_lh_rel', 'Relation'], ['at_lh_tier', 'Tier atteint'], ['at_lh_gap', 'Écart']];
         const empty = rows.length ? '' : `<p class="at-empty-line">${esc(T('at_list_empty', 'Aucun chemin à afficher avec ces filtres.'))}</p>`;
-        return `<div class="at-list" id="at-list" role="region" aria-label="${esc(T('at_view_list', 'Liste'))}"><div class="at-lhead">${heads.map((h) => `<span>${esc(T(h[0], h[1]))}</span>`).join('')}</div>${rows.join('')}${empty}</div>`;
+        const more = total > LIST_MAX ? `<p class="at-empty-line" id="at-list-more">${esc(plural(total - LIST_MAX,
+            ['at_list_more_one', '+ {n} autre chemin : cochez « Écarts seulement » ou ouvrez un compte pour le voir.'],
+            ['at_list_more_many', '+ {n} autres chemins : cochez « Écarts seulement » ou ouvrez un compte pour les voir.']))}</p>` : '';
+        return `<div class="at-list" id="at-list" role="region" aria-label="${esc(T('at_view_list', 'Liste'))}"><div class="at-lhead">${heads.map((h) => `<span>${esc(T(h[0], h[1]))}</span>`).join('')}</div>${rows.join('')}${empty}${more}</div>`;
     }
 
     AT.tree = { compute, treeHtml, listHtml, mount, onClick, fit, view };

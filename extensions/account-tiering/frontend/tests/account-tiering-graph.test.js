@@ -10,6 +10,7 @@ const assert = require('node:assert');
 const { buildViewModel } = require('../src/js/account-tiering-model.js');
 const G = require('../src/js/account-tiering-graph.js');
 const fixture = require('./fixtures/model.json');
+const { bigModel } = require('./models');
 
 const vm = buildViewModel(fixture.model, { rules: fixture.rules });
 const acc = (sam) => vm.accounts.find((a) => a.sam === sam);
@@ -47,6 +48,27 @@ test('rows never overlap inside a column', () => {
         const ys = Object.keys(g.y).filter((id) => G.colOf(id) === c).map((id) => g.y[id]).sort((a, b) => a - b);
         for (let i = 1; i < ys.length; i += 1) assert.ok(ys[i] - ys[i - 1] >= G.ROW, `column ${c}`);
     }
+});
+
+test('on a large domain the unfolded inverted tree draws AOPEN accounts and counts the rest', () => {
+    const big = buildViewModel(bigModel(2000));
+    const drawn = (g) => Object.keys(g.y).filter((id) => id.startsWith('a:')).length;
+    const folded = G.buildGraph(big.accounts, { inverse: true, tier: 0 });
+    assert.strictEqual(drawn(folded), G.AMAX - 1);
+    assert.strictEqual(folded.capA, false, 'folded: the soft node offers to unfold');
+    const open = G.buildGraph(big.accounts, { inverse: true, tier: 0, expandA: true });
+    assert.strictEqual(G.AOPEN, 200);
+    assert.strictEqual(drawn(open), 200);
+    assert.strictEqual(open.colA.length, 1800);
+    assert.strictEqual(open.capA, true, 'unfolded and still over the cap: the soft node is a note');
+    assert.ok(open.y['cl:a'] != null, 'the note has a place in the account column');
+    // The gaps come first, so the cap never hides one behind a compliant account.
+    assert.ok(Object.keys(open.y).filter((id) => id.startsWith('a:')).every((id) => big.byId[id.slice(2)].gap));
+    // Every account still counts in the groups it goes through.
+    assert.strictEqual(open.A.length, 2000);
+    // Below the cap nothing changes.
+    const small = G.buildGraph(vm.accounts, { inverse: true, tier: 0, expandA: true });
+    assert.deepStrictEqual([small.colA.length, small.capA], [0, false]);
 });
 
 test('inverted tree at Tier 0 lists only Tier 0 mechanisms; ecartOnly drops the compliant admin', () => {

@@ -1,12 +1,14 @@
 # account-tiering : clés de traduction
 
-339 clés, toutes préfixées `at_`. Colonne FR : le texte de repli écrit dans le code. Colonne EN : la traduction à livrer dans `translations.js` du cœur.
+348 clés, toutes préfixées `at_`. Colonne FR : le texte de repli écrit dans le code. Colonne EN : la traduction à livrer dans `translations.js` du cœur.
 Les paramètres entre accolades sont identiques dans les deux langues. Les formes au pluriel sont des clés séparées (`_one` / `_many`).
 
 | Clé | FR | EN |
 |---|---|---|
 | `at_accounts_hint` | Cliquez un compte pour ouvrir son arbre. | Click an account to open its tree. |
 | `at_accounts_label` | Comptes · {n} | Accounts · {n} |
+| `at_accounts_more_many` | + {n} autres comptes : la recherche les retrouve. | + {n} other accounts: the search finds them. |
+| `at_accounts_more_one` | + {n} autre compte : la recherche le retrouve. | + {n} other account: the search finds it. |
 | `at_banner_norules` | Aucune règle de tiering : tous les comptes sont considérés Tier 2, les administrateurs légitimes apparaissent en écart. | No tiering rule: every account is treated as Tier 2, so legitimate administrators show up as gaps. |
 | `at_banner_norules_action` | Définir les règles | Define the rules |
 | `at_banner_poll_failed` | Le suivi de l'analyse s'est arrêté : son état n'a pas pu être lu. {reason} | Tracking of the analysis stopped: its status could not be read. {reason} |
@@ -16,6 +18,9 @@ Les paramètres entre accolades sont identiques dans les deux langues. Les forme
 | `at_banner_unreadable_many` | {n} objets n’ont pas pu être lus : le résultat est partiel. | {n} objects could not be read: the result is partial. |
 | `at_banner_unreadable_one` | {n} objet n’a pas pu être lu : le résultat est partiel. | {n} object could not be read: the result is partial. |
 | `at_cancel` | Annuler | Cancel |
+| `at_cap_accounts_many` | + {n} comptes | + {n} accounts |
+| `at_cap_accounts_one` | + {n} compte | + {n} account |
+| `at_cap_accounts_sub` | {max} dessinés au plus | {max} drawn at most |
 | `at_cell_chip` | Prévu T{p} · effectif T{e} | Planned T{p} · effective T{e} |
 | `at_cell_clear` | Retirer ce filtre | Remove this filter |
 | `at_cell_toast` | Liste filtrée : prévu Tier {p}, effectif Tier {e}. | List filtered: planned Tier {p}, effective Tier {e}. |
@@ -166,6 +171,8 @@ Les paramètres entre accolades sont identiques dans les deux langues. Les forme
 | `at_left_nomatch` | Aucun compte ne correspond à ces critères. | No account matches these criteria. |
 | `at_left_none` | Aucun compte à afficher pour {domain}. | No account to show for {domain}. |
 | `at_left_ok` | Conformes · {n} | Compliant · {n} |
+| `at_left_step_many` | Afficher {n} comptes de plus › | Show {n} more accounts › |
+| `at_left_step_one` | Afficher {n} compte de plus › | Show {n} more account › |
 | `at_legend_acl` | Délégation ACL | ACL delegation |
 | `at_legend_gpo` | GPO | GPO |
 | `at_legend_member` | Appartenance | Membership |
@@ -184,6 +191,8 @@ Les paramètres entre accolades sont identiques dans les deux langues. Les forme
 | `at_limits_text` | Les filtres de sécurité et les filtres WMI des GPO ne sont pas évalués, et les ACE de refus ne sont pas soustraites. Le tier atteint peut donc être surévalué, jamais sous-évalué. | GPO security filters and WMI filters are not evaluated, and deny ACEs are not subtracted. The tier reached can therefore be overestimated, never underestimated. |
 | `at_limits_title` | Limites de l'analyse | Limits of the analysis |
 | `at_list_empty` | Aucun chemin à afficher avec ces filtres. | No path to show with these filters. |
+| `at_list_more_many` | + {n} autres chemins : cochez « Écarts seulement » ou ouvrez un compte pour les voir. | + {n} other paths: tick "Gaps only" or open an account to see them. |
+| `at_list_more_one` | + {n} autre chemin : cochez « Écarts seulement » ou ouvrez un compte pour le voir. | + {n} other path: tick "Gaps only" or open an account to see it. |
 | `at_list_via` | via {group} | via {group} |
 | `at_loading` | Chargement de l’arbre des comptes… | Loading the account tree… |
 | `at_mech_gpo_edit` | Modification de GPO | GPO edit |

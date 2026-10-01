@@ -7,6 +7,7 @@
  * neighbours, never closer than one ROW. No crossing minimisation beyond that,
  * on purpose: a tree of one account has few crossings, and the inverted tree
  * folds past AMAX accounts and GMAX groups so it never grows into a hairball.
+ * Unfolded, it still draws AOPEN accounts at most.
  *
  * Layer coordinates are independent of the viewport. Pan and zoom are a CSS
  * transform applied on top (see account-tiering-tree.js), so nothing here
@@ -33,6 +34,7 @@
     const CONTENT_W = COLX[3] + CW + 36;
     const GMAX = 8;
     const AMAX = 12;
+    const AOPEN = 200;
     const ZMIN = 0.1;
     const ZMAX = 2;
 
@@ -99,7 +101,13 @@
             || String(p.acc.name).localeCompare(String(q.acc.name)));
         let visAList = sortA;
         let colA = [];
-        if (o.inverse && sortA.length > AMAX && !o.expandA) { visAList = sortA.slice(0, AMAX - 1); colA = sortA.slice(AMAX - 1); }
+        // Unfolded is not unbounded: past AOPEN accounts the tree is a column
+        // of thousands of boxes nobody reads, and every render pays for it.
+        // The rest stays behind the soft node, which then says how many
+        // (capA), and the gaps are drawn first because sortA puts them first.
+        const maxA = o.expandA ? AOPEN : AMAX - 1;
+        const capA = Boolean(o.inverse && o.expandA && sortA.length > AOPEN);
+        if (o.inverse && sortA.length > (o.expandA ? AOPEN : AMAX)) { visAList = sortA.slice(0, maxA); colA = sortA.slice(maxA); }
         const visA = {};
         visAList.forEach((e) => { visA[e.acc.id] = 1; });
         const visM = {};
@@ -161,7 +169,7 @@
         if (colA.length) col0.push('cl:a');
         place(col0, (id) => meanOf((outs[id] || []).filter((k) => k !== 'ghost')));
         const bottom = Math.max(...Object.keys(y).map((k) => y[k]), TOP + 36) + 36;
-        return { A, Gm, Mm, allG, colG, colM, colA, visA, visG, visM, edges, y, col0, col3, bottom };
+        return { A, Gm, Mm, allG, colG, colM, colA, capA, visA, visG, visM, edges, y, col0, col3, bottom };
     }
 
     /** Everything upstream and downstream of `sel`: the highlighted path. */
@@ -223,7 +231,7 @@
     const clampZ = (z) => Math.max(ZMIN, Math.min(ZMAX, z));
 
     return {
-        COLX, CW, CH, ROW, TOP, HEAD_Y, CONTENT_W, GMAX, AMAX, ZMIN, ZMAX,
+        COLX, CW, CH, ROW, TOP, HEAD_Y, CONTENT_W, GMAX, AMAX, AOPEN, ZMIN, ZMAX,
         colOf, buildGraph, highlight, edgeGeometry, fitFor, clampZ
     };
 });

@@ -1,7 +1,7 @@
 /*
  * Account Tiering: page entry. Owns the state, talks to the routes under
- * /api/account-tiering, and renders the title bar, banners, left list and
- * centre toolbar; the tree, panel, overview and dialogs are their own modules.
+ * /api/account-tiering, and renders the title bar, banners and centre toolbar;
+ * the left list, tree, panel, overview and dialogs are their own modules.
  *
  * One state object, one render(). Rendering rewrites each region's HTML, so
  * every interactive element carries a `data-key` and render() puts focus back
@@ -17,17 +17,16 @@
     'use strict';
 
     const AT = (window.AccountTiering = window.AccountTiering || {});
-    const { T, esc, icon, accountMark, errorText, dateText, translateStatic, toast, focusMark, focusBack } = AT.ui;
+    const { T, esc, icon, errorText, dateText, translateStatic, toast, focusMark, focusBack } = AT.ui;
     const BASE = '/api/account-tiering';
     const POLL_MS = 2000;
     const POLL_TRIES = 5;
-    const SHOW_GAPS = 3;
     const byId = (id) => document.getElementById(id);
 
     const state = {
         loading: true, error: null, model: null, rules: [], settings: { domain: null, passes: 3 },
         scan: null, scanning: false, scanError: null,
-        acc: null, node: null, invSel: null, inverse: null, q: '', tier: 'all', cell: null, showAll: false,
+        acc: null, node: null, invSel: null, inverse: null, q: '', tier: 'all', cell: null, showAll: false, leftLimit: AT.left.STEP,
         view: 'tree', depth: 4, hideGhost: false, ecartOnly: false, expanded: {}, showAllPoints: false, menu: null,
         overrideOpen: false, overrideError: null, overrideDraft: null, saving: false
     };
@@ -172,6 +171,8 @@
     }
 
     function set(patch) {
+        // A new filter starts the left list again from its first rows.
+        if ('q' in patch || 'tier' in patch || 'cell' in patch) state.leftLimit = AT.left.STEP;
         Object.assign(state, patch);
         render();
     }
@@ -256,50 +257,6 @@
         body.hidden = Boolean(html);
     }
 
-    // ── Left list ────────────────────────────────────────────────────────────
-    function rowSub(a) {
-        if (a.gap && a.kind === 'service') return T('at_row_gap_service', 'compte de service · T{planned} → T{effective}', a);
-        if (a.gap) return T('at_row_gap', '{sam} · prévu T{planned} → T{effective}', a);
-        return T('at_row_ok', '{sam} · Tier {effective}', a);
-    }
-
-    function rowHtml(a) {
-        const sel = a.id === state.acc && state.inverse == null;
-        return `<button type="button" class="at-arow${sel ? ' is-selected' : ''}" data-account="${esc(a.id)}" data-key="arow:${esc(a.id)}" aria-current="${sel}">
-            <span class="at-arow-top"><span class="at-strong">${esc(a.name)}</span>${a.gap ? accountMark(a) : ''}</span>
-            <span class="at-mono">${esc(rowSub(a))}</span></button>`;
-    }
-
-    function renderLeft() {
-        const host = byId('at-left-dyn');
-        const all = vm.accounts;
-        const q = state.q.trim().toLowerCase();
-        const list = all.filter((a) => (!q || a.name.toLowerCase().includes(q) || String(a.sam).toLowerCase().includes(q))
-            && (state.cell ? (a.planned === state.cell.p && a.effective === state.cell.e) : (state.tier === 'all' || a.effective === Number(state.tier))));
-        const gaps = list.filter((a) => a.gap);
-        const rest = list.filter((a) => !a.gap);
-        const filters = [['all', T('at_filter_all', 'Tous')], ['0', T('at_tier_n', 'Tier {tier}', { tier: 0 })], ['1', T('at_tier_n', 'Tier {tier}', { tier: 1 })], ['2', T('at_tier_n', 'Tier {tier}', { tier: 2 })]]
-            .map(([k, label]) => {
-                const on = !state.cell && state.tier === k;
-                const n = k === 'all' ? all.length : all.filter((a) => a.effective === Number(k)).length;
-                return `<button type="button" class="at-tf${on ? ' is-on' : ''}" data-tierf="${k}" data-key="tierf:${k}" aria-pressed="${on}"><span>${esc(label)}</span><span class="at-mono">${n}</span></button>`;
-            }).join('');
-        const chip = state.cell ? `<div class="at-cellchip" id="at-cellchip"><span>${esc(T('at_cell_chip', 'Prévu T{p} · effectif T{e}', state.cell))}</span><button type="button" class="at-x-btn" id="at-cell-clear" data-key="cell-clear" aria-label="${esc(T('at_cell_clear', 'Retirer ce filtre'))}">${icon('close')}</button></div>` : '';
-        const head = (label) => `<div class="at-rule-head at-pad"><span>${esc(label)}</span><span class="at-rule-line"></span></div>`;
-        let html = `<div class="at-pad at-stack"><span class="at-label">${esc(T('at_filter_label', 'Tier effectif'))}</span><div class="at-tfs" role="group" aria-label="${esc(T('at_filter_label', 'Tier effectif'))}">${filters}</div>${chip}</div>`;
-        if (!all.length) html += `<p class="at-pad at-muted">${esc(T('at_left_none', 'Aucun compte à afficher pour {domain}.', { domain: domainShown() }))}</p>`;
-        else if (!list.length) html += `<p class="at-pad at-muted" id="at-left-nomatch">${esc(T('at_left_nomatch', 'Aucun compte ne correspond à ces critères.'))}</p>`;
-        if (gaps.length) {
-            const shown = state.showAll ? gaps : gaps.slice(0, SHOW_GAPS);
-            const more = gaps.length > SHOW_GAPS ? `<div class="at-pad at-more"><button type="button" class="at-link" id="at-more" data-key="more">${esc(state.showAll ? T('at_left_less', 'Réduire la liste') : T('at_left_more', 'Voir les {n} écarts ›', { n: gaps.length }))}</button></div>` : '';
-            html += `<div class="at-group-list" id="at-list-gaps">${head(T('at_left_gaps', 'Écarts de tiering · {n}', { n: gaps.length }))}${shown.map(rowHtml).join('')}${more}</div>`;
-        }
-        if (rest.length) html += `<div class="at-group-list" id="at-list-ok">${head(T('at_left_ok', 'Conformes · {n}', { n: rest.length }))}${rest.map(rowHtml).join('')}</div>`;
-        host.innerHTML = html;
-        const clear = byId('at-search-clear');
-        if (clear) clear.hidden = !state.q;
-    }
-
     // ── Centre: toolbar plus one of the views ───────────────────────────────
     function toolbarHtml(isInv) {
         const tabs = [['tree', T('at_view_tree', 'Arbre')], ['list', T('at_view_list', 'Liste')], ['overview', T('at_view_overview', "Vue d'ensemble")]]
@@ -344,7 +301,8 @@
 
     function renderBody() {
         const c = AT.tree.compute(state, vm);
-        renderLeft();
+        byId('at-left-dyn').innerHTML = AT.left.leftHtml(vm, state, domainShown());
+        byId('at-search-clear').hidden = !state.q;
         renderCentre(c);
         byId('at-panel').innerHTML = AT.panel.panelHtml(c, state);
     }
