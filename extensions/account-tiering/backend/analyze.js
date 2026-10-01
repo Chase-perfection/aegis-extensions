@@ -27,6 +27,7 @@
 'use strict';
 
 const { targetSids, broadSids, IGNORED, LOCAL_GROUPS } = require('./sids');
+const { ouMatches } = require('./classify');
 
 const SCHEMA = 1;
 const INF = 3;
@@ -115,6 +116,16 @@ function analyze(facts, planned, options = {}) {
             continue;
         }
         if (!ACL_RIGHTS.has(ace.right)) continue;
+        if (ace.objectKind === 'ou') {
+            // A right on an OU controls everything under it, so it is one edge
+            // per principal there; aceTarget only ever names a single node.
+            for (const p of principals.values()) {
+                if (ouMatches(p.dn, ace.objectDn)) {
+                    controlEdges.push({ from: trustee, to: p.sid, kind: 'acl', detail: aceDetail(ace) });
+                }
+            }
+            continue;
+        }
         const to = aceTarget(ace);
         if (!to) continue;
         controlEdges.push({ from: trustee, to, kind: 'acl', detail: aceDetail(ace) });

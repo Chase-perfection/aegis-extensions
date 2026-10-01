@@ -101,17 +101,59 @@ test('editing a GPO linked to the Domain Controllers OU is Tier 0', () => {
 });
 
 test('a broad trustee is a chokepoint listed first, and is not pushed onto accounts', () => {
+    // bob is in no group: if a broad trustee were pushed onto accounts he would
+    // come out Tier 0, so this can fail.
+    const holder = 'CN=AdminSDHolder,CN=System,' + ROOT_DN;
+    const onHolder = (trustee, right) => ({
+        objectDn: holder, objectSid: null, objectKind: 'adminSdHolder',
+        originDn: holder, trustee, right, inherited: false, pass: 1
+    });
     const model = analyze(facts({
-        principals: [user(1200, 'alice'), group(1100, 'IT-Admins')],
-        memberships: [{ group: sid(512), member: sid(1100), via: 'member' }, { group: sid(1100), member: sid(1200), via: 'member' }],
-        aces: [{
-            objectDn: 'CN=AdminSDHolder,CN=System,' + ROOT_DN, objectSid: null, objectKind: 'adminSdHolder',
-            originDn: 'CN=AdminSDHolder,CN=System,' + ROOT_DN, trustee: 'S-1-5-11', right: 'WriteDacl', inherited: false, pass: 1
-        }]
+        principals: [user(1300, 'bob')],
+        aces: [onHolder('S-1-5-11', 'WriteDacl'), onHolder(sid(513), 'GenericAll')]
     }), NO_PLAN);
+    assert.strictEqual(account(model, 1300).effective, 2);
     assert.strictEqual(model.chokepoints[0].broad, true);
-    assert.strictEqual(model.chokepoints[0].from, 'S-1-5-11');
-    assert.ok(model.accounts.every((a) => a.path.every((e) => e.from !== 'S-1-5-11')));
+    const from = (trustee) => model.chokepoints.find((p) => p.from === trustee);
+    assert.strictEqual(from('S-1-5-11').broad, true);
+    assert.strictEqual(from(sid(513)).broad, true);
+    assert.ok(model.accounts.every((a) => a.path.every((e) => e.from !== 'S-1-5-11' && e.from !== sid(513))));
+});
+
+const adminsOu = `OU=Admins,${ROOT_DN}`;
+const ouAce = (trustee, dn = adminsOu) => ({
+    objectDn: dn, objectSid: null, objectKind: 'ou', originDn: dn,
+    trustee, right: 'GenericAll', inherited: false, pass: 2
+});
+
+test('a right on an OU reaches the Tier 0 account inside it', () => {
+    const model = analyze(facts({
+        principals: [{ ...user(1200, 'alice'), dn: `CN=alice,${adminsOu}` }, user(1300, 'helper')],
+        memberships: [{ group: sid(512), member: sid(1200), via: 'member' }],
+        aces: [ouAce(sid(1300))]
+    }), NO_PLAN);
+    const helper = account(model, 1300);
+    assert.strictEqual(helper.effective, 0);
+    assert.strictEqual(helper.path[0].to, sid(1200));
+    assert.strictEqual(helper.path[0].detail.originDn, adminsOu);
+});
+
+test('a right on an OU holding only Tier 2 accounts gives nothing', () => {
+    const model = analyze(facts({
+        principals: [{ ...user(1200, 'alice'), dn: `CN=alice,${adminsOu}` }, user(1300, 'helper')],
+        aces: [ouAce(sid(1300))]
+    }), NO_PLAN);
+    assert.strictEqual(account(model, 1300).effective, 2);
+    assert.deepStrictEqual(account(model, 1300).path, []);
+});
+
+test('a right on an OU does not reach a sibling OU that merely shares the name prefix', () => {
+    const model = analyze(facts({
+        principals: [{ ...user(1200, 'alice'), dn: `CN=alice,OU=XAdmins,${ROOT_DN}` }, user(1300, 'helper')],
+        memberships: [{ group: sid(512), member: sid(1200), via: 'member' }],
+        aces: [ouAce(sid(1300))]
+    }), NO_PLAN);
+    assert.strictEqual(account(model, 1300).effective, 2);
 });
 
 test('a three-link chain: ACE on a Tier 1 group held by a member of another group', () => {
