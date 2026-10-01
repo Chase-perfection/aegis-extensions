@@ -36,6 +36,7 @@ const SCRIPT_PATH = path.join(__dirname, '..', 'collect', 'collect-tiering.ps1')
 const TIMEOUT_MS = 10 * 60 * 1000;
 const COLLECTOR_CODES = new Set(['domain_unreachable', 'collector_blocked']);
 const AMSI_ID = 'ScriptContainedMaliciousContent';
+const MAX_LINE = 64 * 1024;
 
 const POWERSHELL = {
     exe: 'powershell.exe',
@@ -52,7 +53,9 @@ function runCollector({ domain, passes, outFile, onLine = () => {}, timeoutMs = 
         const lines = (chunk) => {
             pending += chunk;
             const parts = pending.split(/\r?\n/);
-            pending = parts.pop();
+            // A collector that never ends its line must not grow this buffer
+            // without bound: past MAX_LINE the rest of the line is dropped.
+            pending = parts.pop().slice(0, MAX_LINE);
             for (const raw of parts) line(raw.trim());
         };
         const line = (text) => {
@@ -69,29 +72,36 @@ function runCollector({ domain, passes, outFile, onLine = () => {}, timeoutMs = 
             timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024
         }, (error, stdout, stderr) => {
             line(pending.trim());
-            const output = `${stdout}\n${stderr}`;
-            if (error && error.code === 'ENOENT') return resolve({ ok: false, code: 'powershell_missing' });
-            if (error && error.killed) return resolve({ ok: false, code: 'scan_timeout' });
-            if (output.includes(AMSI_ID)) return resolve({ ok: false, code: 'collector_blocked' });
-            if (reported) return resolve({ ok: false, code: reported });
-            if (error && error.code === 2) return resolve({ ok: false, code: 'domain_unreachable' });
-            if (error) return resolve({ ok: false, code: 'collector_failed' });
-            resolve(readFacts(outFile));
+            // The facts file is the whole directory graph: it goes on every
+            // path, a timeout or a refusal included, before the caller hears
+            // the outcome.
+            outcome(error, `${stdout}\n${stderr}`)
+                .catch(() => ({ ok: false, code: 'collector_failed' }))
+                .then((result) => fs.promises.rm(outFile, { force: true }).catch(() => {}).then(() => resolve(result)));
         });
         child.stdout.setEncoding('utf8');
         child.stdout.on('data', lines);
+
+        async function outcome(error, output) {
+            if (error && error.code === 'ENOENT') return { ok: false, code: 'powershell_missing' };
+            // A maxBuffer overflow kills the child too; it is not a timeout.
+            if (error && error.killed && error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return { ok: false, code: 'scan_timeout' };
+            if (output.includes(AMSI_ID)) return { ok: false, code: 'collector_blocked' };
+            if (reported) return { ok: false, code: reported };
+            if (error && error.code === 2) return { ok: false, code: 'domain_unreachable' };
+            if (error) return { ok: false, code: 'collector_failed' };
+            return readFacts(outFile);
+        }
     });
 }
 
-function readFacts(outFile) {
+async function readFacts(outFile) {
     try {
-        const facts = JSON.parse(fs.readFileSync(outFile, 'utf8').replace(/^﻿/, ''));
+        const facts = JSON.parse((await fs.promises.readFile(outFile, 'utf8')).replace(/^﻿/, ''));
         const partial = Array.isArray(facts.unreadable) && facts.unreadable.length > 0;
         return { ok: true, status: partial ? 'partial' : 'ok', facts };
     } catch (_) {
         return { ok: false, code: 'collector_failed' };
-    } finally {
-        fs.rm(outFile, { force: true }, () => {});
     }
 }
 

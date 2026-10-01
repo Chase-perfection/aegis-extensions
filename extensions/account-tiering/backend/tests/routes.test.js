@@ -232,6 +232,23 @@ test('a cached model does not read the facts again', db(), async () => {
     assert.strictEqual(factsReads, 1);
 });
 
+test('a collector that throws at launch ends the scan as failed, and the next scan can start', db(), async () => {
+    const table = mount({ extensionDb: fakeExtensionDb(sqlite.openMemoryDb()) });
+    routes._setRunner(() => { throw new Error('boom'); });
+    try {
+        const started = await call(table, `POST ${BASE}/scan`, request());
+        assert.strictEqual(started.status, 202);
+        const scan = await settled(table);
+        assert.deepStrictEqual([scan.status, scan.error_code], ['failed', 'internal']);
+        routes._setRunner(async () => ({ ok: false, code: 'domain_unreachable' }));
+        const again = await call(table, `POST ${BASE}/scan`, request());
+        assert.strictEqual(again.status, 202);
+        await settled(table);
+    } finally {
+        routes._setRunner(null);
+    }
+});
+
 test('rules, overrides and settings refuse what the spec forbids', db(), async () => {
     const table = mount({ extensionDb: fakeExtensionDb(sqlite.openMemoryDb()) });
     const refused = [

@@ -135,17 +135,24 @@ function register(router, context) {
         starting.add(slug);
         let id;
         let settings;
+        let dir;
         try {
             if (await store.runningScan(db)) return fail(res, 409, 'scan_running');
             settings = await store.getSettings(db);
+            // Before the row exists: if the path cannot be resolved there is
+            // no `running` scan left behind to block the next one.
+            dir = path.dirname(edb.pathForRequest(req));
             id = await store.startScan(db, settings.domain);
         } finally {
             starting.delete(slug);
         }
-        const outFile = path.join(path.dirname(edb.pathForRequest(req)), `scan-${id}.json`);
+        const outFile = path.join(dir, `scan-${id}.json`);
         res.status(202).json({ success: true, id });
 
-        runCollectorImpl({ domain: settings.domain, passes: settings.passes, outFile, onLine: (l) => log(slug, l) })
+        // Inside a promise, so a collector that throws at launch lands in the
+        // catch below and the scan is closed instead of staying `running`.
+        Promise.resolve()
+            .then(() => runCollectorImpl({ domain: settings.domain, passes: settings.passes, outFile, onLine: (l) => log(slug, l) }))
             .then((result) => edb.withRequest(req, (later) => store.finishScan(later, id, result.ok
                 ? { status: result.status, facts: result.facts }
                 : { status: 'failed', errorCode: result.code })))
