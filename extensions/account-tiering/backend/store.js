@@ -62,14 +62,50 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `;
 
-const ready = new WeakSet();
-const writing = new WeakMap();
+const ready = new WeakMap();
+const queues = new WeakMap();
 const activeScans = new Set();
 
 const now = () => new Date().toISOString();
 
-async function ensure(db) {
-    if (ready.has(db)) return;
+/**
+ * One piece of work at a time per handle, reads included. The handle is one
+ * connection shared by every request of the tenant: a plain statement from
+ * another request that ran between BEGIN and COMMIT would be rolled back with
+ * the transaction, and a read there would see the rules half replaced.
+ */
+function serialized(db, work) {
+    const previous = queues.get(db) || Promise.resolve();
+    const next = previous.catch(() => {}).then(work);
+    queues.set(db, next);
+    return next;
+}
+
+/** Exports `fn` with its database work behind the handle's queue. */
+const queued = (fn) => (db, ...args) => serialized(db, () => fn(db, ...args));
+
+/**
+ * Called only from inside a queued function, so it must not queue again: it
+ * would wait on itself. A ROLLBACK that fails too is logged, and the error
+ * that caused it is the one the caller sees.
+ */
+async function transaction(db, work) {
+    await db.exec('BEGIN');
+    try {
+        const result = await work();
+        await db.exec('COMMIT');
+        return result;
+    } catch (error) {
+        try {
+            await db.exec('ROLLBACK');
+        } catch (rollbackError) {
+            console.error('[account-tiering] rollback', rollbackError);
+        }
+        throw error;
+    }
+}
+
+async function setUp(db) {
     await db.exec(SCHEMA);
     const active = [...activeScans];
     const notActive = active.length ? ` AND id NOT IN (${active.map(() => '?').join(', ')})` : '';
@@ -77,33 +113,21 @@ async function ensure(db) {
         `UPDATE scans SET status = 'failed', error_code = 'scan_interrupted', finished_at = ? WHERE status = 'running'${notActive}`,
         [now(), ...active]
     );
-    ready.add(db);
 }
 
 /**
- * One write transaction at a time per handle. The handle is one connection
- * shared by every request of the tenant, so two interleaved BEGINs would fail
- * and a ROLLBACK could undo the other request's statements.
+ * The schema, once per handle. The promise is what is kept, so two first
+ * requests share one set-up instead of each closing `running` rows with its
+ * own, possibly stale, view of `activeScans`. A set-up that fails is forgotten
+ * and the next request tries again.
  */
-function serialized(db, work) {
-    const previous = writing.get(db) || Promise.resolve();
-    const next = previous.catch(() => {}).then(work);
-    writing.set(db, next);
-    return next;
-}
-
-async function transaction(db, work) {
-    return serialized(db, async () => {
-        await db.exec('BEGIN');
-        try {
-            const result = await work();
-            await db.exec('COMMIT');
-            return result;
-        } catch (error) {
-            await db.exec('ROLLBACK');
-            throw error;
-        }
-    });
+function ensure(db) {
+    if (!ready.has(db)) {
+        const setting = serialized(db, () => setUp(db));
+        ready.set(db, setting);
+        setting.catch(() => ready.delete(db));
+    }
+    return ready.get(db);
 }
 
 /**
@@ -128,12 +152,23 @@ async function runningScan(db) {
     return owned;
 }
 
+/**
+ * The id is owned before the row exists: a reopened handle's `ensure` that
+ * ran between the INSERT and the `add` would close a scan that is running.
+ */
 async function startScan(db, domain) {
     const id = crypto.randomUUID();
-    await db.run("INSERT INTO scans (id, started_at, status, domain) VALUES (?, ?, 'running', ?)", [id, now(), domain || null]);
     activeScans.add(id);
+    try {
+        await db.run("INSERT INTO scans (id, started_at, status, domain) VALUES (?, ?, 'running', ?)", [id, now(), domain || null]);
+    } catch (error) {
+        activeScans.delete(id);
+        throw error;
+    }
     return id;
 }
+
+const LATEST_SHOWN = "SELECT id FROM scans WHERE status IN ('ok', 'partial') ORDER BY started_at DESC LIMIT 1";
 
 async function finishScan(db, id, { status, errorCode = null, facts = null }) {
     try {
@@ -145,8 +180,11 @@ async function finishScan(db, id, { status, errorCode = null, facts = null }) {
         // failures must not delete the only model the page can still show.
         await db.run(
             `DELETE FROM scans WHERE id NOT IN (SELECT id FROM scans ORDER BY started_at DESC LIMIT ${KEEP_SCANS})
-             AND id NOT IN (SELECT id FROM scans WHERE status IN ('ok', 'partial') ORDER BY started_at DESC LIMIT 1)`
+             AND id NOT IN (${LATEST_SHOWN})`
         );
+        // The facts are the whole directory graph and only the newest shown
+        // scan is ever read: older rows keep their status as history.
+        await db.run(`UPDATE scans SET facts_json = NULL WHERE facts_json IS NOT NULL AND id NOT IN (${LATEST_SHOWN})`);
     } finally {
         activeScans.delete(id);
     }
@@ -162,6 +200,18 @@ async function latestFacts(db) {
         "SELECT id, facts_json FROM scans WHERE status IN ('ok', 'partial') ORDER BY started_at DESC LIMIT 1"
     );
     return row ? { id: row.id, facts: JSON.parse(row.facts_json) } : null;
+}
+
+/** The id `latestFacts` would return, without reading or parsing the facts. */
+async function latestFactsId(db) {
+    const row = await db.get(LATEST_SHOWN);
+    return row ? row.id : null;
+}
+
+/** That scan's facts, or null once a newer scan has taken them over. */
+async function factsById(db, id) {
+    const row = await db.get('SELECT facts_json FROM scans WHERE id = ?', [id]);
+    return row && row.facts_json ? JSON.parse(row.facts_json) : null;
 }
 
 async function getRules(db) {
@@ -232,9 +282,12 @@ async function putSettings(db, { domain, passes }) {
     });
 }
 
-module.exports = {
-    ensure, runningScan, startScan, finishScan, latestScan, latestFacts,
+// Every export goes through the handle's queue; the functions above call one
+// another only unqueued, so nothing waits on its own place in the queue.
+const exported = {
+    runningScan, startScan, finishScan, latestScan, latestFacts, latestFactsId, factsById,
     getRules, replaceRules, getOverrides, setOverride, deleteOverride,
-    getRemediations, markRemediation, getSettings, putSettings,
-    KEEP_SCANS
+    getRemediations, markRemediation, getSettings, putSettings
 };
+module.exports = { ensure, KEEP_SCANS };
+for (const [name, fn] of Object.entries(exported)) module.exports[name] = queued(fn);
