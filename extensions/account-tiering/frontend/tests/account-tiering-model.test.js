@@ -10,7 +10,9 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { buildViewModel, sevOf } = require('../src/js/account-tiering-model.js');
+const G = require('../src/js/account-tiering-graph.js');
 const fixture = require('./fixtures/model.json');
+const { twoHoldersModel } = require('./models');
 
 const used = new Map();
 const recordingT = (key, fallback, params) => {
@@ -175,6 +177,45 @@ test('a rebuilt chain stops on the group the backend flags as a target, not on a
 
 test('a rebuilt chain stops on a directory object that carries a tier', () => {
     assert.deepStrictEqual(chainVia(chainModel(true), 'GG-Trois'), ['k.durand', 'GG-Trois', 'WriteDacl sur AdminSDHolder']);
+});
+
+test('two holders of the same right on the same object are two mechanisms, and so are two editors of one GPO', () => {
+    const two = buildViewModel(twoHoldersModel());
+    const [nora, omar] = two.accounts;
+    assert.strictEqual(nora.mechs.length, 2);
+    assert.deepStrictEqual(nora.mechs.map((m) => m.name), ['WriteDacl', 'WriteDacl']);
+    assert.strictEqual(new Set(nora.mechs.map((m) => m.key)).size, 2, 'one key per holder');
+    assert.match(nora.mechs[0].why, /^GG-Exploitation détient WriteDacl/);
+    assert.match(nora.mechs[1].why, /^GG-Support-N2 détient WriteDacl/);
+    assert.strictEqual(new Set(omar.mechs.map((m) => m.key)).size, 2, 'two editors of one GPO');
+    assert.match(omar.mechs[1].why, /^GG-GPO-Agences peut modifier/);
+    // The tree draws one node per mechanism, so nothing is lost on the way to the screen.
+    const drawn = G.buildGraph([nora], {});
+    assert.strictEqual(Object.keys(drawn.Mm).length, 2);
+    // Each chokepoint selects the mechanism of its own holder.
+    const inverse = G.buildGraph(two.accounts, { inverse: true, tier: 0, ecartOnly: true });
+    const holders = ['GG-Exploitation', 'GG-Support-N2', 'GG-GPO-Siege', 'GG-GPO-Agences'];
+    two.points.forEach((p, i) => {
+        const id = p.select.find((s) => s.startsWith('m:'));
+        const M = inverse.Mm[id.slice(2)];
+        assert.ok(M, `point ${i} names a mechanism the inverted tree holds`);
+        assert.ok(M.m.why.startsWith(holders[i]), `point ${i} lands on ${holders[i]}, got: ${M.m.why}`);
+    });
+});
+
+test('a membership stays one mechanism per group, as the backend keys its chokepoints', () => {
+    // Two accounts in GG-Helpdesk share the right the group holds; the page must not draw it twice.
+    const inverse = G.buildGraph(vm.accounts, { inverse: true, tier: 0 });
+    const reset = Object.values(inverse.Mm).filter((M) => M.m.name === 'ResetPassword');
+    assert.strictEqual(reset.length, 1);
+    assert.strictEqual(Object.keys(reset[0].accs).length, 2);
+    // Direct, nested or by primary group: being in Domain Admins is one node, not one per member.
+    const admins = Object.values(inverse.Mm).filter((M) => M.m.rel === 'member' && M.m.name === 'Admins du domaine');
+    assert.strictEqual(admins.length, 1);
+    assert.strictEqual(Object.keys(admins[0].accs).length, 3);
+    for (const p of vm.points.filter((x) => x.kind === 'membership')) {
+        assert.strictEqual(p.select[0], 'g:' + fixture.model.chokepoints.find((c) => c.key === p.key).to);
+    }
 });
 
 test('the real backend flags its targets, and only them', () => {

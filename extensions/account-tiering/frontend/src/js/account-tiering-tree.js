@@ -287,7 +287,10 @@
             const first = c.isInv ? e.acc.name : g.name;
             const sub = c.isInv ? T('at_list_via', 'via {group}', { group: g.name }) : m.sub;
             const sev = m.severity || (m.tier >= e.acc.planned ? 'ok' : null);
-            rows.push(`<button type="button" class="at-lrow${on ? ' is-selected' : ''}" data-node="${esc(id)}" data-key="lrow:${esc(e.acc.id + id)}" aria-pressed="${on}">
+            // A row is an account, a group and a mechanism: two groups can lead
+            // to the same mechanism, so the key needs all three to be unique.
+            const key = `lrow:${e.acc.id}|${m.gk}|${m.key}`;
+            rows.push(`<button type="button" class="at-lrow${on ? ' is-selected' : ''}" data-node="${esc(id)}" data-key="${esc(key)}" aria-pressed="${on}">
                 <span class="at-lrow-strong">${esc(first)}</span>
                 <span class="at-lrow-mech"><span>${esc(m.name)}</span><span class="at-mono">${esc(sub)}</span></span>
                 <span>${esc(m.relTitle)}</span>

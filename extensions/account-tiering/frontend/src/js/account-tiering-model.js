@@ -111,9 +111,19 @@
             return null;
         }
 
+        /**
+         * Identity of a link, as backend/analyze.js keys a chokepoint. A right
+         * (ACL, GPO) is keyed with its holder: two groups holding the same
+         * right on the same object are two links to cut, and without the
+         * holder they would draw as one mechanism and explain only the first.
+         * A membership is keyed by the group alone, as the backend's `group:`
+         * points are: "member of Domain Admins" is one mechanism however many
+         * members there are, and one node in the inverted tree.
+         */
         function edgeKey(e) {
             const d = e.detail || {};
-            return `${e.kind}|${e.to}|${d.right || d.localGroup || ''}`;
+            const holder = e.kind === 'membership' ? '' : e.from;
+            return `${e.kind}|${holder}|${e.to}|${d.right || d.localGroup || ''}`;
         }
 
         /**
@@ -356,6 +366,9 @@
             if (p.broad) expoLabel = T('at_point_expo_all', 'tous les comptes');
             else if (expo === 1) expoLabel = T('at_point_expo_one', '{n} compte en écart', { n: expo });
             else expoLabel = T('at_point_expo_many', '{n} comptes en écart', { n: expo });
+            // The nodes that stand for this point in the inverted tree, in the
+            // order to try them. `edgeKey(p)` is the mechanism's own key, so a
+            // point lands on its holder's mechanism and on no other.
             const select = p.kind === 'membership'
                 ? ['g:' + p.to, 'm:' + edgeKey(p)]
                 : ['g:' + p.from, 'm:' + edgeKey(p), 'g:direct:' + p.from];
