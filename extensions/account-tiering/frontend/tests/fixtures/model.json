@@ -1,0 +1,1578 @@
+{
+  "model": {
+    "scan": {
+      "domain": "corp.local",
+      "domainSid": "S-1-5-21-1000-2000-3000",
+      "collectedAt": "2026-09-30T08:12:00Z",
+      "passes": 3,
+      "truncated": false,
+      "unreadable": [
+        {
+          "dn": "OU=Archives,DC=corp,DC=local",
+          "reason": "access_denied"
+        }
+      ]
+    },
+    "accounts": [
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2001",
+        "sam": "a.martin",
+        "name": "Alice Martin",
+        "dn": "CN=Alice Martin,OU=Utilisateurs,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "default"
+        },
+        "effective": 0,
+        "status": "gap",
+        "severity": "critical",
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2001",
+            "to": "S-1-5-21-1000-2000-3000-1101",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'GG-IT-Admins' -Members 'a.martin'"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-1101",
+            "to": "S-1-5-21-1000-2000-3000-512",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'Admins du domaine' -Members 'GG-IT-Admins'"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2002",
+        "sam": "adm-t0-rdubois",
+        "name": "Romain Dubois (T0)",
+        "dn": "CN=Romain Dubois (T0),OU=Admins-T0,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 0,
+        "plannedSource": {
+          "type": "rule",
+          "ruleId": "r1"
+        },
+        "effective": 0,
+        "status": "ok",
+        "severity": null,
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2002",
+            "to": "S-1-5-21-1000-2000-3000-512",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'Admins du domaine' -Members 'adm-t0-rdubois'"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2004",
+        "sam": "h.dupont",
+        "name": "Hugo Dupont",
+        "dn": "CN=Hugo Dupont,OU=Utilisateurs,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "default"
+        },
+        "effective": 0,
+        "status": "gap",
+        "severity": "critical",
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2004",
+            "to": "S-1-5-21-1000-2000-3000-1105",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'GG-Helpdesk' -Members 'h.dupont'"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-1105",
+            "to": "S-1-5-21-1000-2000-3000-2002",
+            "kind": "acl",
+            "detail": {
+              "right": "ResetPassword",
+              "objectDn": "CN=Romain Dubois (T0),OU=Admins-T0,DC=corp,DC=local",
+              "originDn": "OU=Admins-T0,DC=corp,DC=local",
+              "inherited": true
+            },
+            "remediation": {
+              "mechanism": "acl",
+              "command": "dsacls 'OU=Admins-T0,DC=corp,DC=local' /R 'CORP\\GG-Helpdesk'",
+              "warning": "removes_all_aces"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-2002",
+            "to": "S-1-5-21-1000-2000-3000-512",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'Admins du domaine' -Members 'adm-t0-rdubois'"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2008",
+        "sam": "j.roux",
+        "name": "Julie Roux",
+        "dn": "CN=Julie Roux,OU=Utilisateurs,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "default"
+        },
+        "effective": 0,
+        "status": "gap",
+        "severity": "critical",
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2008",
+            "to": "S-1-5-21-1000-2000-3000-1104",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'GG-GPO-Editeurs' -Members 'j.roux'"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-1104",
+            "to": "gpo:{aaaaaaaa-0000-0000-0000-000000000001}",
+            "kind": "gpoEdit",
+            "detail": {
+              "gpo": "{aaaaaaaa-0000-0000-0000-000000000001}"
+            },
+            "remediation": {
+              "mechanism": "gpoEdit",
+              "gpo": "Politique du domaine",
+              "section": "delegation"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2012",
+        "sam": "l.fontaine",
+        "name": "Léa Fontaine",
+        "dn": "CN=Léa Fontaine,OU=Utilisateurs,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "default"
+        },
+        "effective": 0,
+        "status": "gap",
+        "severity": "critical",
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2012",
+            "to": "S-1-5-21-1000-2000-3000-1105",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'GG-Helpdesk' -Members 'l.fontaine'"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-1105",
+            "to": "S-1-5-21-1000-2000-3000-2002",
+            "kind": "acl",
+            "detail": {
+              "right": "ResetPassword",
+              "objectDn": "CN=Romain Dubois (T0),OU=Admins-T0,DC=corp,DC=local",
+              "originDn": "OU=Admins-T0,DC=corp,DC=local",
+              "inherited": true
+            },
+            "remediation": {
+              "mechanism": "acl",
+              "command": "dsacls 'OU=Admins-T0,DC=corp,DC=local' /R 'CORP\\GG-Helpdesk'",
+              "warning": "removes_all_aces"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-2002",
+            "to": "S-1-5-21-1000-2000-3000-512",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'Admins du domaine' -Members 'adm-t0-rdubois'"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2003",
+        "sam": "svc-backup",
+        "name": "Sauvegarde",
+        "dn": "CN=Sauvegarde,OU=Services,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "default"
+        },
+        "effective": 0,
+        "status": "gap",
+        "severity": "critical",
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2003",
+            "to": "root",
+            "kind": "acl",
+            "detail": {
+              "right": "DCSync",
+              "objectDn": "DC=corp,DC=local",
+              "originDn": "DC=corp,DC=local",
+              "inherited": false
+            },
+            "remediation": {
+              "mechanism": "acl",
+              "command": "dsacls 'DC=corp,DC=local' /R 'CORP\\svc-backup'",
+              "warning": "removes_all_aces"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2014",
+        "sam": "x.garnier",
+        "name": "Xavier O'Garnier",
+        "dn": "CN=Xavier O'Garnier,OU=Utilisateurs,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "default"
+        },
+        "effective": 0,
+        "status": "gap",
+        "severity": "critical",
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2014",
+            "to": "S-1-5-21-1000-2000-3000-512",
+            "kind": "membership",
+            "detail": {
+              "via": "primaryGroup"
+            },
+            "remediation": {
+              "mechanism": "primaryGroup",
+              "command": "Set-ADObject -Identity 'CN=Xavier O''Garnier,OU=Utilisateurs,DC=corp,DC=local' -Replace @{primaryGroupID=513}",
+              "warning": "primary_group"
+            }
+          }
+        ],
+        "remediationProposed": true
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2009",
+        "sam": "adm-t1-ngarcia",
+        "name": "Nina Garcia (T1)",
+        "dn": "CN=Nina Garcia (T1),OU=Admins-T1,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 1,
+        "plannedSource": {
+          "type": "rule",
+          "ruleId": "r2"
+        },
+        "effective": 1,
+        "status": "ok",
+        "severity": null,
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2009",
+            "to": "S-1-5-21-1000-2000-3000-1102",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'GG-Server-Ops' -Members 'adm-t1-ngarcia'"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-1102",
+            "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}",
+            "kind": "gpoLocal",
+            "detail": {
+              "gpo": "{aaaaaaaa-0000-0000-0000-000000000002}",
+              "localGroup": "S-1-5-32-544",
+              "source": "GptTmpl"
+            },
+            "remediation": {
+              "mechanism": "gpoLocal",
+              "gpo": "Admins serveurs",
+              "localGroup": "S-1-5-32-544",
+              "section": "restrictedGroups"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2015",
+        "sam": "gmsa-sql$",
+        "name": "gmsa-sql",
+        "dn": "CN=gmsa-sql,OU=Services,DC=corp,DC=local",
+        "kind": "gmsa",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "rule",
+          "ruleId": "r3"
+        },
+        "effective": 1,
+        "status": "gap",
+        "severity": "high",
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2015",
+            "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}",
+            "kind": "gpoLocal",
+            "detail": {
+              "gpo": "{aaaaaaaa-0000-0000-0000-000000000002}",
+              "localGroup": "S-1-5-32-555",
+              "source": "GroupsXml"
+            },
+            "remediation": {
+              "mechanism": "gpoLocal",
+              "gpo": "Admins serveurs",
+              "localGroup": "S-1-5-32-555",
+              "section": "localUsersAndGroups"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2005",
+        "sam": "p.leroy",
+        "name": "Pierre Leroy",
+        "dn": "CN=Pierre Leroy,OU=Utilisateurs,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "default"
+        },
+        "effective": 1,
+        "status": "gap",
+        "severity": "high",
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2005",
+            "to": "S-1-5-21-1000-2000-3000-1102",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'GG-Server-Ops' -Members 'p.leroy'"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-1102",
+            "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}",
+            "kind": "gpoLocal",
+            "detail": {
+              "gpo": "{aaaaaaaa-0000-0000-0000-000000000002}",
+              "localGroup": "S-1-5-32-544",
+              "source": "GptTmpl"
+            },
+            "remediation": {
+              "mechanism": "gpoLocal",
+              "gpo": "Admins serveurs",
+              "localGroup": "S-1-5-32-544",
+              "section": "restrictedGroups"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2013",
+        "sam": "s.moreau",
+        "name": "Sophie Moreau",
+        "dn": "CN=Sophie Moreau,OU=Utilisateurs,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 1,
+        "plannedSource": {
+          "type": "override"
+        },
+        "effective": 1,
+        "status": "ok",
+        "severity": null,
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2013",
+            "to": "S-1-5-21-1000-2000-3000-1102",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'GG-Server-Ops' -Members 's.moreau'"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-1102",
+            "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}",
+            "kind": "gpoLocal",
+            "detail": {
+              "gpo": "{aaaaaaaa-0000-0000-0000-000000000002}",
+              "localGroup": "S-1-5-32-544",
+              "source": "GptTmpl"
+            },
+            "remediation": {
+              "mechanism": "gpoLocal",
+              "gpo": "Admins serveurs",
+              "localGroup": "S-1-5-32-544",
+              "section": "restrictedGroups"
+            }
+          }
+        ],
+        "remediationProposed": false,
+        "override": {
+          "reason": "Opératrice serveurs, validé par le RSSI",
+          "setBy": "admin@corp.local",
+          "setAt": "2026-09-29T11:00:00Z"
+        }
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2007",
+        "sam": "svc-sccm",
+        "name": "Déploiement SCCM",
+        "dn": "CN=Déploiement SCCM,OU=Services,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "default"
+        },
+        "effective": 1,
+        "status": "gap",
+        "severity": "high",
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2007",
+            "to": "S-1-5-21-1000-2000-3000-1110",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'GG-App-01' -Members 'svc-sccm'"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-1110",
+            "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+            "kind": "gpoLocal",
+            "detail": {
+              "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+              "localGroup": "S-1-5-32-544",
+              "source": "GptTmpl"
+            },
+            "remediation": {
+              "mechanism": "gpoLocal",
+              "gpo": "Serveurs applicatifs",
+              "localGroup": "S-1-5-32-544",
+              "section": "restrictedGroups"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2011",
+        "sam": "adm-t0-ancien",
+        "name": "Ancien admin",
+        "dn": "CN=Ancien admin,OU=Admins-T0,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 0,
+        "plannedSource": {
+          "type": "rule",
+          "ruleId": "r1"
+        },
+        "effective": 2,
+        "status": "below",
+        "severity": null,
+        "path": [],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2006",
+        "sam": "c.bernard",
+        "name": "Claire Bernard",
+        "dn": "CN=Claire Bernard,OU=Utilisateurs,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "default"
+        },
+        "effective": 2,
+        "status": "ok",
+        "severity": null,
+        "path": [
+          {
+            "from": "S-1-5-21-1000-2000-3000-2006",
+            "to": "S-1-5-21-1000-2000-3000-1103",
+            "kind": "membership",
+            "detail": {
+              "via": "member"
+            },
+            "remediation": {
+              "mechanism": "membership",
+              "command": "Remove-ADGroupMember -Identity 'GG-Support-Postes' -Members 'c.bernard'"
+            }
+          },
+          {
+            "from": "S-1-5-21-1000-2000-3000-1103",
+            "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000003}",
+            "kind": "gpoLocal",
+            "detail": {
+              "gpo": "{aaaaaaaa-0000-0000-0000-000000000003}",
+              "localGroup": "S-1-5-32-544",
+              "source": "GroupsXml"
+            },
+            "remediation": {
+              "mechanism": "gpoLocal",
+              "gpo": "Admins postes",
+              "localGroup": "S-1-5-32-544",
+              "section": "localUsersAndGroups"
+            }
+          }
+        ],
+        "remediationProposed": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-2010",
+        "sam": "m.petit",
+        "name": "Marc Petit",
+        "dn": "CN=Marc Petit,OU=Utilisateurs,DC=corp,DC=local",
+        "kind": "user",
+        "enabled": true,
+        "planned": 2,
+        "plannedSource": {
+          "type": "default"
+        },
+        "effective": 2,
+        "status": "ok",
+        "severity": null,
+        "path": [],
+        "remediationProposed": false
+      }
+    ],
+    "groups": [
+      {
+        "sid": "S-1-5-21-1000-2000-3000-512",
+        "sam": "Admins du domaine",
+        "name": "Admins du domaine",
+        "dn": "CN=Admins du domaine,CN=Users,DC=corp,DC=local",
+        "tier": 0,
+        "broad": false,
+        "target": true
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-513",
+        "sam": "Utilisateurs du domaine",
+        "name": "Utilisateurs du domaine",
+        "dn": "CN=Utilisateurs du domaine,CN=Users,DC=corp,DC=local",
+        "tier": null,
+        "broad": true,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1101",
+        "sam": "GG-IT-Admins",
+        "name": "GG-IT-Admins",
+        "dn": "CN=GG-IT-Admins,OU=Groupes,DC=corp,DC=local",
+        "tier": 0,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1102",
+        "sam": "GG-Server-Ops",
+        "name": "GG-Server-Ops",
+        "dn": "CN=GG-Server-Ops,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1103",
+        "sam": "GG-Support-Postes",
+        "name": "GG-Support-Postes",
+        "dn": "CN=GG-Support-Postes,OU=Groupes,DC=corp,DC=local",
+        "tier": 2,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1104",
+        "sam": "GG-GPO-Editeurs",
+        "name": "GG-GPO-Editeurs",
+        "dn": "CN=GG-GPO-Editeurs,OU=Groupes,DC=corp,DC=local",
+        "tier": 0,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1105",
+        "sam": "GG-Helpdesk",
+        "name": "GG-Helpdesk",
+        "dn": "CN=GG-Helpdesk,OU=Groupes,DC=corp,DC=local",
+        "tier": 0,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1110",
+        "sam": "GG-App-01",
+        "name": "GG-App-01",
+        "dn": "CN=GG-App-01,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1111",
+        "sam": "GG-App-02",
+        "name": "GG-App-02",
+        "dn": "CN=GG-App-02,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1112",
+        "sam": "GG-App-03",
+        "name": "GG-App-03",
+        "dn": "CN=GG-App-03,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1113",
+        "sam": "GG-App-04",
+        "name": "GG-App-04",
+        "dn": "CN=GG-App-04,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1114",
+        "sam": "GG-App-05",
+        "name": "GG-App-05",
+        "dn": "CN=GG-App-05,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1115",
+        "sam": "GG-App-06",
+        "name": "GG-App-06",
+        "dn": "CN=GG-App-06,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1116",
+        "sam": "GG-App-07",
+        "name": "GG-App-07",
+        "dn": "CN=GG-App-07,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1117",
+        "sam": "GG-App-08",
+        "name": "GG-App-08",
+        "dn": "CN=GG-App-08,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1118",
+        "sam": "GG-App-09",
+        "name": "GG-App-09",
+        "dn": "CN=GG-App-09,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1119",
+        "sam": "GG-App-10",
+        "name": "GG-App-10",
+        "dn": "CN=GG-App-10,OU=Groupes,DC=corp,DC=local",
+        "tier": 1,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1120",
+        "sam": "GG-Projet-A",
+        "name": "GG-Projet-A",
+        "dn": "CN=GG-Projet-A,OU=Groupes,DC=corp,DC=local",
+        "tier": null,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1121",
+        "sam": "GG-Projet-B",
+        "name": "GG-Projet-B",
+        "dn": "CN=GG-Projet-B,OU=Groupes,DC=corp,DC=local",
+        "tier": null,
+        "broad": false,
+        "target": false
+      },
+      {
+        "sid": "S-1-5-21-1000-2000-3000-1122",
+        "sam": "GG-Cantine",
+        "name": "GG-Cantine",
+        "dn": "CN=GG-Cantine,OU=Groupes,DC=corp,DC=local",
+        "tier": null,
+        "broad": false,
+        "target": false
+      }
+    ],
+    "objects": [
+      {
+        "key": "root",
+        "label": "corp.local",
+        "tier": 0
+      },
+      {
+        "key": "adminSdHolder",
+        "label": "AdminSDHolder",
+        "tier": 0
+      },
+      {
+        "key": "dcOu",
+        "label": "Domain Controllers",
+        "tier": 0
+      },
+      {
+        "key": "gpo:{aaaaaaaa-0000-0000-0000-000000000001}",
+        "label": "Politique du domaine",
+        "tier": 0
+      },
+      {
+        "key": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000001}",
+        "label": "Politique du domaine",
+        "tier": 0
+      },
+      {
+        "key": "gpo:{aaaaaaaa-0000-0000-0000-000000000002}",
+        "label": "Admins serveurs",
+        "tier": 1
+      },
+      {
+        "key": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}",
+        "label": "Admins serveurs",
+        "tier": 1
+      },
+      {
+        "key": "gpo:{aaaaaaaa-0000-0000-0000-000000000003}",
+        "label": "Admins postes",
+        "tier": 2
+      },
+      {
+        "key": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000003}",
+        "label": "Admins postes",
+        "tier": 2
+      },
+      {
+        "key": "gpo:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "label": "Serveurs applicatifs",
+        "tier": 1
+      },
+      {
+        "key": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "label": "Serveurs applicatifs",
+        "tier": 1
+      }
+    ],
+    "links": [
+      {
+        "from": "S-1-5-21-1000-2000-3000-1101",
+        "to": "S-1-5-21-1000-2000-3000-512",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2001",
+        "to": "S-1-5-21-1000-2000-3000-1101",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2001",
+        "to": "S-1-5-21-1000-2000-3000-1120",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2002",
+        "to": "S-1-5-21-1000-2000-3000-512",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2004",
+        "to": "S-1-5-21-1000-2000-3000-1105",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2012",
+        "to": "S-1-5-21-1000-2000-3000-1105",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2005",
+        "to": "S-1-5-21-1000-2000-3000-1102",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2009",
+        "to": "S-1-5-21-1000-2000-3000-1102",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2013",
+        "to": "S-1-5-21-1000-2000-3000-1102",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2006",
+        "to": "S-1-5-21-1000-2000-3000-1103",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2008",
+        "to": "S-1-5-21-1000-2000-3000-1104",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1110",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1111",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1112",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1113",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1114",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1115",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1116",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1117",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1118",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1119",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1121",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1122",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "member"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2014",
+        "to": "S-1-5-21-1000-2000-3000-512",
+        "type": "membership",
+        "kind": "membership",
+        "detail": {
+          "via": "primaryGroup"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1105",
+        "to": "S-1-5-21-1000-2000-3000-2002",
+        "type": "acl",
+        "kind": "acl",
+        "detail": {
+          "right": "ResetPassword",
+          "objectDn": "CN=Romain Dubois (T0),OU=Admins-T0,DC=corp,DC=local",
+          "originDn": "OU=Admins-T0,DC=corp,DC=local",
+          "inherited": true
+        }
+      },
+      {
+        "from": "S-1-5-11",
+        "to": "adminSdHolder",
+        "type": "acl",
+        "kind": "acl",
+        "detail": {
+          "right": "WriteDacl",
+          "objectDn": "CN=AdminSDHolder,CN=System,DC=corp,DC=local",
+          "originDn": "CN=AdminSDHolder,CN=System,DC=corp,DC=local",
+          "inherited": false
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2003",
+        "to": "root",
+        "type": "acl",
+        "kind": "acl",
+        "detail": {
+          "right": "DCSync",
+          "objectDn": "DC=corp,DC=local",
+          "originDn": "DC=corp,DC=local",
+          "inherited": false
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1104",
+        "to": "gpo:{aaaaaaaa-0000-0000-0000-000000000001}",
+        "type": "gpo",
+        "kind": "gpoEdit",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000001}"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1102",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000002}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-2015",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000002}",
+          "localGroup": "S-1-5-32-555",
+          "source": "GroupsXml"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1103",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000003}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000003}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GroupsXml"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1110",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1111",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1112",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1113",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1114",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1115",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1116",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1117",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1118",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      },
+      {
+        "from": "S-1-5-21-1000-2000-3000-1119",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "type": "gpo",
+        "kind": "gpoLocal",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        }
+      }
+    ],
+    "chokepoints": [
+      {
+        "key": "acl:S-1-5-11:adminSdHolder:WriteDacl",
+        "kind": "acl",
+        "from": "S-1-5-11",
+        "to": "adminSdHolder",
+        "detail": {
+          "right": "WriteDacl",
+          "objectDn": "CN=AdminSDHolder,CN=System,DC=corp,DC=local",
+          "originDn": "CN=AdminSDHolder,CN=System,DC=corp,DC=local",
+          "inherited": false
+        },
+        "tier": 0,
+        "broad": true,
+        "exposed": [],
+        "gaps": []
+      },
+      {
+        "key": "group:S-1-5-21-1000-2000-3000-512",
+        "kind": "membership",
+        "from": "S-1-5-21-1000-2000-3000-1101",
+        "to": "S-1-5-21-1000-2000-3000-512",
+        "detail": {
+          "via": "member"
+        },
+        "tier": 0,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2001",
+          "S-1-5-21-1000-2000-3000-2002",
+          "S-1-5-21-1000-2000-3000-2004",
+          "S-1-5-21-1000-2000-3000-2012",
+          "S-1-5-21-1000-2000-3000-2014"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2001",
+          "S-1-5-21-1000-2000-3000-2004",
+          "S-1-5-21-1000-2000-3000-2012",
+          "S-1-5-21-1000-2000-3000-2014"
+        ]
+      },
+      {
+        "key": "acl:S-1-5-21-1000-2000-3000-1105:S-1-5-21-1000-2000-3000-2002:ResetPassword",
+        "kind": "acl",
+        "from": "S-1-5-21-1000-2000-3000-1105",
+        "to": "S-1-5-21-1000-2000-3000-2002",
+        "detail": {
+          "right": "ResetPassword",
+          "objectDn": "CN=Romain Dubois (T0),OU=Admins-T0,DC=corp,DC=local",
+          "originDn": "OU=Admins-T0,DC=corp,DC=local",
+          "inherited": true
+        },
+        "tier": 0,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2004",
+          "S-1-5-21-1000-2000-3000-2012"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2004",
+          "S-1-5-21-1000-2000-3000-2012"
+        ]
+      },
+      {
+        "key": "group:S-1-5-21-1000-2000-3000-1105",
+        "kind": "membership",
+        "from": "S-1-5-21-1000-2000-3000-2004",
+        "to": "S-1-5-21-1000-2000-3000-1105",
+        "detail": {
+          "via": "member"
+        },
+        "tier": 0,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2004",
+          "S-1-5-21-1000-2000-3000-2012"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2004",
+          "S-1-5-21-1000-2000-3000-2012"
+        ]
+      },
+      {
+        "key": "gpoLocal:S-1-5-21-1000-2000-3000-1102:gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}:S-1-5-32-544",
+        "kind": "gpoLocal",
+        "from": "S-1-5-21-1000-2000-3000-1102",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000002}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        },
+        "tier": 1,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2009",
+          "S-1-5-21-1000-2000-3000-2005",
+          "S-1-5-21-1000-2000-3000-2013"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2005"
+        ]
+      },
+      {
+        "key": "group:S-1-5-21-1000-2000-3000-1102",
+        "kind": "membership",
+        "from": "S-1-5-21-1000-2000-3000-2009",
+        "to": "S-1-5-21-1000-2000-3000-1102",
+        "detail": {
+          "via": "member"
+        },
+        "tier": 1,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2009",
+          "S-1-5-21-1000-2000-3000-2005",
+          "S-1-5-21-1000-2000-3000-2013"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2005"
+        ]
+      },
+      {
+        "key": "acl:S-1-5-21-1000-2000-3000-2003:root:DCSync",
+        "kind": "acl",
+        "from": "S-1-5-21-1000-2000-3000-2003",
+        "to": "root",
+        "detail": {
+          "right": "DCSync",
+          "objectDn": "DC=corp,DC=local",
+          "originDn": "DC=corp,DC=local",
+          "inherited": false
+        },
+        "tier": 0,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2003"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2003"
+        ]
+      },
+      {
+        "key": "gpoEdit:S-1-5-21-1000-2000-3000-1104:gpo:{aaaaaaaa-0000-0000-0000-000000000001}:",
+        "kind": "gpoEdit",
+        "from": "S-1-5-21-1000-2000-3000-1104",
+        "to": "gpo:{aaaaaaaa-0000-0000-0000-000000000001}",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000001}"
+        },
+        "tier": 0,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2008"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2008"
+        ]
+      },
+      {
+        "key": "gpoLocal:S-1-5-21-1000-2000-3000-1110:gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}:S-1-5-32-544",
+        "kind": "gpoLocal",
+        "from": "S-1-5-21-1000-2000-3000-1110",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000004}",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000004}",
+          "localGroup": "S-1-5-32-544",
+          "source": "GptTmpl"
+        },
+        "tier": 1,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2007"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2007"
+        ]
+      },
+      {
+        "key": "gpoLocal:S-1-5-21-1000-2000-3000-2015:gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}:S-1-5-32-555",
+        "kind": "gpoLocal",
+        "from": "S-1-5-21-1000-2000-3000-2015",
+        "to": "gpolocal:{aaaaaaaa-0000-0000-0000-000000000002}",
+        "detail": {
+          "gpo": "{aaaaaaaa-0000-0000-0000-000000000002}",
+          "localGroup": "S-1-5-32-555",
+          "source": "GroupsXml"
+        },
+        "tier": 1,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2015"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2015"
+        ]
+      },
+      {
+        "key": "group:S-1-5-21-1000-2000-3000-1101",
+        "kind": "membership",
+        "from": "S-1-5-21-1000-2000-3000-2001",
+        "to": "S-1-5-21-1000-2000-3000-1101",
+        "detail": {
+          "via": "member"
+        },
+        "tier": 0,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2001"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2001"
+        ]
+      },
+      {
+        "key": "group:S-1-5-21-1000-2000-3000-1104",
+        "kind": "membership",
+        "from": "S-1-5-21-1000-2000-3000-2008",
+        "to": "S-1-5-21-1000-2000-3000-1104",
+        "detail": {
+          "via": "member"
+        },
+        "tier": 0,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2008"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2008"
+        ]
+      },
+      {
+        "key": "group:S-1-5-21-1000-2000-3000-1110",
+        "kind": "membership",
+        "from": "S-1-5-21-1000-2000-3000-2007",
+        "to": "S-1-5-21-1000-2000-3000-1110",
+        "detail": {
+          "via": "member"
+        },
+        "tier": 1,
+        "broad": false,
+        "exposed": [
+          "S-1-5-21-1000-2000-3000-2007"
+        ],
+        "gaps": [
+          "S-1-5-21-1000-2000-3000-2007"
+        ]
+      }
+    ],
+    "matrix": [
+      [
+        1,
+        0,
+        1
+      ],
+      [
+        0,
+        2,
+        0
+      ],
+      [
+        6,
+        3,
+        422
+      ]
+    ],
+    "keyFigures": {
+      "accounts": 435,
+      "byEffective": [
+        7,
+        5,
+        423
+      ],
+      "gapsCritical": 6,
+      "gapsHigh": 3,
+      "chokepoints": 13
+    },
+    "rulesCount": 3
+  },
+  "rules": [
+    {
+      "id": "r1",
+      "position": 0,
+      "kind": "ou",
+      "pattern": "OU=Admins-T0,DC=corp,DC=local",
+      "tier": 0,
+      "created_by": "admin@corp.local",
+      "updated_at": "2026-09-29T10:00:00Z"
+    },
+    {
+      "id": "r2",
+      "position": 1,
+      "kind": "ou",
+      "pattern": "OU=Admins-T1,DC=corp,DC=local",
+      "tier": 1,
+      "created_by": "admin@corp.local",
+      "updated_at": "2026-09-29T10:00:00Z"
+    },
+    {
+      "id": "r3",
+      "position": 2,
+      "kind": "name",
+      "pattern": "gmsa-*",
+      "tier": 2,
+      "created_by": "admin@corp.local",
+      "updated_at": "2026-09-29T10:00:00Z"
+    }
+  ],
+  "settings": {
+    "domain": null,
+    "passes": 3
+  }
+}
