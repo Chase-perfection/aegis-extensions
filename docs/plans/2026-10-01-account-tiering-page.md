@@ -73,14 +73,17 @@ Sous `extensions/account-tiering/frontend/` :
 | `src/js/account-tiering-panel.js` | panneau de détail, correction manuelle |
 | `src/js/account-tiering-overview.js` | chiffres clés, matrice, points de passage |
 | `src/js/account-tiering-dialogs.js` | remédiation, règles, réglages d'analyse |
+| `src/js/account-tiering-left.js` | liste des comptes de gauche, bornée à 100 lignes par pas |
 | `src/js/account-tiering-events.js` | écouteurs |
 | `src/js/account-tiering.js` | état, appels d'API, relevé d'analyse, rendu |
 | `tests/harness.js` | localise le banc puppeteer du cœur (`AEGIS_TREE`) |
+| `tests/page.js` | aides partagées des tests de page |
+| `tests/models.js` | modèles construits à la main pour les cas que le jeu d'essai n'a pas |
 | `tests/account-tiering-model.test.js`, `account-tiering-graph.test.js` | tests unitaires, tournent en CI |
-| `tests/account-tiering.test.js` | test de page, sauté sans `AEGIS_TREE` |
+| `tests/account-tiering.test.js`, `-forms`, `-a11y`, `-data` | tests de page, sautés sans `AEGIS_TREE` |
 | `tests/fixtures/build-fixture.js`, `model.json` | jeu d'essai produit par le vrai backend (`buildModel` de `routes.js`) |
 
-`docs/plans/2026-10-01-account-tiering-i18n.md` : les 338 clés, français et
+`docs/plans/2026-10-01-account-tiering-i18n.md` : les 348 clés, français et
 anglais, à verser dans `translations.js` du cœur à la livraison 3.
 
 Aucun fichier ne dépasse 500 lignes.
@@ -88,6 +91,8 @@ Aucun fichier ne dépasse 500 lignes.
 ## Tâches
 
 Source : le prototype testé (47 tests : 22 adaptateur, 7 disposition, 18 page).
+Les tâches 1 à 3 décrivent la pose telle qu'elle a été faite ; la section
+« Après la relecture » dit ce qui a changé ensuite.
 
 ### Task 1: L'adaptateur, la disposition et leur jeu d'essai
 
@@ -137,6 +142,32 @@ presse-papiers, le relevé toutes les 2 s, le 403 réel, et l'allure générale.
   d'essai dans la base de l'extension (script à écrire à ce moment-là).
 - [ ] Glisser, molette, zoom, mini-carte, les trois vues, l'arbre inversé, la
   fenêtre des règles, une correction manuelle, la remédiation.
+
+## Après la relecture
+
+La relecture de qualité n'a trouvé aucune injection possible. Elle a fait
+corriger :
+- le formulaire de correction, qui perdait le motif tapé ;
+- le relevé d'analyse, qui annonçait « Analyse terminée » quand il n'arrivait
+  plus à lire l'état (5 échecs de suite donnent maintenant un bandeau) ;
+- les rôles ARIA du tableau des règles ;
+- les écritures dans les zones annoncées à chaque image d'un glissé ;
+- les listes sans borne : sur 2 000 comptes, la liste de gauche s'arrête à 100
+  par pas, l'arbre inversé à 200 comptes, la Liste à 300 lignes ;
+- un mécanisme partagé par deux titulaires, qui ne faisait qu'un nœud ;
+- les chargements du modèle qui se croisaient, et un modèle illisible qui
+  bloquait la page sur « chargement » ;
+- les doubles envois ;
+- le focus perdu à la fermeture d'une fenêtre ;
+- un nœud qui prend le focus hors de l'écran.
+
+La relecture de contrôle a trouvé une dernière faute, corrigée : quand une
+nouvelle analyse retirait le compte en cours de correction, le formulaire
+passait pré-rempli au compte suivant, et un clic aurait enregistré le motif sur
+le mauvais SID.
+
+Comptes à la fin : 156 tests de l'extension avec le banc du cœur, aucun échec ;
+sans lui, 114 réussis et les 4 fichiers de page sautés.
 
 ## Points ouverts
 
