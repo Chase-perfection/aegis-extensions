@@ -24,7 +24,7 @@ const store = require('./store');
 const { runCollector } = require('./runner');
 const { analyze } = require('./analyze');
 const { classify } = require('./classify');
-const { remediationFor } = require('./remediation');
+const { remediationFor, remediationContext } = require('./remediation');
 const { toCsv } = require('./exportCsv');
 const { isSid } = require('./sids');
 
@@ -81,23 +81,35 @@ function register(router, context) {
         ? handler(req, res, db)
         : fail(res, 400, 'invalid_sid'));
 
+    /**
+     * The key is built from the scan id, not its facts: the facts are the
+     * whole directory graph, read and parsed only when the model must be
+     * rebuilt. A scan finishing between the two reads takes the facts away
+     * from the old id, so the id is read again then.
+     */
     async function modelFor(req, db) {
-        const latest = await store.latestFacts(db);
-        if (!latest) return null;
-        const [rules, overrides, remediations] = await Promise.all([
-            store.getRules(db), store.getOverrides(db), store.getRemediations(db)
-        ]);
-        const key = JSON.stringify([latest.id, rules, overrides, remediations]);
-        const cached = models.get(req.tenant.slug);
-        if (cached && cached.key === key) return cached.model;
-        const planned = classify(latest.facts, rules, overrides);
-        const model = analyze(latest.facts, planned, { remediations: new Set(remediations.map((r) => r.sid)) });
-        for (const account of model.accounts) {
-            for (const edge of account.path) edge.remediation = remediationFor(edge, latest.facts);
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const id = await store.latestFactsId(db);
+            if (!id) return null;
+            const [rules, overrides, remediations] = await Promise.all([
+                store.getRules(db), store.getOverrides(db), store.getRemediations(db)
+            ]);
+            const key = JSON.stringify([id, rules, overrides, remediations]);
+            const cached = models.get(req.tenant.slug);
+            if (cached && cached.key === key) return cached.model;
+            const facts = await store.factsById(db, id);
+            if (!facts) continue;
+            const planned = classify(facts, rules, overrides);
+            const model = analyze(facts, planned, { remediations: new Set(remediations.map((r) => r.sid)) });
+            const ctx = remediationContext(facts);
+            for (const account of model.accounts) {
+                for (const edge of account.path) edge.remediation = remediationFor(edge, ctx);
+            }
+            model.rulesCount = rules.length;
+            models.set(req.tenant.slug, { key, model });
+            return model;
         }
-        model.rulesCount = rules.length;
-        models.set(req.tenant.slug, { key, model });
-        return model;
+        return null;
     }
 
     async function answerModel(req, res, db, send) {

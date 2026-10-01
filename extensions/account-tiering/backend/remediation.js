@@ -25,12 +25,25 @@ function netbiosOf(facts) {
 }
 
 /**
- * @param edge  one link of an account's path (`from`, `to`, `kind`, `detail`)
- * @param facts the facts the model came from, for names, DNs and GPOs
+ * The lookups `remediationFor` needs, built once per model: the routes call it
+ * for every link of every account's path, and rebuilding a map of the whole
+ * directory for each link made the model quadratic.
+ */
+function remediationContext(facts) {
+    return {
+        facts,
+        principals: new Map((facts.principals || []).map((p) => [p.sid, p])),
+        gpos: new Map((facts.gpos || []).map((g) => [String(g.guid).toLowerCase(), g]))
+    };
+}
+
+/**
+ * @param edge one link of an account's path (`from`, `to`, `kind`, `detail`)
+ * @param ctx  a `remediationContext`, or the raw facts the model came from
  * @returns `{ mechanism, command?, gpo?, section?, warning? }`
  */
-function remediationFor(edge, facts) {
-    const principals = new Map((facts.principals || []).map((p) => [p.sid, p]));
+function remediationFor(edge, ctx) {
+    const { facts, principals, gpos } = ctx.principals instanceof Map ? ctx : remediationContext(ctx);
     const nameOf = (sid) => {
         const p = principals.get(sid);
         return p ? (p.sam || p.name || sid) : sid;
@@ -59,7 +72,7 @@ function remediationFor(edge, facts) {
             warning: 'removes_all_aces'
         };
     }
-    const gpo = (facts.gpos || []).find((g) => String(g.guid).toLowerCase() === edge.detail.gpo);
+    const gpo = gpos.get(edge.detail.gpo);
     const gpoName = gpo ? gpo.name : edge.detail.gpo;
     if (edge.kind === 'gpoEdit') {
         return { mechanism: 'gpoEdit', gpo: gpoName, section: 'delegation' };
@@ -73,4 +86,4 @@ function remediationFor(edge, facts) {
     return { mechanism: edge.kind };
 }
 
-module.exports = { remediationFor, psQuote };
+module.exports = { remediationFor, remediationContext, psQuote };

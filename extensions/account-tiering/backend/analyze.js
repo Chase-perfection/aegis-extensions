@@ -27,7 +27,6 @@
 'use strict';
 
 const { targetSids, broadSids, IGNORED, LOCAL_GROUPS } = require('./sids');
-const { ouMatches } = require('./classify');
 
 const SCHEMA = 1;
 const INF = 3;
@@ -104,6 +103,23 @@ function analyze(facts, planned, options = {}) {
     // Tier 0 by membership alone, to know whose ACEs to drop.
     const byMembership = fixedPoint(seeds, membershipEdges).tier;
 
+    // The principals under an OU, by lowercased OU DN. A delegation usually
+    // puts several ACEs on one OU, and lowercasing every DN of the directory
+    // for each of them made this loop the slowest part of the model.
+    const lowerDns = [...principals.values()].map((p) => [p.sid, String(p.dn || '').toLowerCase()]);
+    const underOu = new Map();
+    const sidsUnder = (objectDn) => {
+        const dn = String(objectDn || '').toLowerCase();
+        if (!dn) return [];
+        if (!underOu.has(dn)) {
+            // The same boundary as classify's ouMatches: the OU itself, or an
+            // RDN boundary right before it.
+            const suffix = ',' + dn;
+            underOu.set(dn, lowerDns.filter(([, d]) => d === dn || d.endsWith(suffix)).map(([sid]) => sid));
+        }
+        return underOu.get(dn);
+    };
+
     const controlEdges = [];
     const dcsync = new Map();
     for (const ace of facts.aces || []) {
@@ -119,10 +135,8 @@ function analyze(facts, planned, options = {}) {
         if (ace.objectKind === 'ou') {
             // A right on an OU controls everything under it, so it is one edge
             // per principal there; aceTarget only ever names a single node.
-            for (const p of principals.values()) {
-                if (ouMatches(p.dn, ace.objectDn)) {
-                    controlEdges.push({ from: trustee, to: p.sid, kind: 'acl', detail: aceDetail(ace) });
-                }
+            for (const sid of sidsUnder(ace.objectDn)) {
+                controlEdges.push({ from: trustee, to: sid, kind: 'acl', detail: aceDetail(ace) });
             }
             continue;
         }

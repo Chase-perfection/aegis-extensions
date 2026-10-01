@@ -138,6 +138,20 @@ test('a right on an OU reaches the Tier 0 account inside it', () => {
     assert.strictEqual(helper.path[0].detail.originDn, adminsOu);
 });
 
+test('two rights on the same OU from two trustees both reach the account inside it', () => {
+    // The OU's principals are looked up once per DN: the second ACE must still
+    // get its own edge, from its own trustee, whatever the DN's case.
+    const model = analyze(facts({
+        principals: [{ ...user(1200, 'alice'), dn: `CN=alice,${adminsOu}` }, user(1300, 'helper'), user(1301, 'other')],
+        memberships: [{ group: sid(512), member: sid(1200), via: 'member' }],
+        aces: [ouAce(sid(1300)), ouAce(sid(1301), adminsOu.toUpperCase())]
+    }), NO_PLAN);
+    for (const rid of [1300, 1301]) {
+        assert.strictEqual(account(model, rid).effective, 0, String(rid));
+        assert.strictEqual(account(model, rid).path[0].to, sid(1200), String(rid));
+    }
+});
+
 test('a right on an OU holding only Tier 2 accounts gives nothing', () => {
     const model = analyze(facts({
         principals: [{ ...user(1200, 'alice'), dn: `CN=alice,${adminsOu}` }, user(1300, 'helper')],

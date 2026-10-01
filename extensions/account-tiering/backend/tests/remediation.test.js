@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { remediationFor, psQuote } = require('../remediation');
+const { remediationFor, remediationContext, psQuote } = require('../remediation');
 const { toCsv, csvCell } = require('../exportCsv');
 const { ROOT_DN, sid, user, group, facts } = require('./facts');
 
@@ -43,6 +43,21 @@ test('GPO links give a console section, not a command', () => {
     assert.strictEqual(local.section, 'localUsersAndGroups');
     const restricted = remediationFor({ from: sid(1200), to: 'gpolocal:' + g, kind: 'gpoLocal', detail: { gpo: g, localGroup: 'S-1-5-32-544', source: 'GptTmpl' } }, F);
     assert.strictEqual(restricted.section, 'restrictedGroups');
+});
+
+test('a context built once gives the same step as the raw facts, for every mechanism', () => {
+    const g = '{11111111-1111-1111-1111-111111111111}';
+    const edges = [
+        { from: sid(1200), to: sid(1100), kind: 'membership', detail: { via: 'member' } },
+        { from: sid(1300), to: sid(512), kind: 'membership', detail: { via: 'primaryGroup' } },
+        { from: sid(1200), to: sid(1100), kind: 'acl', detail: { right: 'GenericAll', objectDn: 'CN=x,' + ROOT_DN, inherited: false } },
+        { from: sid(1200), to: 'gpo:' + g, kind: 'gpoEdit', detail: { gpo: g } },
+        { from: sid(1200), to: 'gpolocal:' + g, kind: 'gpoLocal', detail: { gpo: g, localGroup: 'S-1-5-32-544', source: 'GptTmpl' } },
+        { from: sid(1200), to: 'x', kind: 'other', detail: {} }
+    ];
+    const ctx = remediationContext(F);
+    for (const edge of edges) assert.deepStrictEqual(remediationFor(edge, ctx), remediationFor(edge, F), edge.kind);
+    assert.strictEqual(remediationFor(edges[3], ctx).gpo, 'Serveurs - admins');
 });
 
 test('psQuote doubles straight and curly single quotes and leaves the rest alone', () => {

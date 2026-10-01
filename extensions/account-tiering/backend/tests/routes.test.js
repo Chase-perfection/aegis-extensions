@@ -210,6 +210,28 @@ test('the model follows a rule change without a new scan, and carries remediatio
     assert.ok(csv.body.includes('alice'));
 });
 
+test('a cached model does not read the facts again', db(), async () => {
+    const memory = sqlite.openMemoryDb();
+    await store.ensure(memory);
+    const id = await store.startScan(memory, null);
+    await store.finishScan(memory, id, { status: 'ok', facts: facts({ principals: [user(1200, 'alice')] }) });
+    let factsReads = 0;
+    const counted = {
+        ...memory,
+        get: (sql, params) => {
+            if (/select[^;]*facts_json/i.test(sql)) factsReads += 1;
+            return memory.get(sql, params);
+        }
+    };
+    const table = mount({ extensionDb: fakeExtensionDb(counted) });
+    for (let i = 0; i < 2; i += 1) {
+        const r = await call(table, `GET ${BASE}/model`, request({ tenant: { slug: 'cache-test' } }));
+        assert.strictEqual(r.status, 200);
+        assert.strictEqual(r.body.model.accounts.length, 1);
+    }
+    assert.strictEqual(factsReads, 1);
+});
+
 test('rules, overrides and settings refuse what the spec forbids', db(), async () => {
     const table = mount({ extensionDb: fakeExtensionDb(sqlite.openMemoryDb()) });
     const refused = [
