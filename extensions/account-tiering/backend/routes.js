@@ -51,6 +51,28 @@ function validRules(body) {
     return rules;
 }
 
+/**
+ * The model the page gets, from what the store holds. Pure, and the only place
+ * the model is assembled: the page's test fixture is built by calling this, so
+ * it cannot drift from what GET /model answers.
+ *
+ * The override's reason, author and date are added here and not in analyze:
+ * analyze works on planned tiers and has no use for who set them.
+ */
+function buildModel(facts, rules, overrides, remediations) {
+    const planned = classify(facts, rules, overrides);
+    const model = analyze(facts, planned, { remediations: new Set(remediations.map((r) => r.sid)) });
+    const ctx = remediationContext(facts);
+    const overrideBySid = new Map(overrides.map((o) => [o.sid, o]));
+    for (const account of model.accounts) {
+        for (const edge of account.path) edge.remediation = remediationFor(edge, ctx);
+        const row = account.plannedSource.type === 'override' ? overrideBySid.get(account.sid) : null;
+        if (row) account.override = { reason: row.reason, setBy: row.set_by, setAt: row.set_at };
+    }
+    model.rulesCount = rules.length;
+    return model;
+}
+
 function register(router, context) {
     const { requireRole } = context;
     const admin = requireRole('admin');
@@ -99,13 +121,7 @@ function register(router, context) {
             if (cached && cached.key === key) return cached.model;
             const facts = await store.factsById(db, id);
             if (!facts) continue;
-            const planned = classify(facts, rules, overrides);
-            const model = analyze(facts, planned, { remediations: new Set(remediations.map((r) => r.sid)) });
-            const ctx = remediationContext(facts);
-            for (const account of model.accounts) {
-                for (const edge of account.path) edge.remediation = remediationFor(edge, ctx);
-            }
-            model.rulesCount = rules.length;
+            const model = buildModel(facts, rules, overrides, remediations);
             models.set(req.tenant.slug, { key, model });
             return model;
         }
@@ -231,4 +247,4 @@ function _setRunner(fn) {
     runCollectorImpl = fn || runCollector;
 }
 
-module.exports = { register, _setRunner };
+module.exports = { register, buildModel, _setRunner };

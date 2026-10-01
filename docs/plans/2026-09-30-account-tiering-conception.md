@@ -216,6 +216,18 @@ d'analyse (date, domaine, passes, `truncated`, `unreadable`). La page fait
 elle-même la mise en page de l'arbre, le regroupement et l'arbre inversé,
 comme dans la maquette.
 
+Trois précisions, venues du prototype de la page :
+
+- Un compte dont le tier prévu vient d'une correction manuelle porte
+  `override: { reason, setBy, setAt }`, lu dans la table `overrides` ; les
+  autres comptes n'ont pas cette clé.
+- Chaque groupe porte `target` : `true` pour une cible Tier 0 (les RID et
+  groupes intégrés de `sids.js`, plus DnsAdmins), ce qui évite à la page de
+  recopier cette liste pour savoir où une chaîne s'arrête.
+- Les points de passage, et leur compte dans les chiffres clés, ne gardent que
+  ce qui est à corriger : au moins un compte en écart y passe, ou le titulaire
+  est trop large (`broad`).
+
 ### Approximations assumées
 
 - Les filtres de sécurité et WMI des GPO ne sont pas évalués : un lien compte

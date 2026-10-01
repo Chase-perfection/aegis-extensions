@@ -210,6 +210,37 @@ test('the model follows a rule change without a new scan, and carries remediatio
     assert.ok(csv.body.includes('alice'));
 });
 
+test('an override shows its reason, author and date on that account only', db(), async () => {
+    const memory = sqlite.openMemoryDb();
+    await store.ensure(memory);
+    const id = await store.startScan(memory, null);
+    await store.finishScan(memory, id, { status: 'ok', facts: facts({ principals: [user(1200, 'alice'), user(1201, 'bob')] }) });
+    const table = mount({ extensionDb: fakeExtensionDb(memory) });
+    const slug = { tenant: { slug: 'override-test' } };
+    const account = (r, rid) => r.body.model.accounts.find((a) => a.sid === sid(rid));
+
+    const before = await call(table, `GET ${BASE}/model`, request(slug));
+    assert.ok(!('override' in account(before, 1200)));
+
+    const put = await call(table, `PUT ${BASE}/overrides/:sid`, request({
+        ...slug, params: { sid: sid(1200) }, body: { tier: 0, reason: '  Domain administrator, approved  ' }
+    }));
+    assert.strictEqual(put.status, 200);
+
+    const after = await call(table, `GET ${BASE}/model`, request(slug));
+    const alice = account(after, 1200);
+    assert.strictEqual(alice.plannedSource.type, 'override');
+    assert.deepStrictEqual(Object.keys(alice.override).sort(), ['reason', 'setAt', 'setBy']);
+    assert.strictEqual(alice.override.reason, 'Domain administrator, approved');
+    assert.strictEqual(alice.override.setBy, 'ops@corp.local');
+    assert.ok(!Number.isNaN(Date.parse(alice.override.setAt)), alice.override.setAt);
+    assert.ok(!('override' in account(after, 1201)));
+
+    await call(table, `DELETE ${BASE}/overrides/:sid`, request({ ...slug, params: { sid: sid(1200) } }));
+    const removed = await call(table, `GET ${BASE}/model`, request(slug));
+    assert.ok(!('override' in account(removed, 1200)));
+});
+
 test('a cached model does not read the facts again', db(), async () => {
     const memory = sqlite.openMemoryDb();
     await store.ensure(memory);

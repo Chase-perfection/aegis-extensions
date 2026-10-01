@@ -261,6 +261,40 @@ test('a chokepoint counts the exposed accounts and the gaps through it', () => {
     assert.deepStrictEqual(point.gaps, [sid(1201)]);
 });
 
+test('a group only compliant accounts go through is not a chokepoint', () => {
+    // alice is planned Tier 0 and reaches it through IT-Admins: nothing to fix
+    // on that group. bob gets there through Ops, unplanned: that one stays.
+    const model = analyze(facts({
+        principals: [group(1100, 'IT-Admins'), group(1101, 'Ops'), user(1200, 'alice'), user(1201, 'bob')],
+        memberships: [
+            { group: sid(512), member: sid(1100), via: 'member' },
+            { group: sid(1100), member: sid(1200), via: 'member' },
+            { group: sid(519), member: sid(1101), via: 'member' },
+            { group: sid(1101), member: sid(1201), via: 'member' }
+        ]
+    }), new Map([[sid(1200), { tier: 0, source: { type: 'rule', ruleId: 'r1' } }]]));
+    assert.strictEqual(account(model, 1200).path.length, 2);
+    assert.deepStrictEqual(model.chokepoints.map((p) => p.key).sort(), ['group:' + sid(1101), 'group:' + sid(519)].sort());
+    assert.ok(model.chokepoints.every((p) => p.gaps.length > 0 || p.broad));
+    assert.strictEqual(model.keyFigures.chokepoints, 2);
+});
+
+test('each group says whether it is a Tier 0 target', () => {
+    const builtinAdmins = { sid: 'S-1-5-32-544', dn: `CN=Administrators,CN=Builtin,${ROOT_DN}`, sam: 'Administrators', name: 'Administrators', kind: 'group', enabled: true };
+    const model = analyze(facts({
+        principals: [builtinAdmins, group(1100, 'IT-Admins'), group(1101, 'DnsAdmins'), group(513, 'Domain Users')],
+        // IT-Admins is Tier 0 by nesting, which does not make it a target.
+        memberships: [{ group: sid(512), member: sid(1100), via: 'member' }]
+    }), NO_PLAN);
+    const target = (id) => model.groups.find((g) => g.sid === id).target;
+    assert.strictEqual(target(sid(512)), true);
+    assert.strictEqual(target('S-1-5-32-544'), true);
+    assert.strictEqual(target(sid(1101)), true);
+    assert.strictEqual(target(sid(1100)), false);
+    assert.strictEqual(target(sid(513)), false);
+    assert.strictEqual(model.groups.find((g) => g.sid === sid(1100)).tier, 0);
+});
+
 test('the proposed-remediation marker is carried onto the account', () => {
     const model = analyze(facts({ principals: [user(1200, 'a')] }), NO_PLAN, { remediations: new Set([sid(1200)]) });
     assert.strictEqual(account(model, 1200).remediationProposed, true);

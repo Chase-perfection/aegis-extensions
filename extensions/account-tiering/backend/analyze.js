@@ -186,9 +186,15 @@ function analyze(facts, planned, options = {}) {
     }
     accounts.sort((a, b) => a.effective - b.effective || String(a.sam).localeCompare(String(b.sam)));
 
+    // `target` marks the groups a chain ends on. The page needs it to stop a
+    // chain it rebuilds, and the list behind it (sids.js, plus DnsAdmins found
+    // by name) must not be copied there.
     const groups = [...principals.values()]
         .filter((p) => p.kind === 'group')
-        .map((p) => ({ sid: p.sid, sam: p.sam, name: p.name, dn: p.dn, tier: tierOr(tier, p.sid), broad: broad.has(p.sid) }));
+        .map((p) => ({
+            sid: p.sid, sam: p.sam, name: p.name, dn: p.dn,
+            tier: tierOr(tier, p.sid), broad: broad.has(p.sid), target: targets.has(p.sid)
+        }));
 
     const objects = [...labels.entries()].map(([key, label]) => ({ key, label, tier: tierOr(tier, key) }));
 
@@ -288,6 +294,12 @@ function chokepointKey(edge) {
     return `${edge.kind}:${edge.from}:${edge.to}:${edge.detail.right || edge.detail.localGroup || ''}`;
 }
 
+/**
+ * A chokepoint is something to fix: an edge at least one account in gap goes
+ * through, or a right held by a broad trustee. An edge only compliant accounts
+ * use (the Tier 0 admins in Domain Admins) is how the directory is meant to
+ * work, and listing it would bury the points that matter.
+ */
 function chokepointsOf(accounts, edges, tier, broad) {
     const points = new Map();
     const touch = (edge, broadPoint) => {
@@ -311,6 +323,7 @@ function chokepointsOf(accounts, edges, tier, broad) {
         if (edge.kind !== 'membership' && broad.has(edge.from) && tierOr(tier, edge.to) !== null) touch(edge, true).broad = true;
     }
     return [...points.values()]
+        .filter((p) => p.broad || p.gaps.size > 0)
         .map((p) => ({ ...p, exposed: [...p.exposed], gaps: [...p.gaps] }))
         .sort((a, b) => (b.broad - a.broad) || (b.gaps.length - a.gaps.length)
             || (b.exposed.length - a.exposed.length) || a.key.localeCompare(b.key));
