@@ -5,6 +5,8 @@
  */
 'use strict';
 
+const fixture = require('./fixtures/model.json');
+
 const D = 'S-1-5-21-7-7-7';
 const sid = (rid) => `${D}-${rid}`;
 const member = (from, to) => ({ from, to, type: 'membership', kind: 'membership', detail: { via: 'member' } });
@@ -78,4 +80,27 @@ function twoHoldersModel() {
     };
 }
 
-module.exports = { bigModel, twoHoldersModel, sid };
+/** A name that would inject an element, break out of an attribute, and leave a trace if it ran. */
+const hostile = (tag) => `<img src=x onerror="window.atInjected='${tag}'">"${tag}`;
+
+/**
+ * The fixture with an account name and sAMAccountName, a group name, a GPO
+ * label, an inheritance DN and a rule pattern replaced by `hostile()` strings.
+ */
+function hostileModel() {
+    const model = JSON.parse(JSON.stringify(fixture.model));
+    const rules = JSON.parse(JSON.stringify(fixture.rules));
+    const S = (rid) => `S-1-5-21-1000-2000-3000-${rid}`;
+    const alice = model.accounts.find((a) => a.sid === S(2001));
+    alice.name = hostile('account');
+    alice.sam = hostile('sam');
+    alice.dn = `CN=${hostile('dn')},OU=Utilisateurs,DC=corp,DC=local`;
+    for (const g of model.groups) if (g.sid === S(1101) || g.sid === S(1105)) g.name = hostile('group');
+    for (const o of model.objects) if (o.key.includes('000000000002}')) o.label = hostile('gpo');
+    const edges = [...model.links, ...model.chokepoints, ...model.accounts.flatMap((a) => a.path)];
+    for (const e of edges) if (e.detail && e.detail.inherited) e.detail.originDn = hostile('origin');
+    rules[0].pattern = hostile('rule');
+    return { model, rules };
+}
+
+module.exports = { bigModel, twoHoldersModel, hostileModel, hostile, sid };

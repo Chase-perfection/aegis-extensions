@@ -179,6 +179,22 @@ test('a rebuilt chain stops on a directory object that carries a tier', () => {
     assert.deepStrictEqual(chainVia(chainModel(true), 'GG-Trois'), ['k.durand', 'GG-Trois', 'WriteDacl sur AdminSDHolder']);
 });
 
+test('a cycle in the links ends the chain instead of walking it round', () => {
+    const S = (n) => `S-1-5-21-9-9-9-${n}`;
+    const model = chainModel(false);
+    // GG-Deux and GG-Cible become members of each other, and GG-Au-dela of GG-Deux:
+    // nothing flags an end, so only the visited set can stop the walk.
+    const member = (from, to) => ({ from, to, type: 'membership', kind: 'membership', detail: { via: 'member' } });
+    model.links.push(member(S(20), S(11)), member(S(30), S(11)), member(S(30), S(20)));
+    const chain = chainVia(model, 'GG-Deux');
+    assert.deepStrictEqual(chain, ['k.durand', 'GG-Deux', 'GG-Cible', 'GG-Au-dela']);
+    assert.strictEqual(new Set(chain).size, chain.length, 'no group twice');
+    // A group that is its own member, and nothing else to walk to.
+    const self = chainModel(false);
+    self.links = [...self.accounts[0].path, member(S(1), S(11)), member(S(11), S(11))];
+    assert.deepStrictEqual(chainVia(self, 'GG-Deux'), ['k.durand', 'GG-Deux']);
+});
+
 test('two holders of the same right on the same object are two mechanisms, and so are two editors of one GPO', () => {
     const two = buildViewModel(twoHoldersModel());
     const [nora, omar] = two.accounts;

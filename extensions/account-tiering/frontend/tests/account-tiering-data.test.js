@@ -13,8 +13,8 @@ if (!P.available) {
     test('the Arbre des comptes page: models the fixture does not hold', { skip: P.why }, () => {});
     return;
 }
-const { fixture, API, open, pause, count, text, focused, click } = P;
-const { bigModel, twoHoldersModel, sid } = require('./models');
+const { fixture, API, SID, open, loaded, pause, count, text, focused, click, script } = P;
+const { bigModel, twoHoldersModel, hostileModel, hostile, sid } = require('./models');
 
 before(P.start);
 after(P.stop);
@@ -131,4 +131,66 @@ test('a model the page cannot digest shows the error card instead of loading for
     assert.strictEqual(await later.page.$eval('#at-body', (el) => el.hidden), true);
     await later.close();
     assert.deepStrictEqual(later.pageErrors, [], 'caught, not left to the console as an exception');
+});
+
+test('a 403 on the model, whatever its body, shows the card reserved to administrators', async () => {
+    const { page, close } = await open();
+    await script(page, `${API}/model`, [{ status: 403, body: 'Forbidden' }], { onReload: true });
+    await page.reload({ waitUntil: 'networkidle2' });
+    await loaded(page);
+    assert.strictEqual(await page.$eval('#at-error-card', (el) => el.dataset.code), 'forbidden');
+    assert.match(await text(page, '#at-error-card'), /réservée aux administrateurs/);
+    assert.strictEqual(await page.$eval('#at-export-wrap', (el) => el.hidden), true);
+    await close();
+});
+
+test('names written to break the markup are shown as text, in every view and both dialogs', async () => {
+    const { model, rules } = hostileModel();
+    const { page, close, pageErrors } = await withModel(model, rules);
+    const seen = [];
+    const check = async (where) => {
+        const found = await page.evaluate(() => ({
+            injected: document.querySelectorAll('#at-view img, #at-view [onerror], img[src="x"]').length,
+            ran: window.atInjected || null, text: document.getElementById('at-view').innerText
+        }));
+        assert.deepStrictEqual([found.injected, found.ran], [0, null], where);
+        seen.push(found.text);
+    };
+    await check('tree');
+    // Attributes hold the whole name: the quote did not end them early.
+    assert.strictEqual(await page.$eval(`[data-node="a:${SID(2001)}"]`, (el) => el.title), hostile('account'));
+    assert.strictEqual(await page.$eval(`[data-account="${SID(2001)}"] .at-strong`, (el) => el.textContent), hostile('account'));
+    assert.strictEqual(await page.$eval(`[data-node="g:${SID(1101)}"]`, (el) => el.title), hostile('group'));
+    await click(page, `[data-node="a:${SID(2001)}"]`);
+    await check('account panel');
+    await click(page, '#at-fix-open');
+    await check('remediation dialog');
+    await page.keyboard.press('Escape');
+    await click(page, '#at-rules-open');
+    await check('rules dialog');
+    assert.strictEqual(await page.$eval('[data-key="rule-pattern:0"]', (el) => el.value), hostile('rule'));
+    assert.strictEqual(await page.$eval(`#at-group-sids option[value="${SID(1101)}"]`, (el) => el.textContent), hostile('group'));
+    await page.keyboard.press('Escape');
+    await click(page, '[data-viewbtn="list"]');
+    await check('list');
+    // The inherited right (its origin DN) and the GPO (its label).
+    await click(page, `[data-account="${SID(2004)}"]`);
+    await check('inherited ACL');
+    await click(page, '#at-more');
+    await click(page, `[data-account="${SID(2005)}"]`);
+    await click(page, '[data-viewbtn="tree"]');
+    await check('GPO');
+    await click(page, '[data-tierf="0"]');
+    await click(page, `[data-account="${SID(2002)}"]`);
+    await click(page, `[data-node="a:${SID(2002)}"]`);
+    await check('rule source');
+    await click(page, '#at-inverse');
+    await check('inverted tree');
+    await click(page, '[data-viewbtn="overview"]');
+    await click(page, '[data-act="points-toggle"]');
+    await check('overview');
+    const all = seen.join('\n');
+    for (const tag of ['account', 'sam', 'group', 'gpo', 'origin', 'rule']) assert.ok(all.includes(hostile(tag)), `the ${tag} string was displayed, as text`);
+    await close();
+    assert.deepStrictEqual(pageErrors, []);
 });
