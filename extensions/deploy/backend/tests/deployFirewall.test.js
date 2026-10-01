@@ -78,6 +78,24 @@ async function withEnv(name, value, fn) {
     }
 }
 
+/**
+ * A machine store of its own for the length of one test.
+ *
+ * The three tests that save a network used to write the real one: on Windows
+ * `C:\ProgramData\Aegis\deploy`, elsewhere `/var/lib/aegis/deploy`. A
+ * developer's host got its stored network rewritten by a test run, and the
+ * release job, on an Ubuntu runner that is not root, could not write there at
+ * all: the 0.2.8 release stopped on EACCES before building anything.
+ */
+async function withScratchStore(fn) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'deploy-fw-store-'));
+    try {
+        return await withEnv('AEGIS_DATA_ROOT', root, fn);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* the switch                                                          */
 /* ------------------------------------------------------------------ */
@@ -370,7 +388,7 @@ test('firewall: parseScope accepts what Windows accepts and nothing else', () =>
     }
 });
 
-test('firewall: the stored network is what a rule is written with', async () => {
+test('firewall: the stored network is what a rule is written with', () => withScratchStore(async () => {
     // The setting moved out of the environment so that changing it takes effect
     // without a service restart: the SCM caches a service's environment at boot.
     const machineStore = require('../machineStore');
@@ -385,9 +403,9 @@ test('firewall: the stored network is what a rule is written with', async () => 
     } finally {
         machineStore.saveSiteNetwork(before === 'LocalSubnet' ? '' : before);
     }
-});
+}));
 
-test('firewall: the environment still beats the stored value', async () => {
+test('firewall: the environment still beats the stored value', () => withScratchStore(async () => {
     // The escape hatch for a host built by a script, on the same pattern as
     // publicBaseUrl. The pane shows it and disables the field rather than
     // offering one whose value would be ignored on the next read.
@@ -406,9 +424,9 @@ test('firewall: the environment still beats the stored value', async () => {
     } finally {
         machineStore.saveSiteNetwork(before === 'LocalSubnet' ? '' : before);
     }
-});
+}));
 
-test('firewall: a stored value that is not a scope narrows rather than widens', async () => {
+test('firewall: a stored value that is not a scope narrows rather than widens', () => withScratchStore(async () => {
     // Hand-edited into the store, or left by an older build. The direction of
     // the fallback is the whole point: never towards more reach.
     const machineStore = require('../machineStore');
@@ -421,4 +439,4 @@ test('firewall: a stored value that is not a scope narrows rather than widens', 
     } finally {
         machineStore.saveSiteNetwork(before === 'LocalSubnet' ? '' : before);
     }
-});
+}));
