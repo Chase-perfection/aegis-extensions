@@ -90,6 +90,10 @@
             const first = vm.accounts.find((a) => a.gap) || vm.accounts[0];
             state.acc = first ? first.id : null;
             state.node = null;
+            // The form was opened on the account that just vanished: kept, it
+            // would show its tier and reason on the next account, and one click
+            // would send them to that account's SID.
+            Object.assign(state, NO_OVERRIDE);
         }
     }
 
@@ -98,15 +102,19 @@
      * Each load takes a number and only the latest one is shown, so a slow
      * answer to an old request never replaces a newer model. Whichever load
      * is shown also ends the "loading" state, the first one included.
+     * Resolves to whether this answer was the one applied: a caller that
+     * reads the model afterwards (the scan-end toast) must not do so when a
+     * newer load is still to replace it.
      */
     async function loadModel(withRules) {
         const seq = ++loadSeq;
         const [model, rules] = await Promise.all([call('/model'), withRules ? call('/rules') : null]);
-        if (seq !== loadSeq) return;
+        if (seq !== loadSeq) return false;
         if (rules && rules.ok) state.rules = rules.body.rules || [];
         absorbModel(model);
         state.loading = false;
         render();
+        return true;
     }
 
     const reloadModel = () => loadModel(true);
@@ -159,9 +167,10 @@
                 render();
                 return;
             }
-            await reloadModel();
+            const applied = await reloadModel();
+            // Superseded: the newer load shows its own model, and vm may still be the previous one.
             // No model to show: the error card says why, and a count of gaps would be invented.
-            if (!vm) return;
+            if (!applied || !vm) return;
             const n = vm.kpis.gaps;
             const domain = vm.domain;
             if (n === 0) toast(T('at_scan_done_none', 'Analyse terminée : aucun écart de tiering sur {domain}.', { domain }), 'success');

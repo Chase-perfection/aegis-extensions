@@ -103,6 +103,29 @@ test('the draft is dropped on cancel, on another account, and once the correctio
     await close();
 });
 
+test('a correction typed for an account that a reload drops never follows the selection to the next one', async () => {
+    const { page, close, map, requests } = await open();
+    await openCorrection(page);
+    await page.select('#at-override-tier', '0');
+    await page.type(REASON, 'Réservé au premier compte');
+    const dropped = await page.evaluate(() => window.AccountTiering.app.state.acc);
+    // The next model no longer holds the account the form was opened on.
+    const model = JSON.parse(JSON.stringify(fixture.model));
+    model.accounts = model.accounts.filter((a) => a.sid !== dropped);
+    map[`${API}/model`] = { success: true, model };
+    await page.evaluate(() => window.AccountTiering.app.reloadModel());
+    await settle(page);
+    const now = await page.evaluate(() => window.AccountTiering.app.state.acc);
+    assert.notStrictEqual(now, dropped, 'the selection moved to another account');
+    assert.strictEqual(await page.$(REASON), null, 'the form of the dropped account is closed');
+    const state = await page.evaluate(() => { const s = window.AccountTiering.app.state; return [s.overrideOpen, s.overrideDraft, s.overrideError]; });
+    assert.deepStrictEqual(state, [false, null, null], 'and nothing typed is kept');
+    // Whatever is still on screen must not be able to send the old reason to the new SID.
+    if (await page.$('[data-key="override-save"]')) await click(page, '[data-key="override-save"]');
+    assert.strictEqual(sent(requests, 'PUT', '/overrides/').length, 0, 'no correction went out');
+    await close();
+});
+
 test('a scan whose status cannot be read is retried five times, then reported, never announced as finished', async () => {
     const { page, close, map, requests } = await open();
     await fastPolling(page);

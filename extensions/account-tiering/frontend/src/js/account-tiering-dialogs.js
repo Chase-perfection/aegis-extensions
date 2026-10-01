@@ -107,7 +107,8 @@
     }
 
     function rowsHtml() {
-        if (!draft.length) return `<p class="at-empty-line">${esc(T('at_rules_none', 'Aucune règle : tous les comptes sont considérés Tier 2.'))}</p>`;
+        // A rowgroup holds rows: a bare paragraph in it is invalid ARIA, so the message is a row of one cell.
+        if (!draft.length) return `<div role="row"><div class="at-empty-line" role="cell">${esc(T('at_rules_none', 'Aucune règle : tous les comptes sont considérés Tier 2.'))}</div></div>`;
         return draft.map(ruleRowHtml).join('');
     }
 

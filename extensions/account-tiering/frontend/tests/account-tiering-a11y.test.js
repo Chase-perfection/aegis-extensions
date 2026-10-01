@@ -59,6 +59,15 @@ test('in the rules dialog every control keeps its own role and has a name', asyn
     await close();
 });
 
+test('with no rule the table still holds only rows made of cells, the empty message among them', async () => {
+    const { page, close } = await open({ [`${API}/rules`]: { success: true, rules: [] } });
+    await click(page, '#at-rules-open');
+    const shape = await page.$$eval('#at-rule-rows > *', (els) => els.map((e) => [e.tagName, e.getAttribute('role'), [...e.children].map((c) => c.getAttribute('role')).join(' ')]));
+    assert.deepStrictEqual(shape, [['DIV', 'row', 'cell']], 'one row, one cell: no paragraph straight in the rowgroup');
+    assert.match(await text(page, '#at-rule-rows [role="cell"]'), /Aucune règle/);
+    await close();
+});
+
 test('panning and redrawing leave the live regions alone and read no layout', async () => {
     const { page, close } = await open();
     assert.strictEqual(await text(page, '#at-zoom-label'), '85 %');
@@ -159,6 +168,8 @@ test('a node that takes focus outside the stage is panned into it', async () => 
             scroll: [vp.scrollLeft, vp.scrollTop, vp.parentNode.scrollLeft, vp.parentNode.scrollTop]
         }), 60));
     }, which);
+    // Keyboard modality: after a key press a script focus matches :focus-visible, after a click it does not.
+    await page.keyboard.press('Shift');
     const last = await measure('last');
     assert.strictEqual(last.was, false, 'the last node starts outside the stage');
     assert.deepStrictEqual([last.focused, last.now], [true, true], 'focused, and now inside');
@@ -167,5 +178,42 @@ test('a node that takes focus outside the stage is panned into it', async () => 
     assert.strictEqual(first.was, false, 'which pushed the first node out');
     assert.deepStrictEqual([first.focused, first.now], [true, true]);
     assert.deepStrictEqual(first.scroll, [0, 0, 0, 0]);
+    await close();
+});
+
+test('pressing the mouse on a node near the edge does not pan: the click must land where it was aimed', async () => {
+    const { page, close } = await open();
+    await click(page, '#at-more');
+    await click(page, `[data-account="${SID(2007)}"]`);
+    await click(page, '[data-node="cl:g"]');
+    for (let i = 0; i < 10 && await text(page, '#at-zoom-label') !== '100 %'; i += 1) await click(page, '#at-zoom-in');
+    const layer = () => page.$eval('#at-layer', (el) => el.style.transform);
+    // Pan by the wheel until a node sits wholly inside the stage but in the strip
+    // at its foot, where a focus would pan it, and nothing else covers its centre.
+    const spot = () => page.evaluate(() => {
+        const stage = document.getElementById('at-stage').getBoundingClientRect();
+        for (const el of document.querySelectorAll('.at-node')) {
+            const r = el.getBoundingClientRect();
+            const x = r.left + r.width / 2;
+            const y = r.top + r.height / 2;
+            const top = document.elementFromPoint(x, y);
+            if (r.top > stage.top + 20 && r.bottom < stage.bottom - 8 && r.bottom > stage.bottom - 90 && r.left > stage.left + 20 && r.right < stage.right - 20 && top && el.contains(top)) return { x, y };
+        }
+        return null;
+    });
+    let at = await spot();
+    for (let i = 0; i < 80 && !at; i += 1) {
+        await page.evaluate(() => document.getElementById('at-vp').dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 12 })));
+        at = await spot();
+    }
+    assert.ok(at, 'a node was found in the foot strip');
+    const before = await layer();
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await settle(page);
+    assert.strictEqual(await layer(), before, 'the press did not move the view');
+    await page.mouse.up();
+    await settle(page);
+    assert.strictEqual(await layer(), before, 'nor did the click');
     await close();
 });

@@ -7,8 +7,8 @@ Les paramètres entre accolades sont identiques dans les deux langues. Les forme
 |---|---|---|
 | `at_accounts_hint` | Cliquez un compte pour ouvrir son arbre. | Click an account to open its tree. |
 | `at_accounts_label` | Comptes · {n} | Accounts · {n} |
-| `at_accounts_more_many` | + {n} autres comptes : la recherche les retrouve. | + {n} other accounts: the search finds them. |
-| `at_accounts_more_one` | + {n} autre compte : la recherche le retrouve. | + {n} other account: the search finds it. |
+| `at_accounts_more_many` | + {n} autres comptes : sans filtre, la recherche les retrouve. | + {n} other accounts: with the filters cleared, the search finds them. |
+| `at_accounts_more_one` | + {n} autre compte : sans filtre, la recherche le retrouve. | + {n} other account: with the filters cleared, the search finds it. |
 | `at_banner_norules` | Aucune règle de tiering : tous les comptes sont considérés Tier 2, les administrateurs légitimes apparaissent en écart. | No tiering rule: every account is treated as Tier 2, so legitimate administrators show up as gaps. |
 | `at_banner_norules_action` | Définir les règles | Define the rules |
 | `at_banner_poll_failed` | Le suivi de l'analyse s'est arrêté : son état n'a pas pu être lu. {reason} | Tracking of the analysis stopped: its status could not be read. {reason} |

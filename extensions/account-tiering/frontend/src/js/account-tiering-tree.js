@@ -267,7 +267,8 @@
         if (!dx && !dy) return;
         view.x += dx;
         view.y += dy;
-        view.moved = true;
+        // Not a choice of the user's: the render's own focus restore comes here
+        // too, and flagging it would stop the refit when the stage is resized.
         apply();
     }
 
@@ -329,9 +330,13 @@
         const unscroll = (e) => { e.currentTarget.scrollLeft = 0; e.currentTarget.scrollTop = 0; };
         vp.addEventListener('scroll', unscroll);
         if (stage) stage.onscroll = unscroll;
+        // Only keyboard focus pans. A mouse press focuses the node button too,
+        // and panning on mousedown moves the node from under the pointer so the
+        // click lands elsewhere. An engine without :focus-visible keeps panning.
+        const byKeyboard = (el) => { try { return el.matches(':focus-visible'); } catch (_) { return true; } };
         vp.addEventListener('focusin', (e) => {
             const node = e.target.closest('.at-node');
-            if (node) reveal(node);
+            if (node && byKeyboard(e.target)) reveal(node);
         });
 
         if (observer) observer.disconnect();

@@ -222,7 +222,7 @@
             <span class="at-prow-top"><span class="at-strong">${esc(a.name)}</span>${accountMark(a)}</span>
             <span class="at-mono">${esc(T('at_row_gap', '{sam} · prévu T{planned} → T{effective}', { sam: a.sam, planned: a.planned, effective: a.effective }))}</span></button>`).join('');
         const more = nA > ROWS_MAX ? `<span class="at-note" id="at-panel-more">${esc(pl(nA - ROWS_MAX,
-            ['at_accounts_more_one', '+ {n} autre compte : la recherche le retrouve.'], ['at_accounts_more_many', '+ {n} autres comptes : la recherche les retrouve.']))}</span>` : '';
+            ['at_accounts_more_one', '+ {n} autre compte : sans filtre, la recherche le retrouve.'], ['at_accounts_more_many', '+ {n} autres comptes : sans filtre, la recherche les retrouve.']))}</span>` : '';
         const accounts = nA ? `<div class="at-block">${sectionHead(T('at_accounts_label', 'Comptes · {n}', { n: nA }))}${rows}${more}<span class="at-note">${esc(T('at_accounts_hint', 'Cliquez un compte pour ouvrir son arbre.'))}</span></div>` : '';
         return head(P) + accounts + refsHtml(mechsIn.map((M) => M.m));
     }

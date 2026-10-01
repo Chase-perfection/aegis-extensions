@@ -5,9 +5,10 @@
  * Sized for a domain of thousands of privileged accounts. The list is rewritten
  * on every render, so what it draws is bounded: the gaps show SHOW_GAPS rows
  * until unfolded, and each group then draws `state.leftLimit` rows at most,
- * raised STEP at a time by its "more" control. The counts in the headings and
- * on the filters stay those of the whole domain; the filter counts come from
- * the view model, which counts them once per model and not once per render.
+ * raised STEP at a time by its "more" control. The counts in the group headings
+ * follow the search and the filters (they count the rows that match); only the
+ * tier filter buttons show whole-domain counts, taken from the view model,
+ * which counts them once per model and not once per render.
  */
 (function () {
     'use strict';
