@@ -103,6 +103,10 @@ const NAMED = [
     'needs_build', 'no_index', 'not_a_site', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink',
     'build_failed', 'runtime_missing', 'build_account_unconfigured', 'sandbox_unavailable', 'bad_site_config', 'bad_deploy_manifest',
     'runtime_disabled', 'no_runtime_account', 'start_failed', 'unhealthy', 'bad_site_port',
+    // The previous version still serves its visitors. Only reached when one
+    // started draining between the check at the top of `deployNow` and the
+    // restart; the ordinary case returns `queued` without cloning anything.
+    'slot_busy',
     'migration_failed', 'migrations_unsupported',
     // The branch declares packages its start command imports and the project
     // has no install command. Carries `needs`, which the page turns into the
@@ -219,9 +223,25 @@ async function tokenForProject(app, tenantPaths, project, say) {
     return github.installationToken(app, found);
 }
 
-async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run, headSha }) {
+async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run, headSha, force }) {
     const k = key(slug, project.id);
     if (inFlight.has(k)) return { deployed: false, reason: 'busy' };
+
+    // Two versions at most (runtime.js). While the previous one still serves
+    // the visitors who were on it, a new commit waits: it is recorded as
+    // `pendingSha`, a newer commit replaces it, and the sweep deploys the head
+    // of the branch once that version has stopped. Checked before the clone,
+    // so a commit that waits costs nothing. `force` is "deploy now": the
+    // draining version is stopped and its visitors move to the new one.
+    if (project.runtime === 'node' && !force && runtime.isDraining(slug, project.id)) {
+        const pending = headSha || project.pendingSha || null;
+        if (pending !== (project.pendingSha || null) || !project.pendingAt) {
+            projectStore.saveProject(tenantPaths, Object.assign({}, project, {
+                pendingSha: pending, pendingAt: Date.now()
+            }));
+        }
+        return { deployed: false, reason: 'queued' };
+    }
     inFlight.add(k);
 
     // Every stage and every line the tools print goes here, and `runs.js` holds
@@ -390,6 +410,10 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
                     slug,
                     project,
                     dir: versionDir,
+                    sha,
+                    // The outgoing version keeps the visitors already on it.
+                    keep: true,
+                    force: !!force,
                     // Created here rather than assumed: a project deployed
                     // before this folder existed has none, and the first push
                     // after the upgrade is when it should get one.
@@ -436,6 +460,10 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
             lastError: null,
             // Answered, or no longer asked: the question leaves the card.
             needs: null,
+            // Whatever was waiting is deployed now: this is the head of the
+            // branch, and so at least as new as the commit that waited.
+            pendingSha: null,
+            pendingAt: null,
             // Ce commit passe : ce qui avait echoue avant n'a plus a bloquer
             // quoi que ce soit.
             lastFailedSha: null,
@@ -553,6 +581,10 @@ async function promoteNow({ slug, tenantPaths, project, sha, actor }) {
                 slug,
                 project,
                 dir: found.dir,
+                sha: found.sha,
+                // A rollback never waits for a draining version: it is the
+                // button for a version that should not be serving at all.
+                force: true,
                 dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
                 startCmd: project.startCmd || '',
                 env: projectEnv.forBuild(project, {
@@ -658,6 +690,7 @@ function startAllRuntimes({ pathsFor, tenantsRoot }) {
                 // through `current` would hold whatever it points at when the
                 // next deployment repoints it.
                 dir: cloner.resolveCurrent(projectStore.currentDir(tenantPaths, project.id)),
+                sha: project.lastSha,
                 dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
                 startCmd: project.startCmd || '',
                 env: projectEnv.forBuild(project, {

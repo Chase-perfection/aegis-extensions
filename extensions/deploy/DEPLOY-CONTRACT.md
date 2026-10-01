@@ -626,6 +626,36 @@ A project keeps the five versions it published before the one on the port, a
 folder per commit under `releases/`. `current/` is the site; a release is a
 version waiting to be put back.
 
+### Two versions side by side
+
+A push does not cut the people using a site served by a process. The version
+that was serving keeps the visitors already on it, and the new one gets everyone
+who arrives:
+
+- the proxy sets `aegis_release=<sha>` (`HttpOnly; SameSite=Lax`, session) on
+  each visitor, naming the commit that served them, and routes them back to it
+  while it runs;
+- the outgoing version stops after `AEGIS_DRAIN_IDLE_MS` (30 minutes) without a
+  request from its visitors, or `AEGIS_DRAIN_MAX_MS` (8 hours) after the push.
+  A request with `X-Aegis-Background: 1` does not count as activity;
+- every proxied response carries `X-Aegis-Release: <sha>`, set by the proxy and
+  never by the application;
+- `GET /__aegis/release` answers `{ "served": "<sha>", "latest": "<sha>" }`, and
+  `GET /__aegis/release/switch?next=/path` moves the visitor to the newest
+  version and redirects to `next` on the same site. Both require a signed-in
+  visitor on a protected site, and answer 404 for a static one;
+- two versions at most. A commit pushed while one drains waits (`pendingSha`
+  on the project, shown on the card), a newer one replaces it, and the head of
+  the branch deploys once the old version stops. `POST
+  /api/deploy/projects/:id/redeploy` with `{ "force": true }` stops the draining
+  version and deploys now; without it, it answers 409 `queued`. A rollback or a
+  promote never waits.
+
+Both versions read the same `AEGIS_DATA_DIR` for up to the idle and hard limits
+above, so an application that changes its schema must keep it readable by the
+version before: add tables and columns, never drop or rename one in the same
+release. And anything it runs on a timer runs in both, unless it elects one.
+
 A project served by a process keeps every version under `releases/`, the one on
 the port included, and `current/` is a junction onto that one. Windows refuses
 to rename a folder a running process works in (`EBUSY`), and the old process is

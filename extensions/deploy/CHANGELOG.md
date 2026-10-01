@@ -2,6 +2,34 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.3.0
+
+**A push no longer cuts the people using the site.** For a project served by a
+process, the version that was serving keeps the visitors already on it, and
+the new one gets everyone who arrives. A cookie set by the proxy,
+`aegis_release`, names the commit that served each visitor; the old version
+stops after 30 minutes without a request from them, or 8 hours after the push
+whatever happens (`AEGIS_DRAIN_IDLE_MS`, `AEGIS_DRAIN_MAX_MS`). Before, it was
+killed five seconds after the flip, so a push had to wait until nobody was
+using the site.
+
+**A page can tell its visitor a new version is here.** Every proxied response
+carries `X-Aegis-Release`, the commit that answered. `GET /__aegis/release`
+returns `{ served, latest }`, and `/__aegis/release/switch?next=` moves the
+visitor to the newest version and back to their page. On a protected site both
+routes need a signed-in visitor. A request carrying `X-Aegis-Background: 1` is
+not counted as activity, so a page polling for a new version does not keep the
+old one alive.
+
+**Two versions at most.** A commit pushed while a previous version still serves
+its visitors waits, shown on the card, and deploys once that version stops. One
+place in the queue: a newer commit replaces the one waiting. **Deploy now**
+stops the draining version and deploys at once; a rollback never waits.
+
+**The runtime tests run on a range of their own.** They listened on 3200, the
+default runtime base, and failed with `EADDRINUSE` on any machine with something
+there.
+
 ## 0.2.9
 
 **A project served by a process deploys again after its first version.** Every
