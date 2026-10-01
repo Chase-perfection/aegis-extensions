@@ -18,66 +18,15 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 
-const harness = require('./harness');
-if (!harness.available) {
-    test('the Arbre des comptes page, inside the Aegis shell', { skip: harness.why }, () => {});
+const P = require('./page');
+if (!P.available) {
+    test('the Arbre des comptes page, inside the Aegis shell', { skip: P.why }, () => {});
     return;
 }
-const { serveFrontend, launchBrowser, openPage } = harness;
-const fixture = require('./fixtures/model.json');
+const { fixture, API, SID, OK_SCAN, open, settle, count, text, click } = P;
 
-const PAGE = '/pages/account-tiering.html';
-const API = '/api/account-tiering';
-const SID = (rid) => `S-1-5-21-1000-2000-3000-${rid}`;
-
-let server;
-let browser;
-
-before(async () => {
-    server = await serveFrontend();
-    browser = await launchBrowser();
-});
-
-after(async () => {
-    if (browser) await browser.close();
-    if (server) await server.close();
-});
-
-const OK_SCAN = { id: 's1', started_at: '2026-09-30T08:10:00Z', finished_at: '2026-09-30T08:12:00Z', status: 'ok', error_code: null, domain: null };
-
-function stubs(over) {
-    return {
-        [`${API}/model`]: { success: true, model: fixture.model },
-        [`${API}/settings`]: { success: true, settings: fixture.settings },
-        [`${API}/scan/status`]: { success: true, scan: OK_SCAN },
-        [`${API}/rules`]: { success: true, rules: fixture.rules },
-        [`${API}/remediations/`]: { success: true },
-        [`${API}/overrides/`]: { success: true },
-        ...over
-    };
-}
-
-/** Opens the page at a desktop width and waits until the first load has settled. */
-async function open(over) {
-    const map = stubs(over);
-    const opened = await openPage(browser, `${server.url}${PAGE}`, map);
-    const requests = [];
-    opened.page.on('request', (r) => requests.push({ method: r.method(), url: r.url(), body: r.postData() }));
-    await opened.page.setViewport({ width: 1680, height: 1000 });
-    await opened.page.waitForFunction(() => window.AccountTiering && window.AccountTiering.app
-        && window.AccountTiering.app.state.loading === false, { timeout: 10000 });
-    return { ...opened, requests, map };
-}
-
-const settle = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 60))));
-const count = (page, sel) => page.$$eval(sel, (els) => els.length);
-const text = (page, sel) => page.$eval(sel, (el) => el.textContent.trim());
-
-async function click(page, sel) {
-    assert.ok(await page.$(sel), `${sel} exists`);
-    await page.click(sel);
-    await settle(page);
-}
+before(P.start);
+after(P.stop);
 
 test('the tree renders the first account in gap: nodes, edges, and the "why" panel', async () => {
     const { page, close, pageErrors } = await open();
