@@ -36,14 +36,12 @@
         minus: '<path d="M5 12h14"/>',
         chevron: '<path d="M6 9l6 6 6-6"/>',
         swap: '<path d="M4 7h13l-3-3M20 17H7l3 3"/>',
-        search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
         close: '<path d="M6 6l12 12M18 6L6 18"/>',
         check: '<path d="M4 12l5 5L20 6"/>',
         copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>',
         up: '<path d="M6 15l6-6 6 6"/>',
         down: '<path d="M6 9l6 6 6-6"/>',
         trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M9 6V4h6v2"/>',
-        rules: '<path d="M4 6h10M4 12h16M4 18h7"/><circle cx="17" cy="6" r="2"/><circle cx="14" cy="18" r="2"/>',
         fit: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
         alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>'
     };
