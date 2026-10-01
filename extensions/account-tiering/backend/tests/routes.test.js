@@ -111,6 +111,76 @@ test('a second scan while one runs gives 409 scan_running', db(), async () => {
     await store.finishScan(memory, id, { status: 'failed', errorCode: 'x' });
 });
 
+/** Polls GET /scan/status until the latest scan leaves `running`. */
+async function settled(table) {
+    for (let i = 0; i < 50; i += 1) {
+        const r = await call(table, `GET ${BASE}/scan/status`, request());
+        if (r.body.scan && r.body.scan.status !== 'running') return r.body.scan;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error('the scan never settled');
+}
+
+test('a scan answers 202, records its facts, and the model follows', db(), async () => {
+    const memory = sqlite.openMemoryDb();
+    const edb = fakeExtensionDb(memory);
+    const table = mount({ extensionDb: edb });
+    let seen = null;
+    routes._setRunner(async (options) => {
+        seen = options;
+        return { ok: true, status: 'ok', facts: facts({ principals: [user(1200, 'alice')] }) };
+    });
+    try {
+        const started = await call(table, `POST ${BASE}/scan`, request());
+        assert.strictEqual(started.status, 202);
+        assert.ok(started.body.id);
+        const scan = await settled(table);
+        assert.strictEqual(scan.status, 'ok');
+        const model = await call(table, `GET ${BASE}/model`, request());
+        assert.strictEqual(model.status, 200);
+        assert.strictEqual(model.body.model.accounts.length, 1);
+        assert.strictEqual(path.dirname(seen.outFile), path.dirname(edb.pathForRequest()));
+        assert.strictEqual(path.basename(seen.outFile), `scan-${started.body.id}.json`);
+    } finally {
+        routes._setRunner(null);
+    }
+});
+
+test('a failed collector run is recorded with its code', db(), async () => {
+    const table = mount({ extensionDb: fakeExtensionDb(sqlite.openMemoryDb()) });
+    routes._setRunner(async () => ({ ok: false, code: 'domain_unreachable' }));
+    try {
+        const started = await call(table, `POST ${BASE}/scan`, request());
+        assert.strictEqual(started.status, 202);
+        const scan = await settled(table);
+        assert.deepStrictEqual([scan.status, scan.error_code], ['failed', 'domain_unreachable']);
+    } finally {
+        routes._setRunner(null);
+    }
+});
+
+test('two scans started at once: one runs, the other gets 409', db(), async () => {
+    const table = mount({ extensionDb: fakeExtensionDb(sqlite.openMemoryDb()) });
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    routes._setRunner(async () => {
+        await gate;
+        return { ok: true, status: 'ok', facts: facts() };
+    });
+    try {
+        const both = await Promise.all([
+            call(table, `POST ${BASE}/scan`, request()),
+            call(table, `POST ${BASE}/scan`, request())
+        ]);
+        assert.deepStrictEqual(both.map((r) => r.status).sort(), [202, 409]);
+        release();
+        assert.strictEqual((await settled(table)).status, 'ok');
+    } finally {
+        release();
+        routes._setRunner(null);
+    }
+});
+
 test('the model follows a rule change without a new scan, and carries remediations', db(), async () => {
     const memory = sqlite.openMemoryDb();
     await store.ensure(memory);

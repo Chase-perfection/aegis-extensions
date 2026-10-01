@@ -106,8 +106,26 @@ async function transaction(db, work) {
     });
 }
 
+/**
+ * The scan running in this process, if any. `ensure` runs once per handle, so
+ * a row left `running` after it (a finish that threw in the background) would
+ * otherwise block every later scan until a restart. Any running row this
+ * process does not own is therefore closed here, where the question is asked.
+ */
 async function runningScan(db) {
-    return db.get("SELECT id, started_at, status, domain FROM scans WHERE status = 'running' ORDER BY started_at DESC LIMIT 1");
+    const rows = await db.all("SELECT id, started_at, status, domain FROM scans WHERE status = 'running' ORDER BY started_at DESC");
+    let owned;
+    for (const row of rows) {
+        if (activeScans.has(row.id)) {
+            if (!owned) owned = row;
+        } else {
+            await db.run(
+                "UPDATE scans SET status = 'failed', error_code = 'scan_interrupted', finished_at = ? WHERE id = ? AND status = 'running'",
+                [now(), row.id]
+            );
+        }
+    }
+    return owned;
 }
 
 async function startScan(db, domain) {
@@ -123,8 +141,11 @@ async function finishScan(db, id, { status, errorCode = null, facts = null }) {
             'UPDATE scans SET status = ?, error_code = ?, finished_at = ?, facts_json = ? WHERE id = ?',
             [status, errorCode, now(), facts ? JSON.stringify(facts) : null, id]
         );
+        // Keep the newest scans, and the newest one with facts: a run of
+        // failures must not delete the only model the page can still show.
         await db.run(
-            `DELETE FROM scans WHERE id NOT IN (SELECT id FROM scans ORDER BY started_at DESC LIMIT ${KEEP_SCANS})`
+            `DELETE FROM scans WHERE id NOT IN (SELECT id FROM scans ORDER BY started_at DESC LIMIT ${KEEP_SCANS})
+             AND id NOT IN (SELECT id FROM scans WHERE status IN ('ok', 'partial') ORDER BY started_at DESC LIMIT 1)`
         );
     } finally {
         activeScans.delete(id);

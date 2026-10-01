@@ -34,6 +34,9 @@ const MAX_RULES = 200;
 const MAX_TEXT = 256;
 const DNS_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i;
 
+// Test seam, as in deploy's firewall.js: the real collector needs a domain.
+let runCollectorImpl = runCollector;
+
 const isTier = (v) => v === 0 || v === 1 || v === 2;
 const isText = (v) => typeof v === 'string' && v.trim().length > 0 && v.length <= MAX_TEXT;
 
@@ -56,6 +59,7 @@ function register(router, context) {
         : null;
     const log = typeof context.broadcastLog === 'function' ? context.broadcastLog : () => {};
     const models = new Map();
+    const starting = new Set();
 
     const fail = (res, status, error) => res.status(status).json({ success: false, error });
 
@@ -112,18 +116,34 @@ function register(router, context) {
         answerModel(req, res, db, (model) => res.json({ success: true, model }))));
 
     router.post(`${BASE}/scan`, admin, withStore(async (req, res, db) => {
-        if (await store.runningScan(db)) return fail(res, 409, 'scan_running');
-        const settings = await store.getSettings(db);
-        const id = await store.startScan(db, settings.domain);
+        // Checked and set before any await: two requests can both see no
+        // running scan in the database while the first is still inserting.
         const slug = req.tenant.slug;
+        if (starting.has(slug)) return fail(res, 409, 'scan_running');
+        starting.add(slug);
+        let id;
+        let settings;
+        try {
+            if (await store.runningScan(db)) return fail(res, 409, 'scan_running');
+            settings = await store.getSettings(db);
+            id = await store.startScan(db, settings.domain);
+        } finally {
+            starting.delete(slug);
+        }
         const outFile = path.join(path.dirname(edb.pathForRequest(req)), `scan-${id}.json`);
         res.status(202).json({ success: true, id });
 
-        runCollector({ domain: settings.domain, passes: settings.passes, outFile, onLine: (l) => log(slug, l) })
+        runCollectorImpl({ domain: settings.domain, passes: settings.passes, outFile, onLine: (l) => log(slug, l) })
             .then((result) => edb.withRequest(req, (later) => store.finishScan(later, id, result.ok
                 ? { status: result.status, facts: result.facts }
                 : { status: 'failed', errorCode: result.code })))
-            .catch((error) => console.error('[account-tiering] scan', error));
+            .catch((error) => {
+                console.error('[account-tiering] scan', error);
+                // One more try, so the row does not stay `running`; runningScan
+                // closes it anyway if this fails too.
+                return edb.withRequest(req, (later) => store.finishScan(later, id, { status: 'failed', errorCode: 'internal' }))
+                    .catch((again) => console.error('[account-tiering] scan not recorded', again));
+            });
     }));
 
     router.get(`${BASE}/scan/status`, admin, withStore(async (req, res, db) => {
@@ -187,4 +207,9 @@ function register(router, context) {
         })));
 }
 
-module.exports = { register };
+/** Swaps the collector for tests; `null` restores the real one. */
+function _setRunner(fn) {
+    runCollectorImpl = fn || runCollector;
+}
+
+module.exports = { register, _setRunner };

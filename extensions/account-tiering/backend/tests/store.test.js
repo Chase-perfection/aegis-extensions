@@ -62,6 +62,40 @@ test('a scan running in this process survives a reopened handle', opts, async ()
     await store.finishScan(first, id, { status: 'failed', errorCode: 'x' });
 });
 
+test('five failures in a row do not evict the last good scan', opts, async () => {
+    const db = await fresh();
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 3));
+    const good = await store.startScan(db, null);
+    await store.finishScan(db, good, { status: 'ok', facts: { schema: 1 } });
+    for (let i = 0; i < 6; i += 1) {
+        // Distinct start times: the prune orders by started_at.
+        await pause();
+        const id = await store.startScan(db, null);
+        await store.finishScan(db, id, { status: 'failed', errorCode: 'domain_unreachable' });
+    }
+    assert.deepStrictEqual(await store.latestFacts(db), { id: good, facts: { schema: 1 } });
+    const { n } = await db.get('SELECT COUNT(*) AS n FROM scans');
+    assert.strictEqual(n, store.KEEP_SCANS + 1);
+});
+
+test('a running row nobody in this process owns is cleared by runningScan', opts, async () => {
+    const db = await fresh();
+    await db.run("INSERT INTO scans (id, started_at, status) VALUES ('ghost', ?, 'running')", [new Date().toISOString()]);
+    assert.strictEqual(await store.runningScan(db), undefined);
+    const row = await db.get("SELECT status, error_code, finished_at FROM scans WHERE id = 'ghost'");
+    assert.deepStrictEqual([row.status, row.error_code], ['failed', 'scan_interrupted']);
+    assert.ok(row.finished_at);
+});
+
+test('runningScan still returns a scan started in this process', opts, async () => {
+    const db = await fresh();
+    await db.run("INSERT INTO scans (id, started_at, status) VALUES ('ghost', ?, 'running')", [new Date().toISOString()]);
+    const id = await store.startScan(db, null);
+    assert.strictEqual((await store.runningScan(db)).id, id);
+    assert.strictEqual((await db.get("SELECT status FROM scans WHERE id = 'ghost'")).status, 'failed');
+    await store.finishScan(db, id, { status: 'failed', errorCode: 'x' });
+});
+
 test('rules are replaced as a whole, in the order given', opts, async () => {
     const db = await fresh();
     await store.replaceRules(db, [{ kind: 'name', pattern: '*-adm', tier: 0 }, { kind: 'ou', pattern: 'OU=X,DC=corp,DC=local', tier: 1 }], 'ops@corp.local');
