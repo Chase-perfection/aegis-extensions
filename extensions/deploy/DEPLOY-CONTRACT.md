@@ -129,7 +129,11 @@ account.
 5. Picks the served directory: the clone root, or the subfolder you named.
 6. Runs the acceptance test below. A refusal stops here, and the previous version
    of the site keeps serving.
-7. Deletes `.git`, then renames staging over `current` in one operation.
+7. Deletes `.git`, then renames staging over `current` in one operation. A
+   project served by a process is different: its version goes to
+   `releases/<sha>` and stays there, its process starts in that folder, and
+   `current` becomes a junction onto it once the process answers. See
+   **Releases and rollback**.
 8. Serves `current` at `/` on the project's own port.
 9. Photographs the site's first screen for the project card, from `127.0.0.1`
    on its own port. See **The card thumbnail** below.
@@ -622,6 +626,16 @@ A project keeps the five versions it published before the one on the port, a
 folder per commit under `releases/`. `current/` is the site; a release is a
 version waiting to be put back.
 
+A project served by a process keeps every version under `releases/`, the one on
+the port included, and `current/` is a junction onto that one. Windows refuses
+to rename a folder a running process works in (`EBUSY`), and the old process is
+still serving while the new one boots, so these folders never move: a new
+version, a promote and a rollback each start a process in its own folder and
+then repoint the junction, which does not touch the folder behind it. Pruning
+never deletes a version a process may still run from. A project deployed by
+Deploy 0.2.8 or older still has a real `current/` folder; the first deployment
+after the upgrade files it under its commit as soon as its process has stopped.
+
 `POST /api/deploy/projects/:id/promote` with `{ "sha": "..." }` renames one of
 them onto the port. `POST /api/deploy/projects/:id/rollback` does the same to
 the most recent one, which is the one-click version of the same action. No
@@ -1085,10 +1099,11 @@ Under the tenant's deploy folder, one folder per project:
 
 | Path under `tenants/<slug>/deploy/sites/<project>/` | What it is | The runtime account may |
 |---|---|---|
-| `current/` | The published version: the repository after install and build. The start command's working directory | Read and execute, never write: a process that can rewrite what it serves can serve something nobody deployed |
+| `current/` | The published version: the repository after install and build. For a process, a junction onto `releases/<sha>`, the start command's working directory | Read and execute, never write: a process that can rewrite what it serves can serve something nobody deployed |
 | `data/` | `AEGIS_DATA_DIR`. Kept across deployments, rollbacks and promotes. `dbFile` lives here | Modify |
 | `run-home/<port>/` | The process's own profile: `TEMP`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, and `server.log`. One per internal port, because the outgoing and incoming versions of a push run side by side | Modify |
-| `staging/`, `releases/`, `build-output/` | Aegis's own working folders | Nothing |
+| `releases/<sha>/` | The versions kept for a rollback. For a project served by a process, also the folder its process runs in | Read and execute on the one it runs from |
+| `staging/`, `build-output/` | Aegis's own working folders | Nothing |
 
 Aegis grants these rights itself, with `icacls`, before every start. None of
 them is for an operator to set by hand, and a folder replaced by a publish gets
@@ -1099,8 +1114,10 @@ So an application must:
 - listen on `PORT` and `HOST` (`127.0.0.1`); the proxy is the only way in;
 - write its database and uploads under `AEGIS_DATA_DIR`, never beside its code;
 - write temporary files to `TEMP`, which already points into its own home;
-- expect `current/` as its working directory, so a relative path such as
-  `packaging/api/kpi_api.py` resolves.
+- expect its version folder as its working directory, so a relative path such
+  as `packaging/api/kpi_api.py` resolves. That folder is `releases/<sha>`, not
+  `current/`: never build an absolute path through `current/`, which may point at
+  a newer version than the one running.
 
 The application reads `PORT` and `HOST` from its environment, plus `NODE_ENV`,
 `AEGIS_DATA_DIR`, `AEGIS_PROXY_KEY` and every variable the project declared.
