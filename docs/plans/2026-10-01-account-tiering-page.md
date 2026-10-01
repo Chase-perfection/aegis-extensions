@@ -169,6 +169,19 @@ le mauvais SID.
 Comptes à la fin : 156 tests de l'extension avec le banc du cœur, aucun échec ;
 sans lui, 114 réussis et les 4 fichiers de page sautés.
 
+## Le collecteur n'est pas écrit
+
+La livraison 2, `collect/collect-tiering.ps1`, n'existe pas. Le 2026-10-01, la
+session qui a écrit ce plan ne l'a pas produite : sa réponse a été arrêtée par
+un filtre de sécurité pendant qu'elle rédigeait ce script, et elle a indiqué à
+Paul ne pas pouvoir l'écrire dans cette session. Paul en a besoin.
+
+Ce qui l'attend déjà : le format des faits (conception, « Collecte »), le
+lanceur `backend/runner.js` (arguments, lignes `AT-ERROR <code>`, code de
+sortie 2, BOM retiré), l'analyse et la page. Sans lui, « Relancer l'analyse »
+finit en `collector_failed`. Il se teste sur un faux annuaire, puis dans la VM
+corp.local, jamais sur le domaine réel du poste de développement.
+
 ## Points ouverts
 
 | Point | Pour quand |
