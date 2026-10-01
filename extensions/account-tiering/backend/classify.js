@@ -23,12 +23,39 @@ function ouMatches(dn, pattern) {
     return d === p || d.endsWith(',' + p);
 }
 
-function globToRegExp(glob) {
-    const body = String(glob)
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .replace(/\*/g, '.*')
-        .replace(/\?/g, '.');
-    return new RegExp('^' + body + '$', 'i');
+/**
+ * Whether `text` matches `glob`, case-insensitive. Not a regular expression:
+ * `*` turned into `.*` backtracks exponentially on a pattern like `*a*a*a…b`,
+ * and one such rule would block the event loop for every tenant. This is the
+ * two-pointer matcher that remembers only the last `*`, so a mismatch costs at
+ * most glob length times text length steps, never more.
+ */
+function globMatch(glob, text) {
+    const g = String(glob).toLowerCase();
+    const t = String(text).toLowerCase();
+    let gi = 0;
+    let ti = 0;
+    let star = -1;
+    let resume = 0;
+    while (ti < t.length) {
+        if (gi < g.length && (g[gi] === '?' || (g[gi] !== '*' && g[gi] === t[ti]))) {
+            gi += 1;
+            ti += 1;
+        } else if (gi < g.length && g[gi] === '*') {
+            star = gi;
+            gi += 1;
+            resume = ti;
+        } else if (star >= 0) {
+            // Let the last `*` swallow one more character and retry from there.
+            gi = star + 1;
+            resume += 1;
+            ti = resume;
+        } else {
+            return false;
+        }
+    }
+    while (gi < g.length && g[gi] === '*') gi += 1;
+    return gi === g.length;
 }
 
 /** Every group a principal belongs to, nested membership included, cycles cut. */
@@ -60,10 +87,6 @@ function classify(facts, rules, overrides) {
     }
     const byOverride = new Map((overrides || []).map((o) => [o.sid, o]));
     const ordered = [...(rules || [])].sort((a, b) => a.position - b.position);
-    const compiled = ordered.map((rule) => ({
-        rule,
-        test: rule.kind === 'name' ? globToRegExp(rule.pattern) : null
-    }));
     const cache = new Map();
 
     const out = new Map();
@@ -73,17 +96,17 @@ function classify(facts, rules, overrides) {
             out.set(p.sid, { tier: override.tier, source: { type: 'override' } });
             continue;
         }
-        const hit = compiled.find(({ rule, test }) => {
+        const hit = ordered.find((rule) => {
             if (rule.kind === 'ou') return ouMatches(p.dn, rule.pattern);
-            if (rule.kind === 'name') return test.test(p.sam || '');
+            if (rule.kind === 'name') return globMatch(rule.pattern, p.sam || '');
             if (rule.kind === 'group') return groupsOf(p.sid, parents, cache).has(rule.pattern);
             return false;
         });
         out.set(p.sid, hit
-            ? { tier: hit.rule.tier, source: { type: 'rule', ruleId: hit.rule.id } }
+            ? { tier: hit.tier, source: { type: 'rule', ruleId: hit.id } }
             : { tier: 2, source: { type: 'default' } });
     }
     return out;
 }
 
-module.exports = { classify, ouMatches, globToRegExp };
+module.exports = { classify, ouMatches, globMatch };

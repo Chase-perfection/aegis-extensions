@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { classify, ouMatches, globToRegExp } = require('../classify');
+const { classify, ouMatches, globMatch } = require('../classify');
 const { ROOT_DN, sid, user, group, facts } = require('./facts');
 
 const F = facts({
@@ -56,6 +56,19 @@ test('ouMatches only on an RDN boundary, case-insensitive', () => {
 test('a name glob treats * and ? as wildcards and every other character literally', () => {
     const yes = [['paul-adm', '*-adm'], ['PAUL-ADM', '*-adm'], ['t0-a', 't0-?'], ['a.b', 'a.b'], ['svc(x)', 'svc(x)']];
     const no = [['paul-adm2', '*-adm'], ['paul.adm', '*-adm'], ['t0-ab', 't0-?'], ['axb', 'a.b'], ['xpaul-adm', 'paul-adm']];
-    for (const [sam, glob] of yes) assert.ok(globToRegExp(glob).test(sam), `${glob} should match ${sam}`);
-    for (const [sam, glob] of no) assert.ok(!globToRegExp(glob).test(sam), `${glob} should not match ${sam}`);
+    for (const [sam, glob] of yes) assert.ok(globMatch(glob, sam), `${glob} should match ${sam}`);
+    for (const [sam, glob] of no) assert.ok(!globMatch(glob, sam), `${glob} should not match ${sam}`);
+});
+
+test('a glob built to backtrack is refused in linear time, not after minutes', () => {
+    const started = process.hrtime.bigint();
+    assert.strictEqual(globMatch('*a'.repeat(40) + 'b', 'a'.repeat(5000)), false);
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.ok(ms < 100, `took ${ms} ms`);
+});
+
+test('a name rule matches through globMatch, stars at either end and in the middle', () => {
+    const out = classify(F, [rule('nm', 1, 'name', '*LI*-A?M*', 0)], []);
+    assert.strictEqual(out.get(sid(1200)).tier, 0);
+    assert.strictEqual(out.get(sid(1201)).tier, 2);
 });
