@@ -85,15 +85,20 @@
         ['group', T('at_kind_group', 'Groupe'), T('at_kind_group_ph', 'SID du groupe')]
     ];
 
+    /**
+     * One rule as a table row. Each control sits INSIDE its cell: `role="cell"`
+     * on the control itself would replace its own role, and a screen reader
+     * would announce a cell where there is a list or a text field.
+     */
     function ruleRowHtml(r, i) {
         const kinds = KINDS();
         const ph = (kinds.find((k) => k[0] === r.kind) || kinds[0])[2];
         const last = i === draft.length - 1;
         return `<div class="at-rule" role="row" data-row="${i}">
             <span class="at-rule-n" role="cell">${i + 1}</span>
-            <select class="at-select" role="cell" data-field="kind" data-key="rule-kind:${i}" aria-label="${esc(T('at_rule_kind', 'Type de la règle {n}', { n: i + 1 }))}">${kinds.map((k) => `<option value="${k[0]}"${k[0] === r.kind ? ' selected' : ''}>${esc(k[1])}</option>`).join('')}</select>
-            <input class="at-input" role="cell" type="text" maxlength="256" data-field="pattern" data-key="rule-pattern:${i}" value="${esc(r.pattern)}" placeholder="${esc(ph)}" aria-label="${esc(T('at_rule_pattern', 'Motif de la règle {n}', { n: i + 1 }))}"${r.kind === 'group' ? ' list="at-group-sids"' : ''}>
-            <select class="at-select" role="cell" data-field="tier" data-key="rule-tier:${i}" aria-label="${esc(T('at_rule_tier', 'Tier de la règle {n}', { n: i + 1 }))}">${[0, 1, 2].map((t) => `<option value="${t}"${t === r.tier ? ' selected' : ''}>${esc(T('at_tier_n', 'Tier {tier}', { tier: t }))}</option>`).join('')}</select>
+            <div class="at-rule-cell" role="cell"><select class="at-select" data-field="kind" data-key="rule-kind:${i}" aria-label="${esc(T('at_rule_kind', 'Type de la règle {n}', { n: i + 1 }))}">${kinds.map((k) => `<option value="${k[0]}"${k[0] === r.kind ? ' selected' : ''}>${esc(k[1])}</option>`).join('')}</select></div>
+            <div class="at-rule-cell" role="cell"><input class="at-input" type="text" maxlength="256" data-field="pattern" data-key="rule-pattern:${i}" value="${esc(r.pattern)}" placeholder="${esc(ph)}" aria-label="${esc(T('at_rule_pattern', 'Motif de la règle {n}', { n: i + 1 }))}"${r.kind === 'group' ? ' list="at-group-sids"' : ''}></div>
+            <div class="at-rule-cell" role="cell"><select class="at-select" data-field="tier" data-key="rule-tier:${i}" aria-label="${esc(T('at_rule_tier', 'Tier de la règle {n}', { n: i + 1 }))}">${[0, 1, 2].map((t) => `<option value="${t}"${t === r.tier ? ' selected' : ''}>${esc(T('at_tier_n', 'Tier {tier}', { tier: t }))}</option>`).join('')}</select></div>
             <span class="at-rule-tools" role="cell">
                 <button type="button" class="at-icon-btn at-icon-btn-sm" data-move="-1" data-key="rule-up:${i}" aria-label="${esc(T('at_rule_up', 'Monter la règle {n}', { n: i + 1 }))}"${i === 0 ? ' disabled' : ''}>${icon('up')}</button>
                 <button type="button" class="at-icon-btn at-icon-btn-sm" data-move="1" data-key="rule-down:${i}" aria-label="${esc(T('at_rule_down', 'Descendre la règle {n}', { n: i + 1 }))}"${last ? ' disabled' : ''}>${icon('down')}</button>

@@ -300,6 +300,10 @@
 .at-rule-head-row { font-size: var(--ag-fs-caption); font-weight: 500; color: var(--ag-muted); }
 .at-rule-n { font-family: var(--ag-font-mono); font-size: var(--ag-fs-mono); color: var(--ag-meta); text-align: right; }
 .at-rule-tools { display: flex; gap: var(--ag-space-1); }
+/* The cell wraps its control (the control keeps its own role), so the control
+   has to be told to fill the column the cell sits in. */
+.at-rule-cell { min-width: 0; }
+.at-rule-cell > .at-select { width: 100%; }
 
 @media (prefers-reduced-motion: reduce) {
     .at-pill { transition: none; }

@@ -123,23 +123,63 @@
     }
 
     const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const REGIONS = '#at-left, #at-centre, #at-panel';
+
+    /**
+     * Where focus is, in terms that survive a render: the element's `data-key`
+     * (stable across redraws), its caret if it is a text field, and the region
+     * it sits in. Null when focus is outside the page's own view, in which
+     * case nothing must be moved.
+     */
+    function focusMark() {
+        const view = document.getElementById('at-view');
+        const el = document.activeElement;
+        if (!view || !el || el === view || !view.contains(el)) return null;
+        const mark = { el, key: el.dataset.key || null, region: el.closest(REGIONS), caret: null };
+        // Only text fields have a caret; reading it on a checkbox throws.
+        if (el.matches('textarea, input[type="text"]')) mark.caret = [el.selectionStart, el.selectionEnd];
+        return mark;
+    }
+
+    /**
+     * Puts focus back where `mark` says it was. The regions are redrawn as
+     * HTML, so the element itself is usually gone: its twin with the same
+     * `data-key` takes focus, and when there is none (the button became a
+     * badge, the row was filtered out) the region does, never the body, from
+     * where a keyboard user would start again at the top of the page.
+     */
+    function focusBack(mark) {
+        if (!mark) return;
+        const same = mark.el && document.contains(mark.el) ? mark.el : null;
+        if (same && same === document.activeElement) return;
+        const twin = same || (mark.key ? document.querySelector(`#at-view [data-key="${CSS.escape(mark.key)}"]`) : null);
+        if (twin && !twin.disabled) {
+            twin.focus({ preventScroll: true });
+            if (twin !== same && mark.caret && twin.setSelectionRange) twin.setSelectionRange(mark.caret[0], mark.caret[1]);
+            return;
+        }
+        const region = mark.region && document.contains(mark.region) ? mark.region : document.getElementById('at-view');
+        if (region) region.focus({ preventScroll: true });
+    }
 
     /**
      * Opens `html` as a modal dialog in #at-dialog-root. Focus moves in, Tab
      * cycles inside, Escape or the scrim closes, and focus returns to the
-     * element that opened it. Returns { el, close }.
+     * control that opened it, found again by its key if a render replaced it
+     * while the dialog was open. Returns { el, close }.
      */
     function openDialog(html, opts) {
         const o = opts || {};
         const host = document.getElementById('at-dialog-root');
-        const opener = document.activeElement;
+        const opener = focusMark();
         host.innerHTML = `<div class="at-modal"><button type="button" class="at-scrim" data-dlg-close tabindex="-1" aria-label="${esc(T('at_close', 'Fermer'))}"></button>${html}</div>`;
         const dlg = host.querySelector('[role="dialog"]');
         const close = () => {
             host.innerHTML = '';
             document.removeEventListener('keydown', onKey, true);
             if (o.onClose) o.onClose();
-            if (opener && document.contains(opener)) opener.focus();
+            // Opened with focus outside the view: it still comes back into the view, not to the body.
+            focusBack(opener || {});
         };
         const onKey = (e) => {
             if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
@@ -184,5 +224,5 @@
         }
     }
 
-    AT.ui = { T, esc, icon, sevHtml, accountMark, TIER_NAMES, errorText, dateText, translateStatic, openDialog, toast, copyText };
+    AT.ui = { T, esc, icon, sevHtml, accountMark, TIER_NAMES, errorText, dateText, translateStatic, focusMark, focusBack, openDialog, toast, copyText };
 })();

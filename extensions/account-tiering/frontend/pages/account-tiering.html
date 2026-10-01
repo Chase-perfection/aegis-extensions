@@ -47,7 +47,9 @@
         <nav id="aegis-navbar" class="aegis-navbar"></nav>
 
         <main class="main-content">
-            <section id="at-view" class="content-area active at-view">
+            <!-- tabindex="-1" on the view and its three regions: they are where focus
+                 falls back when a render removes the control that had it. -->
+            <section id="at-view" class="content-area active at-view" tabindex="-1">
                 <header class="at-titlebar">
                     <div class="at-titlebar-text">
                         <div class="at-crumb" data-at-i18n="at_crumb">Gestion du parc › Arbre des comptes</div>
@@ -81,7 +83,7 @@
                 <div id="at-state" class="at-state" hidden></div>
 
                 <div id="at-body" class="at-body" hidden>
-                    <aside id="at-left" class="at-left" data-at-i18n-attr="aria-label:at_left_label|Comptes">
+                    <aside id="at-left" class="at-left" tabindex="-1" data-at-i18n-attr="aria-label:at_left_label|Comptes">
                         <div class="at-pad at-stack">
                             <label class="at-label" for="at-search" data-at-i18n="at_search_label">Rechercher un compte</label>
                             <div class="at-search">
@@ -96,8 +98,8 @@
                         </div>
                         <div id="at-left-dyn" class="at-left-dyn"></div>
                     </aside>
-                    <div id="at-centre" class="at-centre"></div>
-                    <aside id="at-panel" class="at-panel" data-at-i18n-attr="aria-label:at_panel_label|Détail de la sélection"></aside>
+                    <div id="at-centre" class="at-centre" tabindex="-1"></div>
+                    <aside id="at-panel" class="at-panel" tabindex="-1" data-at-i18n-attr="aria-label:at_panel_label|Détail de la sélection"></aside>
                 </div>
 
                 <div id="at-dialog-root"></div>

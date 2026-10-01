@@ -17,7 +17,7 @@
     'use strict';
 
     const AT = (window.AccountTiering = window.AccountTiering || {});
-    const { T, esc, icon, accountMark, errorText, dateText, translateStatic, toast } = AT.ui;
+    const { T, esc, icon, accountMark, errorText, dateText, translateStatic, toast, focusMark, focusBack } = AT.ui;
     const BASE = '/api/account-tiering';
     const POLL_MS = 2000;
     const POLL_TRIES = 5;
@@ -193,7 +193,8 @@
                 n: vm.kpis.accounts, g: vm.kpis.gaps, domain: domainShown(), date: dateText(vm.collectedAt)
             })
             : T('at_meta_none', 'Aucune analyse affichable · {domain}', { domain: domainShown() });
-        meta.textContent = line;
+        // aria-live: assigning the same text again would have it read again on every render.
+        if (meta.textContent !== line) meta.textContent = line;
         const scan = byId('at-scan');
         scan.disabled = state.scanning;
         scan.textContent = state.scanning ? T('at_scanning', 'Analyse en cours…') : T('at_scan', "Relancer l'analyse");
@@ -349,7 +350,7 @@
     }
 
     function render() {
-        const focusKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null;
+        const focus = focusMark();
         renderHeader();
         renderBanners();
         renderState();
@@ -365,10 +366,7 @@
                 renderState();
             }
         }
-        if (focusKey) {
-            const el = document.querySelector(`#at-view [data-key="${CSS.escape(focusKey)}"]`);
-            if (el && el !== document.activeElement && !el.disabled) el.focus({ preventScroll: true });
-        }
+        focusBack(focus);
     }
 
     AT.app = { state, call, set, render, reloadModel, openAccount, NO_OVERRIDE, get vm() { return vm; } };

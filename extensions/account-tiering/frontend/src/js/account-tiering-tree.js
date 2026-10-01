@@ -8,6 +8,10 @@
  * `fitKey`), or when the stage is resized before the user moved the view.
  * No easing and no transition on the transform: the mockup moves directly,
  * which also keeps it honest under prefers-reduced-motion.
+ *
+ * A pan or zoom frame writes styles and reads nothing: the stage size and the
+ * viewport position come from a cache, and the zoom label (aria-live) is only
+ * written when its text changes.
  */
 (function () {
     'use strict';
@@ -17,7 +21,7 @@
     const Gr = AT.graph;
     const { sevOf, worst } = AT.model;
 
-    const view = { x: 0, y: 0, z: 1, key: null, bottom: 600, ms: 0.1, moved: false, drag: null };
+    const view = { x: 0, y: 0, z: 1, key: null, bottom: 600, ms: 0.1, moved: false, drag: null, W: 0, H: 0, origin: null };
     let observer = null;
 
     /** The graph, the selection and its highlight for the current state. Shared with the panel. */
@@ -163,10 +167,23 @@
         return `${MARKERS}<div class="at-vp" id="at-vp"><div class="at-layer" id="at-layer" style="height:${c.G.bottom + 200}px">${headsHtml(c)}${edgesHtml(c)}${nodes}</div></div>${legendHtml()}${controlsHtml(mini)}`;
     }
 
-    function stageSize() {
-        const vp = document.getElementById('at-vp');
-        const r = vp ? vp.getBoundingClientRect() : null;
-        return r && r.width ? { W: r.width, H: r.height } : { W: 1000, H: 700 };
+    /**
+     * The stage size, from the cache. It is measured when a tree is mounted and
+     * when the ResizeObserver fires, never in apply(): a layout read between
+     * two transform writes would force a reflow on every pan and zoom frame.
+     */
+    const stageSize = () => ({ W: view.W || 1000, H: view.H || 700 });
+
+    function measure(width, height) {
+        let w = width;
+        let h = height;
+        if (!w) {
+            const vp = document.getElementById('at-vp');
+            const r = vp ? vp.getBoundingClientRect() : null;
+            w = r ? r.width : 0;
+            h = r ? r.height : 0;
+        }
+        if (w) { view.W = w; view.H = h; }
     }
 
     function fit() {
@@ -190,12 +207,59 @@
             r.style.width = `${W / view.z * view.ms}px`;
             r.style.height = `${H / view.z * view.ms}px`;
         }
+        // aria-live: written only when the figure changes, or a screen reader
+        // would be handed the same "85 %" on every frame of a pan.
         const label = document.getElementById('at-zoom-label');
-        if (label) label.textContent = T('at_zoom_pct', '{n} %', { n: Math.round(view.z * 100) });
+        const pct = T('at_zoom_pct', '{n} %', { n: Math.round(view.z * 100) });
+        if (label && label.textContent !== pct) label.textContent = pct;
         const out = document.getElementById('at-zoom-out');
         const inn = document.getElementById('at-zoom-in');
         if (out) out.disabled = view.z <= Gr.ZMIN + 1e-9;
         if (inn) inn.disabled = view.z >= Gr.ZMAX - 1e-9;
+    }
+
+    /**
+     * The viewport's position in the window, read once per wheel gesture and
+     * forgotten shortly after the last event: reading it per event would force
+     * a layout between two zoom frames, and keeping it longer would miss a
+     * page scroll.
+     */
+    function origin(vp) {
+        if (!view.origin) {
+            const r = vp.getBoundingClientRect();
+            view.origin = { left: r.left, top: r.top };
+        }
+        clearTimeout(view.originTimer);
+        view.originTimer = setTimeout(() => { view.origin = null; }, 250);
+        return view.origin;
+    }
+
+    /**
+     * Pans just enough to bring a node inside the stage. A node reached with
+     * Tab can sit anywhere on the layer, and focus on something the user
+     * cannot see is focus lost. Its place comes from its own style (layer
+     * coordinates), so nothing is measured. The bottom margin is the strip
+     * the legend and the mini-map cover.
+     */
+    function reveal(node) {
+        const PAD = 16;
+        const LOW = 96;
+        const { W, H } = stageSize();
+        const left = view.x + parseFloat(node.style.left) * view.z;
+        const top = view.y + parseFloat(node.style.top) * view.z;
+        const w = Gr.CW * view.z;
+        const h = Gr.CH * view.z;
+        let dx = 0;
+        let dy = 0;
+        if (left < PAD) dx = PAD - left;
+        else if (left + w > W - PAD) dx = W - PAD - (left + w);
+        if (top < PAD) dy = PAD - top;
+        else if (top + h > H - LOW) dy = H - LOW - (top + h);
+        if (!dx && !dy) return;
+        view.x += dx;
+        view.y += dy;
+        view.moved = true;
+        apply();
     }
 
     function zoomAt(px, py, z) {
@@ -211,12 +275,13 @@
     function mount() {
         const vp = document.getElementById('at-vp');
         if (!vp) return;
+        measure();
         if (view.pendingFit) { view.pendingFit = false; fit(); } else apply();
         vp.addEventListener('wheel', (e) => {
             e.preventDefault();
-            const r = vp.getBoundingClientRect();
             if (e.ctrlKey || e.metaKey) {
-                zoomAt(e.clientX - r.left, e.clientY - r.top, view.z * Math.exp(-e.deltaY * 0.002));
+                const o = origin(vp);
+                zoomAt(e.clientX - o.left, e.clientY - o.top, view.z * Math.exp(-e.deltaY * 0.002));
                 return;
             }
             const unit = e.deltaMode === 1 ? 16 : 1;
@@ -248,9 +313,25 @@
         vp.addEventListener('pointercancel', up);
 
         const stage = document.getElementById('at-stage');
+        // The browser answers a focus outside the visible area by scrolling the
+        // clipped boxes, which would shift the layer under a view (and a
+        // mini-map) that know nothing of it. The scroll is undone and the view
+        // pans instead, so there is one position and it is `view`.
+        const unscroll = (e) => { e.currentTarget.scrollLeft = 0; e.currentTarget.scrollTop = 0; };
+        vp.addEventListener('scroll', unscroll);
+        if (stage) stage.onscroll = unscroll;
+        vp.addEventListener('focusin', (e) => {
+            const node = e.target.closest('.at-node');
+            if (node) reveal(node);
+        });
+
         if (observer) observer.disconnect();
         if (stage && typeof ResizeObserver === 'function') {
-            observer = new ResizeObserver(() => { if (view.moved) apply(); else fit(); });
+            observer = new ResizeObserver((entries) => {
+                const box = entries[0] && entries[0].contentRect;
+                measure(box && box.width, box && box.height);
+                if (view.moved) apply(); else fit();
+            });
             observer.observe(stage);
         }
     }
