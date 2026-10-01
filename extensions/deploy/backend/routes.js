@@ -1166,6 +1166,12 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // A process that is not running leaves the port answering 503, which is
         // a different state from a site that never deployed.
         running: p.runtime === 'node' ? runtime.isRunning(req.tenant.slug, p.id) : null,
+        // The version still serving the visitors who were on it when the last
+        // one was deployed, or null. While it is here a new commit waits as
+        // `pendingSha`, and the card says so.
+        draining: p.runtime === 'node' ? runtime.versions(req.tenant.slug, p.id).draining : null,
+        pendingSha: p.pendingSha || null,
+        pendingAt: p.pendingAt || null,
         // Set on a preview, null on a project. The page groups by it.
         parentId: p.parentId || null,
         // Whether a thumbnail has been captured for what is currently on the
@@ -1583,15 +1589,21 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 project,
                 trigger: 'manual',
                 actor: req.user.email,
-                run
+                run,
+                // "Deploy now": the version still serving its visitors is
+                // stopped and they move to this one. Without it a project
+                // with a draining version queues the deployment.
+                force: (req.body || {}).force === true
             });
             if (!result.deployed) {
-                // Already deploying. Not an error: the operator clicked twice, or
-                // the poller got there first. The run this request opened never
-                // ran anything, so it is dropped rather than left on the
-                // Deployments list as a deployment that did nothing.
-                runs.finish(run, 'failed', 'busy');
-                return res.status(409).json({ success: false, error: 'busy' });
+                // Already deploying, or waiting for the previous version to
+                // finish serving its visitors. Not an error either way: the run
+                // this request opened never ran anything, so it is dropped
+                // rather than left on the Deployments list as a deployment that
+                // did nothing.
+                const reason = result.reason || 'busy';
+                runs.finish(run, 'failed', reason);
+                return res.status(409).json({ success: false, error: reason });
             }
             const stored = projectStore.getProject(req.tenantPaths, req.params.id);
             startSiteFor({ slug: req.tenant.slug, tenantPaths: req.tenantPaths, project: stored });
@@ -1733,8 +1745,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 // The branch is saved either way: the poller will pick it up on
                 // its next tick, so the operator is not left with a record that
                 // says one thing and a port that serves another indefinitely.
-                runs.finish(run, 'failed', 'busy');
-                return res.status(409).json({ success: false, error: 'busy', branch });
+                runs.finish(run, 'failed', result.reason || 'busy');
+                return res.status(409).json({ success: false, error: result.reason || 'busy', branch });
             }
             const stored = projectStore.getProject(req.tenantPaths, moved.id);
             startSiteFor({ slug: req.tenant.slug, tenantPaths: req.tenantPaths, project: stored });

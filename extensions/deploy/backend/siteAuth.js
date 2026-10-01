@@ -86,6 +86,19 @@ const ASSETS = {
     '/__aegis/nevera.otf': { file: 'Nevera-Regular.otf', type: 'font/otf' }
 };
 
+/*
+ * Which version of a site served by a process this visitor is on, and the door
+ * to the newest one. Answered by siteServer.js, which knows the processes; the
+ * guard only lets them through, and only to a visitor it would let into the
+ * site itself. See `isReleasePath`.
+ */
+const RELEASE_PATH = '/__aegis/release';
+const RELEASE_SWITCH_PATH = '/__aegis/release/switch';
+
+function isReleasePath(pathOnly) {
+    return pathOnly === RELEASE_PATH || pathOnly === RELEASE_SWITCH_PATH;
+}
+
 const SESSION_COOKIE = 'aegis_site';
 const CSRF_COOKIE = 'aegis_site_csrf';
 const SESSION_MS = 8 * 60 * 60 * 1000;
@@ -842,6 +855,9 @@ function gate(req, res, { slug, tenantPaths, project, root }) {
     const method = methodFor(slug, tenantPaths, projectId);
 
     if (method === authMethods.NONE) {
+        // The release routes are the site server's, and an open site hides
+        // nothing behind them that the site itself does not show.
+        if (isReleasePath(pathOnly)) return false;
         // The prefix is reserved even here, so that turning protection on later
         // cannot be shadowed by a file the repository already contains.
         if (reserved) { notFound(res); return true; }
@@ -946,6 +962,11 @@ function gate(req, res, { slug, tenantPaths, project, root }) {
         res.end(req.method === 'HEAD' ? undefined : json);
         return true;
     }
+
+    // Past the door only: which commits a protected site runs is not for a
+    // visitor who has not signed in. Without a session it is a reserved path
+    // like any other, and answers 404.
+    if (session && isReleasePath(pathOnly)) return false;
 
     if (reserved) { notFound(res); return true; }
 
@@ -1253,6 +1274,7 @@ function dropSessions(slug, projectId) {
 module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
     PREFIX, LOGIN_PATH, WHOAMI_PATH, SESSION_COOKIE, LOCK_THRESHOLD, LOCK_MS,
+    RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, safeNext, readCookie,
     // Test seams. Not part of the contract's public surface; nothing outside
     // tests/siteAuth.test.js should reach for them.
     _setVerifier, _setLookup,

@@ -221,6 +221,7 @@ function encodeIdentity(value) {
 function proxyTo(req, res, target, ctx) {
     const port = typeof target === 'object' ? target.port : target;
     const proxyKey = typeof target === 'object' ? target.proxyKey : null;
+    const release = typeof target === 'object' ? (target.sha || null) : null;
     const headers = withoutHopByHop(req.headers);
     headers['X-Forwarded-For'] = req.socket.remoteAddress || '';
     headers['X-Forwarded-Proto'] = req.socket.encrypted ? 'https' : 'http';
@@ -256,6 +257,25 @@ function proxyTo(req, res, target, ctx) {
     }, (up) => {
         const responseHeaders = withoutHopByHop(up.headers);
         stripProxyKey(responseHeaders);
+        if (release) {
+            // Which version answered, for the page to compare with the one it
+            // loaded from. Set here, after the application's own headers, so
+            // the application cannot claim to be another version.
+            Object.keys(responseHeaders)
+                .filter((h) => h.toLowerCase() === 'x-aegis-release')
+                .forEach((h) => { delete responseHeaders[h]; });
+            responseHeaders['X-Aegis-Release'] = release;
+            // The affinity cookie follows the version the visitor reached:
+            // set on their first request, and moved once their version is
+            // gone and they have been sent to the new one.
+            if (readReleaseCookie(req) !== release) {
+                const mine = releaseCookie(release, req.socket.encrypted === true);
+                const theirs = responseHeaders['set-cookie'];
+                responseHeaders['set-cookie'] = theirs
+                    ? [].concat(theirs, mine)
+                    : [mine];
+            }
+        }
         res.writeHead(up.statusCode || 502, responseHeaders);
         up.pipe(res);
     });
@@ -273,6 +293,59 @@ function proxyTo(req, res, target, ctx) {
 
 /** How long the application gets to start answering one request. */
 const PROXY_TIMEOUT_MS = 30000;
+
+/*
+ * Version affinity for a project served by a process.
+ *
+ * A push starts the new version beside the old one (runtime.js), and the old
+ * one keeps the visitors already on it. This cookie is how the proxy knows who
+ * they are: it names the commit that served the visitor's page. A session
+ * cookie, so closing the browser lets go of the old version, and HttpOnly,
+ * because nothing in the page needs to read it -- the page reads
+ * `X-Aegis-Release` and `/__aegis/release` instead.
+ */
+const RELEASE_COOKIE = 'aegis_release';
+const SHA_RE = /^[0-9a-f]{7,64}$/;
+
+function readReleaseCookie(req) {
+    const value = siteAuth.readCookie(req, RELEASE_COOKIE);
+    return value && SHA_RE.test(value) ? value : null;
+}
+
+function releaseCookie(sha, secure) {
+    return `${RELEASE_COOKIE}=${sha}; Path=/; HttpOnly; SameSite=Lax` + (secure ? '; Secure' : '');
+}
+
+/**
+ * `/__aegis/release` and `/__aegis/release/switch`, for a project served by a
+ * process. The guard has already decided the visitor may be here.
+ *
+ * `release` answers which version this visitor is on and which one new
+ * visitors get, so the page can offer to move. `switch` moves them: the cookie
+ * now names the newest version, and the browser goes back to where it was.
+ * Both are `no-store`: a cached answer is a version that may be gone.
+ */
+function serveRelease(req, res, ctx, pathOnly) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
+    const v = runtime.versions(ctx.slug, ctx.project.id);
+    if (pathOnly === siteAuth.RELEASE_SWITCH_PATH) {
+        const next = siteAuth.safeNext(new URLSearchParams(String(req.url || '').split('?')[1] || '').get('next'));
+        const headers = { Location: next, 'Content-Length': 0, 'Cache-Control': 'no-store' };
+        if (v.active) headers['Set-Cookie'] = releaseCookie(v.active, req.socket.encrypted === true);
+        res.writeHead(302, headers);
+        return res.end();
+    }
+    const mine = readReleaseCookie(req);
+    const served = mine && v.draining && v.draining.sha === mine ? mine : v.active;
+    const json = JSON.stringify({ served: served || null, latest: v.active || null });
+    res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(json),
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff'
+    });
+    return res.end(req.method === 'HEAD' ? undefined : json);
+}
 
 /**
  * One request, after the guard.
@@ -297,10 +370,19 @@ function serve(req, res, ctx) {
     // through to the files: `current/` for a server-rendered application is its
     // source, and publishing that is worse than being down.
     if (ctx.runtime === 'node') {
-        const target = runtime.targetForRequest(ctx.slug, ctx.project.id);
+        const pathOnly = String(req.url || '/').split('?')[0];
+        if (siteAuth.isReleasePath(pathOnly)) return serveRelease(req, res, ctx, pathOnly);
+        const target = runtime.targetForRequest(ctx.slug, ctx.project.id, {
+            release: readReleaseCookie(req),
+            // A page polling for a new version is not a person using the old
+            // one, and must not keep it alive.
+            background: req.headers['x-aegis-background'] === '1'
+        });
         if (!target) return send(res, 503, 'This application is not running');
         return proxyTo(req, res, target, ctx);
     }
+    // A static site has one version at a time and nothing to say about it.
+    if (siteAuth.isReleasePath(String(req.url || '/').split('?')[0])) return send(res, 404, 'Not found');
 
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
     if (!fs.existsSync(root)) return send(res, 404, 'This site has not been deployed');
@@ -841,4 +923,9 @@ module.exports = {
     touchSite, lastTouch, proxyTo, withoutHopByHop,
     IDENTITY_HEADERS, stripIdentity, stripProxyKey, encodeIdentity,
     normaliseHostname, hostOf, buildHostIndex, HOSTNAME_RE,
-    DEFAULT_PORT_BASE, PORT_RANGE, portBase, isServing };
+    DEFAULT_PORT_BASE, PORT_RANGE, portBase, isServing,
+    RELEASE_COOKIE,
+    // Test seam: the release routes and the affinity routing are decided in
+    // `serve`, and reaching it through a listener would need a bound port per
+    // test. Nothing outside tests/ should call it.
+    _serve: serve };

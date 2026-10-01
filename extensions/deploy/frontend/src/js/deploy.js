@@ -1168,6 +1168,8 @@
     // the reference; `REFUSAL_ORDER` below chooses which codes appear there and
     // in what order, which is an editorial decision and not this table's.
     var DEPLOY_ERRORS = {
+        queued: ['deploy_err_queued', 'The previous version is still serving the visitors who were on it. The latest commit will deploy once it stops, or use Deploy now.'],
+        slot_busy: ['deploy_err_slot_busy', 'The previous version is still serving the visitors who were on it. Try again, or use Deploy now.'],
         bad_repo_url: ['deploy_new_bad_url', 'That is not a GitHub repository URL. Paste something like https://github.com/owner/repo.',
             'deploy_ref_bad_repo_url', 'Not a github.com repository URL'],
         repo_not_found: ['deploy_new_repo_404', 'GitHub has no such repository, or the App cannot see it.',
@@ -1841,6 +1843,22 @@
                     'Aegis has stopped retrying this commit. Push a fix, or deploy it again by hand.')));
         }
 
+        // Two versions side by side: the previous one keeps the visitors who
+        // were on it until they leave, and a new commit waits for it. Said on
+        // the card, because a push that does not deploy looks exactly like a
+        // broken poller.
+        if (p.draining) {
+            body.appendChild(el('p', 'dep-card-note',
+                tr('deploy_card_draining', '$1 still serves the visitors who were on it, last used $2.')
+                    .replace('$1', String(p.draining.sha || '').slice(0, 7))
+                    .replace('$2', ago(p.draining.lastSeen))));
+        }
+        if (p.pendingSha) {
+            body.appendChild(el('p', 'dep-card-note',
+                tr('deploy_card_pending', '$1 waits and deploys once the previous version stops.')
+                    .replace('$1', String(p.pendingSha).slice(0, 7))));
+        }
+
         var actions = el('div', 'dep-card-actions');
 
         var open = el('a', 'dep-btn dep-btn-ghost dep-btn-small',
@@ -1854,6 +1872,17 @@
         again.disabled = !isAdmin;
         again.addEventListener('click', function () { redeploy(p.id, again, card); });
         actions.appendChild(again);
+
+        // Stops the version still serving its visitors and deploys the head of
+        // the branch now. They move to the new version at their next request.
+        if (p.draining) {
+            var now = el('button', 'dep-btn dep-btn-ghost dep-btn-small',
+                tr('deploy_now_cta', 'Deploy now'));
+            now.type = 'button';
+            now.disabled = !isAdmin;
+            now.addEventListener('click', function () { redeploy(p.id, now, card, true); });
+            actions.appendChild(now);
+        }
 
         // Removing a project was reachable only by opening it first, which is a
         // click too many for the one thing an operator does to a site they
@@ -1981,14 +2010,15 @@
         return tr('deploy_published', 'Published $1').replace('$1', ago(p.deployedAt));
     }
 
-    function redeploy(projectId, btn, card) {
+    function redeploy(projectId, btn, card, force) {
+        var idle = btn.textContent;
         stopWatching();
         btn.disabled = true;
         btn.textContent = tr('deploy_redeploy_working', 'Deploying');
 
         deployAction({
             url: '/api/deploy/projects/' + encodeURIComponent(projectId) + '/redeploy',
-            body: {},
+            body: force ? { force: true } : {},
             label: 'redeploy',
             errorFor: function (code) {
                 return DEPLOY_ERRORS[code] || ['deploy_redeploy_busy', 'That project is already deploying.'];
@@ -2007,13 +2037,13 @@
         })
             .then(function (res) {
                 btn.disabled = !isAdmin;
-                btn.textContent = tr('deploy_redeploy_cta', 'Deploy latest commit');
+                btn.textContent = idle;
                 if (res.data && res.data.success) return loadProjects();
                 return undefined;
             })
             .catch(function (e) {
                 btn.disabled = !isAdmin;
-                btn.textContent = tr('deploy_redeploy_cta', 'Deploy latest commit');
+                btn.textContent = idle;
                 console.error('[Deploy] redeploy failed:', e);
             });
     }
