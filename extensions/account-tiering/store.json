@@ -8,8 +8,19 @@
   "category": "Compliance",
   "image": "card.png",
   "manifestVersion": 1,
-  "routePrefixes": ["/api/account-tiering"],
+  "routePrefixes": [
+    "/api/account-tiering"
+  ],
   "requiresHostOptIn": false,
   "channel": "stable",
-  "minAppVersion": "1.0.8"
+  "minAppVersion": "1.0.8",
+  "latest": {
+    "version": "0.0.0",
+    "publishedAt": "2026-10-02T08:05:32Z",
+    "size": 86869,
+    "sha256": "be8b501bf7bb45da98eb3f82bdfa021d1162459cb6453e91bb114cdba66e1fbe"
+  },
+  "releases": [
+    "0.0.0"
+  ]
 }
