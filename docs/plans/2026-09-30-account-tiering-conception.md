@@ -160,12 +160,13 @@ les ordinateurs touchés par classe : DC, serveur (`operatingSystem` contient
   "schema": 1,
   "domain": "corp.local",
   "domainSid": "S-1-5-21-…",
+  "netbios": "CORP",
   "collectedAt": "2026-09-30T08:12:00Z",
   "passes": 3,
   "truncated": false,
   "principals": [{ "sid": "", "dn": "", "sam": "", "name": "", "kind": "user|computer|gmsa|group", "enabled": true, "primaryGroupRid": 513 }],
   "memberships": [{ "group": "<sid>", "member": "<sid>", "via": "member|primaryGroup" }],
-  "aces": [{ "objectDn": "", "objectSid": "<sid ou null>", "objectKind": "domainRoot|adminSdHolder|dcOu|gpo|group|account|ou", "originDn": "", "trustee": "<sid>", "right": "GenericAll|GenericWrite|WriteDacl|WriteOwner|ResetPassword|WriteMember|DCSync", "inherited": false, "pass": 1 }],
+  "aces": [{ "objectDn": "", "objectSid": "<sid ou null>", "objectKind": "domainRoot|adminSdHolder|dcOu|gpo|group|account|ou", "originDn": "", "trustee": "<sid>", "right": "GenericAll|GenericWrite|WriteDacl|WriteOwner|ResetPassword|WriteMember|DCSyncGetChanges|DCSyncGetChangesAll", "inherited": false, "pass": 1 }],
   "gpos": [{ "guid": "", "name": "", "editors": ["<sid>"], "links": [{ "somDn": "", "enforced": false, "computers": { "dc": 0, "server": 42, "workstation": 0 } }], "localGroups": [{ "localGroup": "S-1-5-32-544", "members": ["<sid>"], "source": "GptTmpl|GroupsXml" }] }],
   "tier2Totals": { "users": 1284, "computers": 910 },
   "unreadable": [{ "dn": "", "reason": "" }]
@@ -173,6 +174,11 @@ les ordinateurs touchés par classe : DC, serveur (`operatingSystem` contient
 ```
 
 `analyze.js` refuse un `schema` inconnu (code `facts_schema`).
+
+`netbios` est facultatif : sans lui, la remédiation prend le premier label DNS
+en majuscules. Le script émet les deux moitiés de DCSync séparément, une ACE
+par droit étendu, et `analyze.js` les apparie par titulaire : c'est ce qui rend
+le cas « DCSync incomplet » vérifiable.
 
 ## Analyse
 
@@ -184,6 +190,8 @@ les ordinateurs touchés par classe : DC, serveur (`operatingSystem` contient
 | DCSync, ou GenericAll / WriteDacl / WriteOwner sur la racine | 0 |
 | Droit de la table « Droits » sur AdminSDHolder, sur un groupe ou compte Tier 0, ou sur l'OU d'origine | 0 |
 | Modification d'une GPO liée à la racine ou à l'OU Domain Controllers | 0 |
+| Modification d'une autre GPO | tier des machines où elle pose des groupes locaux |
+| Droit de la table « Droits » sur une OU | tier le plus privilégié des comptes et groupes qu'elle contient |
 | GPO de groupe local sur au moins un DC | 0 |
 | GPO de groupe local sur au moins un serveur | 1 |
 | Droit de la table « Droits » sur un groupe ou compte Tier 1 | 1 |
@@ -207,6 +215,18 @@ exposés, comptes en écart), matrice 3 × 3, chiffres clés, métadonnées
 d'analyse (date, domaine, passes, `truncated`, `unreadable`). La page fait
 elle-même la mise en page de l'arbre, le regroupement et l'arbre inversé,
 comme dans la maquette.
+
+Trois précisions, venues du prototype de la page :
+
+- Un compte dont le tier prévu vient d'une correction manuelle porte
+  `override: { reason, setBy, setAt }`, lu dans la table `overrides` ; les
+  autres comptes n'ont pas cette clé.
+- Chaque groupe porte `target` : `true` pour une cible Tier 0 (les RID et
+  groupes intégrés de `sids.js`, plus DnsAdmins), ce qui évite à la page de
+  recopier cette liste pour savoir où une chaîne s'arrête.
+- Les points de passage, et leur compte dans les chiffres clés, ne gardent que
+  ce qui est à corriger : au moins un compte en écart y passe, ou le titulaire
+  est trop large (`broad`).
 
 ### Approximations assumées
 
@@ -276,12 +296,14 @@ une exception dans `register`.
 | Mécanisme | Commande proposée |
 |---|---|
 | Appartenance | `Remove-ADGroupMember -Identity '<groupe parent>' -Members '<membre>'` |
+| Groupe principal | `Set-ADObject -Identity '<DN du compte>' -Replace @{primaryGroupID=513}` (515 pour un ordinateur ou un gMSA) : `Remove-ADGroupMember` ne retire pas un groupe principal |
 | ACE | `dsacls '<DN d'origine>' /R '<domaine>\<titulaire>'`, avec l'avertissement : retire toutes les ACE du titulaire sur l'objet |
 | GPO de groupe local | Chemin GPMC de la GPO et du paramètre à retirer |
 | Modification de GPO | Chemin GPMC, onglet Délégation |
 
 Les valeurs insérées dans une commande sont échappées pour PowerShell
-(apostrophe doublée).
+(apostrophe doublée, y compris les apostrophes typographiques U+2018 à U+201B,
+que PowerShell lit aussi comme des guillemets simples).
 
 ## Erreurs
 
@@ -296,6 +318,13 @@ Les valeurs insérées dans une commande sont échappées pour PowerShell
 | `partial` | Objets illisibles | `unreadable` non vide, statut `partial` |
 | `facts_schema` | JSON d'un schéma inconnu | `analyze.js` |
 | `no_scan_yet` | Aucune analyse | base vide |
+| `collector_failed` | Le script échoue autrement, ou ses faits ne se lisent pas | autre code de sortie non nul, JSON illisible |
+| `internal` | L'enregistrement du résultat échoue | erreur de la base, journalisée |
+
+Une analyse restée `running` sans processus qui la porte passe à
+`scan_interrupted` dès qu'on la consulte, pas seulement au démarrage. On garde
+les 5 dernières analyses, plus la dernière réussie, pour qu'une série d'échecs
+n'efface jamais le dernier arbre affichable.
 
 Le script écrit ses erreurs sur stdout avec un préfixe fixe (`AT-ERROR <code>`),
 jamais un message traduit : la page traduit le code.
@@ -317,8 +346,12 @@ jamais un message traduit : la page traduit le code.
 - `frontend/tests/account-tiering.test.js` : la page charge un modèle fictif,
   l'arbre, la liste et la vue d'ensemble s'affichent (banc de test copié de
   network-inventory).
-- Le script PowerShell n'a pas de test automatique : il se teste dans la VM
-  corp.local, dans Windows PowerShell 5.1, avec un compte par cas de
+- `backend/tests/collectorSample.test.js` : une sortie d'exemple du script
+  (`fixtures/collector-sample.json`, BOM ajouté comme le ferait 5.1) passe par
+  `runner.js` puis `analyze.js`, un compte par mécanisme ; chaque valeur
+  qu'elle utilise doit figurer dans le script.
+- Le script PowerShell lui-même ne tourne pas dans la suite : il se teste dans
+  la VM corp.local, dans Windows PowerShell 5.1, avec un compte par cas de
   `analyze.test.js` créé dans l'AD de test.
 
 ## Livraisons
@@ -327,13 +360,14 @@ jamais un message traduit : la page traduit le code.
    sur des faits fictifs.
 2. Script de collecte, puis test en VM.
 3. Publication : clés de traduction dans le cœur, `store.json`, `CHANGELOG.md`,
-   version 0.1.0.
+   version 0.0.0 (PUBLISHING.md : la première sortie d'une extension est
+   `0.0.0`), catégorie `Compliance`.
 
 ## Points à vérifier avant la livraison 3
 
 - `minAppVersion` : la première version publiée d'Aegis qui fournit
   `extensionDb` à `register()`.
-- L'icône : une icône déjà présente dans `navbar.js`, sinon une icône à
-  ajouter au cœur.
+- L'icône : `users`, déjà présente dans `navbar.js` du cœur ; reste à
+  regarder son rendu dans la carte du menu.
 - La signature du script : le cœur signe-t-il les `.ps1` des extensions, ou
   seulement le manifeste ?

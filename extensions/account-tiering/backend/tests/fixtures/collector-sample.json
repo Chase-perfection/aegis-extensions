@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "domain": "corp.local",
+  "domainSid": "S-1-5-21-1111-2222-3333",
+  "netbios": "CORP",
+  "collectedAt": "2026-10-02T07:30:00Z",
+  "passes": 3,
+  "truncated": false,
+  "principals": [
+    { "sid": "S-1-5-21-1111-2222-3333-512", "dn": "CN=Admins du domaine,CN=Users,DC=corp,DC=local", "sam": "Admins du domaine", "name": "Admins du domaine", "kind": "group", "enabled": true },
+    { "sid": "S-1-5-21-1111-2222-3333-516", "dn": "CN=Contrôleurs de domaine,CN=Users,DC=corp,DC=local", "sam": "Contrôleurs de domaine", "name": "Contrôleurs de domaine", "kind": "group", "enabled": true },
+    { "sid": "S-1-5-32-544", "dn": "CN=Administrateurs,CN=Builtin,DC=corp,DC=local", "sam": "Administrateurs", "name": "Administrateurs", "kind": "group", "enabled": true },
+    { "sid": "S-1-5-32-551", "dn": "CN=Opérateurs de sauvegarde,CN=Builtin,DC=corp,DC=local", "sam": "Opérateurs de sauvegarde", "name": "Opérateurs de sauvegarde", "kind": "group", "enabled": true },
+    { "sid": "S-1-5-21-1111-2222-3333-1101", "dn": "CN=DnsAdmins,CN=Users,DC=corp,DC=local", "sam": "DnsAdmins", "name": "DnsAdmins", "kind": "group", "enabled": true },
+    { "sid": "S-1-5-21-1111-2222-3333-2001", "dn": "CN=Jean Durand (T0),OU=Admins-T0,DC=corp,DC=local", "sam": "adm-t0-jdurand", "name": "Jean Durand (T0)", "kind": "user", "enabled": true, "primaryGroupRid": 513 },
+    { "sid": "S-1-5-21-1111-2222-3333-2012", "dn": "CN=Ancien compte,OU=Admins-T0,DC=corp,DC=local", "sam": "adm-t0-ancien", "name": "Ancien compte", "kind": "user", "enabled": false, "primaryGroupRid": 513 },
+    { "sid": "S-1-5-21-1111-2222-3333-1102", "dn": "CN=GG-Admins-Infra,OU=Groupes,DC=corp,DC=local", "sam": "GG-Admins-Infra", "name": "GG-Admins-Infra", "kind": "group", "enabled": true },
+    { "sid": "S-1-5-21-1111-2222-3333-2002", "dn": "CN=Benoit Lefebvre,OU=Utilisateurs,DC=corp,DC=local", "sam": "b.lefebvre", "name": "Benoit Lefebvre", "kind": "user", "enabled": true, "primaryGroupRid": 513 },
+    { "sid": "S-1-5-21-1111-2222-3333-2003", "dn": "CN=Chloé Mercier,OU=Utilisateurs,DC=corp,DC=local", "sam": "c.mercier", "name": "Chloé Mercier", "kind": "user", "enabled": true, "primaryGroupRid": 513 },
+    { "sid": "S-1-5-21-1111-2222-3333-2004", "dn": "CN=David O\u0027Henry,OU=Utilisateurs,DC=corp,DC=local", "sam": "d.ohenry", "name": "David O\u0027Henry", "kind": "user", "enabled": true, "primaryGroupRid": 512 },
+    { "sid": "S-1-5-21-1111-2222-3333-1000", "dn": "CN=DC01,OU=Domain Controllers,DC=corp,DC=local", "sam": "DC01$", "name": "DC01", "kind": "computer", "enabled": true, "primaryGroupRid": 516 },
+    { "sid": "S-1-5-21-1111-2222-3333-2013", "dn": "CN=gmsa-backup,CN=Managed Service Accounts,DC=corp,DC=local", "sam": "gmsa-backup$", "name": "gmsa-backup", "kind": "gmsa", "enabled": true, "primaryGroupRid": 515 },
+    { "sid": "S-1-5-21-1111-2222-3333-2006", "dn": "CN=Replication,OU=Services,DC=corp,DC=local", "sam": "svc-repli", "name": "Replication", "kind": "user", "enabled": true, "primaryGroupRid": 513 },
+    { "sid": "S-1-5-21-1111-2222-3333-2007", "dn": "CN=Annuaire RH,OU=Services,DC=corp,DC=local", "sam": "svc-annuaire", "name": "Annuaire RH", "kind": "user", "enabled": true, "primaryGroupRid": 513 },
+    { "sid": "S-1-5-21-1111-2222-3333-2011", "dn": "CN=Karim Girard,OU=Utilisateurs,DC=corp,DC=local", "sam": "k.girard", "name": "Karim Girard", "kind": "user", "enabled": true, "primaryGroupRid": 513 },
+    { "sid": "S-1-5-21-1111-2222-3333-1105", "dn": "CN=GG-GPO-Edit,OU=Groupes,DC=corp,DC=local", "sam": "GG-GPO-Edit", "name": "GG-GPO-Edit", "kind": "group", "enabled": true },
+    { "sid": "S-1-5-21-1111-2222-3333-2009", "dn": "CN=Inès Faure,OU=Utilisateurs,DC=corp,DC=local", "sam": "i.faure", "name": "Inès Faure", "kind": "user", "enabled": true, "primaryGroupRid": 513 },
+    { "sid": "S-1-5-21-1111-2222-3333-1104", "dn": "CN=GG-Serveurs-Admins,OU=Groupes,DC=corp,DC=local", "sam": "GG-Serveurs-Admins", "name": "GG-Serveurs-Admins", "kind": "group", "enabled": true },
+    { "sid": "S-1-5-21-1111-2222-3333-2008", "dn": "CN=Hugo Roche,OU=Utilisateurs,DC=corp,DC=local", "sam": "h.roche", "name": "Hugo Roche", "kind": "user", "enabled": true, "primaryGroupRid": 513 },
+    { "sid": "S-1-5-21-1111-2222-3333-1103", "dn": "CN=GG-Helpdesk,OU=Groupes,DC=corp,DC=local", "sam": "GG-Helpdesk", "name": "GG-Helpdesk", "kind": "group", "enabled": true },
+    { "sid": "S-1-5-21-1111-2222-3333-2005", "dn": "CN=Emma Colin,OU=Utilisateurs,DC=corp,DC=local", "sam": "e.colin", "name": "Emma Colin", "kind": "user", "enabled": true, "primaryGroupRid": 513 },
+    { "sid": "S-1-5-21-1111-2222-3333-513", "dn": "CN=Utilisateurs du domaine,CN=Users,DC=corp,DC=local", "sam": "Utilisateurs du domaine", "name": "Utilisateurs du domaine", "kind": "group", "enabled": true }
+  ],
+  "memberships": [
+    { "group": "S-1-5-21-1111-2222-3333-512", "member": "S-1-5-21-1111-2222-3333-2001", "via": "member" },
+    { "group": "S-1-5-21-1111-2222-3333-512", "member": "S-1-5-21-1111-2222-3333-2012", "via": "member" },
+    { "group": "S-1-5-21-1111-2222-3333-512", "member": "S-1-5-21-1111-2222-3333-2004", "via": "primaryGroup" },
+    { "group": "S-1-5-21-1111-2222-3333-516", "member": "S-1-5-21-1111-2222-3333-1000", "via": "primaryGroup" },
+    { "group": "S-1-5-32-544", "member": "S-1-5-21-1111-2222-3333-512", "via": "member" },
+    { "group": "S-1-5-32-544", "member": "S-1-5-21-1111-2222-3333-1102", "via": "member" },
+    { "group": "S-1-5-21-1111-2222-3333-1102", "member": "S-1-5-21-1111-2222-3333-2002", "via": "member" },
+    { "group": "S-1-5-32-551", "member": "S-1-5-21-1111-2222-3333-2013", "via": "member" },
+    { "group": "S-1-5-21-1111-2222-3333-1101", "member": "S-1-5-21-1111-2222-3333-2003", "via": "member" },
+    { "group": "S-1-5-21-1111-2222-3333-1105", "member": "S-1-5-21-1111-2222-3333-2009", "via": "member" },
+    { "group": "S-1-5-21-1111-2222-3333-1104", "member": "S-1-5-21-1111-2222-3333-2008", "via": "member" },
+    { "group": "S-1-5-21-1111-2222-3333-1103", "member": "S-1-5-21-1111-2222-3333-2005", "via": "member" }
+  ],
+  "aces": [
+    { "objectDn": "DC=corp,DC=local", "objectSid": null, "objectKind": "domainRoot", "originDn": "DC=corp,DC=local", "trustee": "S-1-5-21-1111-2222-3333-2006", "right": "DCSyncGetChanges", "inherited": false, "pass": 1 },
+    { "objectDn": "DC=corp,DC=local", "objectSid": null, "objectKind": "domainRoot", "originDn": "DC=corp,DC=local", "trustee": "S-1-5-21-1111-2222-3333-2006", "right": "DCSyncGetChangesAll", "inherited": false, "pass": 1 },
+    { "objectDn": "DC=corp,DC=local", "objectSid": null, "objectKind": "domainRoot", "originDn": "DC=corp,DC=local", "trustee": "S-1-5-21-1111-2222-3333-2007", "right": "DCSyncGetChanges", "inherited": false, "pass": 1 },
+    { "objectDn": "CN=Jean Durand (T0),OU=Admins-T0,DC=corp,DC=local", "objectSid": "S-1-5-21-1111-2222-3333-2001", "objectKind": "account", "originDn": "OU=Admins-T0,DC=corp,DC=local", "trustee": "S-1-5-21-1111-2222-3333-1103", "right": "ResetPassword", "inherited": true, "pass": 2 },
+    { "objectDn": "OU=Admins-T0,DC=corp,DC=local", "objectSid": null, "objectKind": "ou", "originDn": "OU=Admins-T0,DC=corp,DC=local", "trustee": "S-1-5-21-1111-2222-3333-2011", "right": "WriteDacl", "inherited": false, "pass": 2 }
+  ],
+  "gpos": [
+    {
+      "guid": "{31b2f340-016d-11d2-945f-00c04fb984f9}", "name": "Default Domain Policy",
+      "editors": ["S-1-5-21-1111-2222-3333-1105"],
+      "links": [{ "somDn": "DC=corp,DC=local", "enforced": false, "computers": { "dc": 1, "server": 3, "workstation": 12 } }],
+      "localGroups": []
+    },
+    {
+      "guid": "{6ac1786c-016f-11d2-945f-00c04fb984f9}", "name": "Default Domain Controllers Policy",
+      "editors": [],
+      "links": [{ "somDn": "OU=Domain Controllers,DC=corp,DC=local", "enforced": false, "computers": { "dc": 1, "server": 0, "workstation": 0 } }],
+      "localGroups": []
+    },
+    {
+      "guid": "{0c5d6e7f-1a2b-4c3d-8e9f-a0b1c2d3e4f5}", "name": "Admins serveurs",
+      "editors": [],
+      "links": [{ "somDn": "OU=Serveurs,DC=corp,DC=local", "enforced": false, "computers": { "dc": 0, "server": 3, "workstation": 0 } }],
+      "localGroups": [{ "localGroup": "S-1-5-32-544", "members": ["S-1-5-21-1111-2222-3333-1104"], "source": "GptTmpl" }]
+    },
+    {
+      "guid": "{9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a}", "name": "Postes de travail",
+      "editors": [],
+      "links": [{ "somDn": "OU=Postes,DC=corp,DC=local", "enforced": false, "computers": { "dc": 0, "server": 0, "workstation": 12 } }],
+      "localGroups": [{ "localGroup": "S-1-5-32-544", "members": ["S-1-5-21-1111-2222-3333-513"], "source": "GroupsXml" }]
+    }
+  ],
+  "tier2Totals": { "users": 40, "computers": 15 },
+  "unreadable": [
+    { "dn": "\\\\corp.local\\SysVol\\corp.local\\Policies\\{9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a}\\Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf", "reason": "access_denied" }
+  ]
+}

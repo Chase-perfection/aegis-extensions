@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <!-- Boot mask: same inline script as every page of the shell (see base.css html.booting). -->
+    <script>
+        try {
+            if (sessionStorage.getItem('aegis_show_preloader') === '1') {
+                document.documentElement.classList.add('booting');
+                setTimeout(function () {
+                    document.documentElement.classList.remove('booting');
+                }, 6000);
+            }
+        } catch (e) { }
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis - Arbre des comptes</title>
+    <link rel="icon" type="image/svg+xml" href="../public/assets/favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Archivo:wght@400;500;600;700;800&family=Archivo+Black&family=JetBrains+Mono:wght@400;500&display=swap">
+    <link rel="stylesheet" href="../src/css/base.css">
+    <link rel="stylesheet" href="../src/css/common.css">
+    <link rel="stylesheet" href="../src/css/navbar.css">
+    <link rel="stylesheet" href="../src/css/index.css">
+    <link rel="stylesheet" href="../src/css/account-tiering.css">
+    <script defer src="../src/js/translations.js"></script>
+    <script defer src="../src/js/tenant.js"></script>
+    <script defer src="../src/js/auth.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" integrity="sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="../src/css/aegis-white.css">
+    <!-- Last, deliberately: ag-tag.css carries the severity gauge images (.ag-sev) and must win the cascade. -->
+    <link rel="stylesheet" href="../src/css/ag-tag.css">
+</head>
+
+<body class="aegis-white">
+    <div id="aegis-preloader" class="aegis-preloader">
+        <div class="preloader-content">
+            <div class="preloader-logo"><img src="../public/assets/aegis-mark.svg" alt="Aegis Logo"></div>
+            <div class="preloader-brand">A E G I S</div>
+        </div>
+    </div>
+
+    <div class="app-shell">
+        <nav id="aegis-navbar" class="aegis-navbar"></nav>
+
+        <main class="main-content">
+            <!-- tabindex="-1" on the view and its three regions: they are where focus
+                 falls back when a render removes the control that had it. -->
+            <section id="at-view" class="content-area active at-view" tabindex="-1">
+                <header class="at-titlebar">
+                    <div class="at-titlebar-text">
+                        <div class="at-crumb" data-at-i18n="at_crumb">Gestion du parc › Arbre des comptes</div>
+                        <h1 class="at-h1" id="at-title" data-at-i18n="at_title">Arbre des comptes</h1>
+                        <div class="at-meta" id="at-meta" aria-live="polite"></div>
+                    </div>
+                    <div class="at-titlebar-actions">
+                        <button type="button" class="at-btn" id="at-rules-open" data-key="rules-open">
+                            <svg class="at-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h10M4 12h16M4 18h7"/><circle cx="17" cy="6" r="2"/><circle cx="14" cy="18" r="2"/></svg>
+                            <span data-at-i18n="at_rules_button">Règles de tiering</span>
+                        </button>
+                        <div class="at-menu-wrap" id="at-export-wrap" hidden>
+                            <button type="button" class="at-btn" id="at-export" data-key="export" aria-haspopup="menu" aria-expanded="false">
+                                <span data-at-i18n="at_export">Exporter</span>
+                                <svg class="at-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            <div class="at-menu at-menu-right" id="at-export-menu" role="menu" data-at-i18n-attr="aria-label:at_export|Exporter" hidden>
+                                <a class="at-menu-item" role="menuitem" id="at-export-csv" href="#" download>
+                                    <span class="at-menu-text"><span class="at-strong" data-at-i18n="at_export_csv">CSV</span><span class="at-note" data-at-i18n="at_export_csv_note">Comptes, chemins et tiers</span></span>
+                                </a>
+                                <a class="at-menu-item" role="menuitem" id="at-export-json" href="#" download>
+                                    <span class="at-menu-text"><span class="at-strong" data-at-i18n="at_export_json">JSON</span><span class="at-note" data-at-i18n="at_export_json_note">Modèle complet, pour un SIEM</span></span>
+                                </a>
+                            </div>
+                        </div>
+                        <button type="button" class="at-pill at-pill-ink" id="at-scan" data-key="scan">Relancer l'analyse</button>
+                    </div>
+                </header>
+
+                <div id="at-banners" class="at-banners"></div>
+                <div id="at-state" class="at-state" hidden></div>
+
+                <div id="at-body" class="at-body" hidden>
+                    <aside id="at-left" class="at-left" tabindex="-1" data-at-i18n-attr="aria-label:at_left_label|Comptes">
+                        <div class="at-pad at-stack">
+                            <label class="at-label" for="at-search" data-at-i18n="at_search_label">Rechercher un compte</label>
+                            <div class="at-search">
+                                <svg class="at-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+                                <input type="text" id="at-search" class="at-search-input" autocomplete="off" spellcheck="false"
+                                    data-at-i18n-attr="placeholder:at_search_ph|Nom ou sAMAccountName">
+                                <button type="button" class="at-x-btn" id="at-search-clear" data-key="search-clear" hidden
+                                    data-at-i18n-attr="aria-label:at_search_clear|Effacer la recherche">
+                                    <svg class="at-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="at-left-dyn" class="at-left-dyn"></div>
+                    </aside>
+                    <div id="at-centre" class="at-centre" tabindex="-1"></div>
+                    <aside id="at-panel" class="at-panel" tabindex="-1" data-at-i18n-attr="aria-label:at_panel_label|Détail de la sélection"></aside>
+                </div>
+
+                <div id="at-dialog-root"></div>
+            </section>
+        </main>
+    </div>
+
+    <script defer src="../src/js/common.js"></script>
+    <script defer src="../src/js/navbar.js"></script>
+    <script defer src="../src/js/module-guard.js"></script>
+    <script defer src="../src/js/findings-shared.js"></script>
+    <script defer src="../src/js/glossary_data.js"></script>
+    <script defer src="../src/js/app.js"></script>
+    <script defer src="../src/js/account-tiering-model.js"></script>
+    <script defer src="../src/js/account-tiering-graph.js"></script>
+    <script defer src="../src/js/account-tiering-ui.js"></script>
+    <script defer src="../src/js/account-tiering-tree.js"></script>
+    <script defer src="../src/js/account-tiering-panel.js"></script>
+    <script defer src="../src/js/account-tiering-overview.js"></script>
+    <script defer src="../src/js/account-tiering-left.js"></script>
+    <script defer src="../src/js/account-tiering-dialogs.js"></script>
+    <script defer src="../src/js/account-tiering-events.js"></script>
+    <script defer src="../src/js/account-tiering.js"></script>
+</body>
+
+</html>
