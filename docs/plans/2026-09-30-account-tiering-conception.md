@@ -346,8 +346,12 @@ jamais un message traduit : la page traduit le code.
 - `frontend/tests/account-tiering.test.js` : la page charge un modèle fictif,
   l'arbre, la liste et la vue d'ensemble s'affichent (banc de test copié de
   network-inventory).
-- Le script PowerShell n'a pas de test automatique : il se teste dans la VM
-  corp.local, dans Windows PowerShell 5.1, avec un compte par cas de
+- `backend/tests/collectorSample.test.js` : une sortie d'exemple du script
+  (`fixtures/collector-sample.json`, BOM ajouté comme le ferait 5.1) passe par
+  `runner.js` puis `analyze.js`, un compte par mécanisme ; chaque valeur
+  qu'elle utilise doit figurer dans le script.
+- Le script PowerShell lui-même ne tourne pas dans la suite : il se teste dans
+  la VM corp.local, dans Windows PowerShell 5.1, avec un compte par cas de
   `analyze.test.js` créé dans l'AD de test.
 
 ## Livraisons

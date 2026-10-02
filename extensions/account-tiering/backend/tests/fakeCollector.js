@@ -19,6 +19,11 @@ switch (process.env.FAKE_MODE) {
         process.stdout.write('pass 1\r\npass 2\r\n');
         fs.writeFileSync(outFile, '﻿' + facts());
         break;
+    case 'sample':
+        // What collect-tiering.ps1 writes, BOM included, as 5.1 would.
+        process.stdout.write('pass 1/3\r\n');
+        fs.writeFileSync(outFile, '﻿' + fs.readFileSync(require('path').join(__dirname, 'fixtures', 'collector-sample.json'), 'utf8'));
+        break;
     case 'partial':
         fs.writeFileSync(outFile, '﻿' + facts({ unreadable: [{ dn: 'OU=X', reason: 'denied' }] }));
         break;
