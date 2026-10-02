@@ -6,6 +6,7 @@
   "icon": "users",
   "page": "account-tiering.html",
   "category": "Compliance",
+  "image": "card.png",
   "manifestVersion": 1,
   "routePrefixes": ["/api/account-tiering"],
   "requiresHostOptIn": false,
