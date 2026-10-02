@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## 0.2.9
+## 0.2.8
 
 **A project served by a process deploys again after its first version.** Every
 push after the first failed with `EBUSY: resource busy or locked, rename
@@ -15,9 +15,8 @@ is a junction repointed once the new process answers. Promote and rollback do
 the same, without renaming anything. A start or a migration that fails leaves
 nothing to put back, because nothing on the port moved. The first deployment
 after the upgrade files the old `current/` folder under its commit once its
-process has stopped. Static sites are unchanged.
-
-## 0.2.8
+process has stopped. Static sites are unchanged. This fix was republished
+under 0.2.8 rather than released as 0.2.9.
 
 **A Python site started from a subfolder finds the packages pip installed.**
 The install Deploy proposes, `pip install --target .`, puts packages at the
