@@ -4,8 +4,7 @@ The tier each Active Directory account actually reaches, and how it gets there.
 
 ## 0.0.0
 
-First release. Not tagged yet: the collector that reads the directory is still
-to be written, and until it ships a scan ends with `collector_failed`.
+First release.
 
 What you get: the Arbre des comptes page under Parc Management, next to AD
 Inventory. For every privileged account it shows the tier it reaches (T0
@@ -21,10 +20,15 @@ account counts as Tier 2, and the page says so. For each path it proposes the
 step that cuts it, as a command to copy or a GPMC section to open. Nothing is
 written to Active Directory.
 
+The analysis starts from the page, with "Relancer l'analyse". The Aegis server
+runs the collector shipped in the package, `collect/collect-tiering.ps1`, in
+Windows PowerShell 5.1 under its machine account: LDAP reads and SYSVOL reads,
+nothing written. The server must be a member of the domain.
+
 Page and routes are open to tenant administrators only. Results export as CSV
 or JSON.
 
-`minAppVersion` is the first Aegis release that hands an extension its own
-database (`extensionDb`) and carries the page's translations. On an earlier
-core the extension would load without storage, so the store does not offer it
-there.
+`minAppVersion` is 1.0.8, the first Aegis version that hands an extension its
+own database (`extensionDb`). On an earlier core the extension would load
+without storage, so the store does not offer it there. The page's English
+strings come with a later core release; until then it shows its French labels.

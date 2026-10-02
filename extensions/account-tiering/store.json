@@ -9,5 +9,6 @@
   "manifestVersion": 1,
   "routePrefixes": ["/api/account-tiering"],
   "requiresHostOptIn": false,
-  "channel": "stable"
+  "channel": "stable",
+  "minAppVersion": "1.0.8"
 }
