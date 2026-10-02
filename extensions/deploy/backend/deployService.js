@@ -45,6 +45,59 @@ let writableDb = null;
 
 function useWritableDb(mod) { writableDb = mod || null; }
 
+/** How long, and how often, `current` is retried while an old process holds it. */
+const REPOINT_RETRY_MS = 2000;
+const REPOINT_GIVE_UP_MS = 120000;
+
+/**
+ * Points `current` at the version that now answers, after it answers.
+ *
+ * Never a reason to fail the deployment: the proxy already sends traffic to the
+ * new process, and `current` only feeds what reads files beside it. The one
+ * expected failure is the first deployment after an upgrade, where `current` is
+ * still the real folder the old process runs in and cannot be filed until that
+ * process has been drained and killed. That case retries on a timer; anything
+ * else is logged and the next deployment tries again.
+ */
+function repointCurrent({ slug, tenantPaths, project, sha, oldSha, report }) {
+    const args = {
+        projectDir: projectStore.projectDir(tenantPaths, project.id),
+        currentDir: projectStore.currentDir(tenantPaths, project.id),
+        sha, oldSha
+    };
+    const busy = (e) => e && (e.code === 'EBUSY' || e.code === 'EPERM' || e.code === 'EACCES');
+    const tidy = () => cloner.pruneReleases(args.projectDir, [sha, oldSha]);
+    try {
+        cloner.pointCurrent(args);
+        tidy();
+        return true;
+    } catch (e) {
+        if (!busy(e)) {
+            console.warn(`[Deploy] ${slug}: ${project.id} current/ not repointed: ${e.message}`);
+            return false;
+        }
+    }
+    if (report) report.log('current/ is still held by the previous process, repointed once it stops');
+    const deadline = Date.now() + REPOINT_GIVE_UP_MS;
+    const again = () => {
+        try {
+            cloner.pointCurrent(args);
+            tidy();
+            console.log(`[Deploy] ${slug}: ${project.id} current/ now points at ${String(sha).slice(0, 8)}`);
+        } catch (e) {
+            if (busy(e) && Date.now() < deadline) {
+                const t = setTimeout(again, REPOINT_RETRY_MS);
+                if (t.unref) t.unref();
+                return;
+            }
+            console.warn(`[Deploy] ${slug}: ${project.id} current/ not repointed: ${e.message}`);
+        }
+    };
+    const t = setTimeout(again, REPOINT_RETRY_MS);
+    if (t.unref) t.unref();
+    return false;
+}
+
 /** Refusals that already name what to change. Kept as they are. */
 const NAMED = [
     'needs_build', 'no_index', 'not_a_site', 'no_root_dir', 'bad_root_dir', 'unsafe_symlink',
@@ -185,7 +238,7 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
         // No installation means a public repository, cloned with no credential.
         // `cloneToCurrent` builds a plain https URL when the token is null.
         const token = await tokenForProject(app, tenantPaths, project, report);
-        const { sha, manifestChanged } = await cloner.cloneToCurrent({
+        const { sha, manifestChanged, dir } = await cloner.cloneToCurrent({
             token,
             repoFullName: project.repoFullName,
             branch: project.branch,
@@ -241,8 +294,13 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
         //
         // Et apres `cloner.cloneToCurrent`, parce que les `.sql` sont dans le
         // clone qui vient d'etre publie.
+        // `versionDir` est le dossier de CETTE version : `current/` pour un site
+        // statique, `releases/<sha>` pour un projet a processus, ou `current`
+        // designe encore la version qui sert (voir `cloner.stageRelease`).
+        const byProcess = project.runtime === 'node';
+        const versionDir = dir || projectStore.currentDir(tenantPaths, project.id);
         const migName = project.migrationsDir || migrations.DEFAULT_DIR;
-        const migDir = path.join(projectStore.currentDir(tenantPaths, project.id), migName);
+        const migDir = path.join(versionDir, migName);
         // Lues avant toute autre chose, parce que la reponse a « y a-t-il
         // quelque chose a jouer » decide de tout ce qui suit. Un projet qui
         // n'en a aucune ne merite ni etape, ni ligne de journal : jusqu'a
@@ -268,6 +326,12 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
                 if (report) {
                     report.log(message);
                     report.stage('migrate', 'failed');
+                }
+                // Un projet a processus n'a rien deplace : sa version attend
+                // dans `releases/`, la precedente sert toujours.
+                if (byProcess) {
+                    if (report) report.log('la version qui sert n a pas bouge');
+                    throw Object.assign(new Error(message), { code });
                 }
                 // Le dossier vient d'etre echange ; la version qui servait
                 // repart sur le port, comme apres un demarrage rate.
@@ -314,18 +378,18 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
             }
         }
 
-        // A project served by a process: the version is on disk, and now it has
-        // to answer. `restart` starts it on the slot the running one is not
-        // using and only moves the proxy once it answers, so a version that
-        // crashes on boot leaves the previous one serving -- but the folder
-        // under it has already been swapped, so that has to go back too.
-        if (project.runtime === 'node') {
+        // A project served by a process: the version is in its own folder, and
+        // now it has to answer. `restart` starts it there, on the slot the
+        // running one is not using, and only moves the proxy once it answers,
+        // so a version that crashes on boot leaves the previous one serving
+        // with nothing on disk to put back. `current` is repointed after.
+        if (byProcess) {
             if (report) report.stage('publish', 'running', project.startCmd || '');
             try {
                 const started = await runtime.restart({
                     slug,
                     project,
-                    dir: projectStore.currentDir(tenantPaths, project.id),
+                    dir: versionDir,
                     // Created here rather than assumed: a project deployed
                     // before this folder existed has none, and the first push
                     // after the upgrade is when it should get one.
@@ -341,21 +405,11 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
                 });
                 if (report) report.log(`application answering on 127.0.0.1:${started.port}`);
             } catch (e) {
-                try {
-                    cloner.rollback({
-                        projectDir: projectStore.projectDir(tenantPaths, project.id),
-                        currentDir: projectStore.currentDir(tenantPaths, project.id),
-                        currentSha: sha,
-                        previousSha: project.lastSha || null
-                    });
-                    if (report) report.log('the version that was serving has been put back');
-                } catch (undo) {
-                    // Nothing to put back: a first deployment that never
-                    // started. The site is down and the log says why.
-                    console.warn(`[Deploy] ${slug}: ${project.id} could not be rolled back after a failed start: ${undo.message}`);
-                }
+                // Nothing moved on disk: the version that was serving still is.
+                if (report) report.log('the version that was serving is still serving');
                 throw e;
             }
+            repointCurrent({ slug, tenantPaths, project, sha, oldSha: project.lastSha || null, report });
         } else {
             // The record says static and something may still be running from
             // when it did not. Stopping here and not in the route keeps one
@@ -485,6 +539,30 @@ async function promoteNow({ slug, tenantPaths, project, sha, actor }) {
     const currentDir = projectStore.currentDir(tenantPaths, project.id);
 
     try {
+        // A project served by a process: nothing is renamed. The kept version
+        // starts in its own folder, takes the port once it answers, and
+        // `current` follows -- the same three steps as a deployment, minus the
+        // build.
+        if (project.runtime === 'node') {
+            const found = cloner.findRelease({
+                projectDir, sha,
+                currentSha: project.lastSha || null,
+                previousSha: project.previousSha || null
+            });
+            await runtime.restart({
+                slug,
+                project,
+                dir: found.dir,
+                dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
+                startCmd: project.startCmd || '',
+                env: projectEnv.forBuild(project, {
+                    target: 'production', sha: found.sha, branch: project.branch
+                })
+            });
+            repointCurrent({ slug, tenantPaths, project, sha: found.sha, oldSha: project.lastSha || null });
+            return finishPromote({ slug, tenantPaths, project, restored: found.sha, sha, actor });
+        }
+
         let restored = sha || null;
         if (restored) {
             cloner.promote({
@@ -500,43 +578,7 @@ async function promoteNow({ slug, tenantPaths, project, sha, actor }) {
             });
         }
 
-        // A project served by a process is now pointing at other files, and the
-        // process is still running the ones that were there a moment ago. It has
-        // to be restarted or the promote changed nothing anybody can see.
-        if (project.runtime === 'node') {
-            await runtime.restart({
-                slug,
-                project,
-                dir: currentDir,
-                dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
-                startCmd: project.startCmd || '',
-                env: projectEnv.forBuild(project, {
-                    target: 'production', sha: restored || '', branch: project.branch
-                })
-            });
-        }
-
-        // `lastSha` follows the port and `lastSeenSha` does not: the branch is
-        // still wherever it was, and the next push is what should deploy
-        // forward again.
-        projectStore.saveProject(tenantPaths, Object.assign({}, project, {
-            lastSha: restored,
-            previousSha: project.lastSha || null,
-            deployedAt: Date.now(),
-            failureCount: 0,
-            lastError: null,
-            history: projectStore.addHistory(project, {
-                sha: restored, at: Date.now(), status: 'ready',
-                trigger: sha ? 'promote' : 'rollback', actor: actor || null
-            })
-        }));
-
-        console.log(`[Deploy] ${slug}: ${project.id} now serving ${String(restored).slice(0, 8)} (${sha ? 'promote' : 'rollback'})`);
-        // A promote or a rollback changes what is on the port just as much as a
-        // deploy does, so the thumbnail is refreshed here too. Without this the
-        // card would show the release the operator just moved away from.
-        shots.capture({ tenantPaths, project, slug });
-        return { promoted: true, sha: restored };
+        return finishPromote({ slug, tenantPaths, project, restored, sha, actor });
     } catch (e) {
         if (e.code === 'no_previous' || e.code === 'unknown_release' || e.code === 'bad_release') {
             return { promoted: false, reason: e.code };
@@ -556,9 +598,37 @@ async function promoteNow({ slug, tenantPaths, project, sha, actor }) {
     }
 }
 
+/** Records what a promote or a rollback put on the port. */
+function finishPromote({ slug, tenantPaths, project, restored, sha, actor }) {
+    // `lastSha` follows the port and `lastSeenSha` does not: the branch is
+    // still wherever it was, and the next push is what should deploy
+    // forward again.
+    projectStore.saveProject(tenantPaths, Object.assign({}, project, {
+        lastSha: restored,
+        previousSha: project.lastSha || null,
+        deployedAt: Date.now(),
+        failureCount: 0,
+        lastError: null,
+        history: projectStore.addHistory(project, {
+            sha: restored, at: Date.now(), status: 'ready',
+            trigger: sha ? 'promote' : 'rollback', actor: actor || null
+        })
+    }));
+
+    console.log(`[Deploy] ${slug}: ${project.id} now serving ${String(restored).slice(0, 8)} (${sha ? 'promote' : 'rollback'})`);
+    // A promote or a rollback changes what is on the port just as much as a
+    // deploy does, so the thumbnail is refreshed here too. Without this the
+    // card would show the release the operator just moved away from.
+    shots.capture({ tenantPaths, project, slug });
+    return { promoted: true, sha: restored };
+}
+
 /** Every version this project could be put back to, newest first. */
 function releasesFor(tenantPaths, project) {
-    return cloner.listReleases(projectStore.projectDir(tenantPaths, project.id));
+    // A project served by a process keeps the version on the port under
+    // `releases/` too; it is not one to put back.
+    return cloner.listReleases(projectStore.projectDir(tenantPaths, project.id))
+        .filter((r) => r.sha !== project.lastSha);
 }
 
 /**
@@ -584,7 +654,10 @@ function startAllRuntimes({ pathsFor, tenantsRoot }) {
             runtime.restart({
                 slug,
                 project,
-                dir: projectStore.currentDir(tenantPaths, project.id),
+                // The folder behind the link, not the link: a process started
+                // through `current` would hold whatever it points at when the
+                // next deployment repoints it.
+                dir: cloner.resolveCurrent(projectStore.currentDir(tenantPaths, project.id)),
                 dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
                 startCmd: project.startCmd || '',
                 env: projectEnv.forBuild(project, {

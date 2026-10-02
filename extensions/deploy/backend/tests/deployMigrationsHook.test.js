@@ -42,8 +42,13 @@ test('le dossier de migrations est lu dans le clone, pas dans data', () => {
     const src = fs.readFileSync(
         path.join(__dirname, '..', 'deployService.js'), 'utf8');
 
-    assert.match(src, /const migDir = path\.join\(\s*projectStore\.currentDir\(/,
-        'le chemin des migrations part de currentDir');
+    // Le dossier de la version deployee : `releases/<sha>` pour un projet a
+    // processus, dont `current` designe encore la version qui sert, et
+    // `current` pour un site statique.
+    assert.match(src, /const versionDir = dir \|\| projectStore\.currentDir\(/,
+        'le dossier de la version part du clone, ou de currentDir a defaut');
+    assert.match(src, /const migDir = path\.join\(versionDir, migName\)/,
+        'le chemin des migrations part du dossier de la version');
     assert.match(src, /migrations\.list\(migDir\)/,
         'les migrations presentes sont lues dans ce dossier');
 });
