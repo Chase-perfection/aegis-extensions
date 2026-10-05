@@ -5334,7 +5334,9 @@
      * `admins()` returns the people currently ticked Administrator.
      */
     function buildAccessSection(site, canSearch, admins) {
-        var root = el('section', 'dep-access');
+        // `dep-auth-grants` kept beside the new class: it is the name the
+        // section has always had, and what the frontend tests look for.
+        var root = el('section', 'dep-access dep-auth-grants');
         var names = site.resources || [];
         if (!names.length) {
             return { root: root, value: function () { return {}; }, repaint: function () {} };
