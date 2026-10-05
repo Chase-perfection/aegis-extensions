@@ -1887,6 +1887,42 @@ test('policy: the refusal survives a path spelled to slip past it', async () => 
     }
 });
 
+test('policy: the site administrator holds every resource without being named under it', async () => {
+    const slug = 'pol-admin';
+    const sid = 'S-1-5-21-1-2-3-1103';
+    const tenantPaths = seed(slug, 'app', {
+        name: 'App',
+        auth: { method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [],
+            allowedUsers: [{ sid, login: 'AM', name: 'Alice Martin', admin: true }], grants: {} }
+    }, GOOD_CONFIG);
+    writeManifest(tenantPaths, 'app', { rules: [
+        { path: '/compta/*', require: 'comptabilite' },
+        { path: '/prod/*', require: 'production' }] });
+    siteAuth.invalidate(slug, 'app');
+
+    const token = await sessionFor(slug, tenantPaths, 'app', [], sid);
+    for (const url of ['/compta/x', '/prod/x']) {
+        const { handled } = await knockWith(slug, tenantPaths, 'app', url, token);
+        assert.strictEqual(handled, false, `${url}: the administrator is not stopped by a resource`);
+    }
+});
+
+test('policy: a person named on the site without the Administrator tick holds nothing more', async () => {
+    const slug = 'pol-named';
+    const sid = 'S-1-5-21-1-2-3-1104';
+    const tenantPaths = seed(slug, 'app', {
+        name: 'App',
+        auth: { method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [],
+            allowedUsers: [{ sid, login: 'BM', name: 'Bob Martin', admin: false }], grants: {} }
+    }, GOOD_CONFIG);
+    writeManifest(tenantPaths, 'app', { rules: [{ path: '/compta/*', require: 'comptabilite' }] });
+    siteAuth.invalidate(slug, 'app');
+
+    const token = await sessionFor(slug, tenantPaths, 'app', [], sid);
+    const { res } = await knockWith(slug, tenantPaths, 'app', '/compta/x', token);
+    assert.strictEqual(res.statusCode, 403, 'being let in is not holding a resource');
+});
+
 test('policy: a site with no manifest is served exactly as it was before', async () => {
     const slug = 'pol-none';
     const tenantPaths = seed(slug, 'app', {

@@ -21,6 +21,21 @@ first letter of its name on an ink tile.
 carried a CSRF token with no matching cookie, so the first try after the wait
 was refused as an expired session and counted as one more failure.
 
+**The site administrator opens every part of the site.** A person ticked
+Administrator in the Authentication tab passes every rule of
+`aegis.access.json` without being named under each resource. Before, the person
+Aegis named to run a site found its private paths closed until somebody named
+them again, resource by resource, and a resource added by a later commit
+locked them out of it.
+
+**Who opens what, at a glance.** The resources a site declares are drawn as one
+section in the Authentication tab: a matrix of every person and group named
+under a resource, one column per resource, worked out from the form before it
+is applied, then one card per resource with its status ("Ouverte, 2 personnes,
+1 groupe", "Administrateurs seulement", "Fermée"), the administrators who hold
+it automatically, its groups and its people. The labels of the tab follow the
+design system: captions in sentence case, no uppercase.
+
 The login page now also sends `Referrer-Policy: no-referrer` and
 `Cross-Origin-Opener-Policy: same-origin`, and compares the CSRF pair in
 constant time.
