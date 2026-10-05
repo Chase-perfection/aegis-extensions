@@ -4,47 +4,70 @@
     This file is the page's whole design system. It cannot import base.css: the
     page is served on the deployed site's port, which is a different origin from
     the dashboard, and the browser would have no route to it. So the values are
-    literal here, kept deliberately close to base.css and to
-    frontend/pages/login.html so that the two screens read as one product.
+    literal here, copied from the Aegis design system (design-system/tokens.json
+    in the core tree), the same ones frontend/pages/login.html declares, so that
+    the two screens read as one product.
 
     The rule that survives the duplication: every colour, radius, spacing step
     and font stack is declared once in :root below, and nothing further down
     this file writes a literal. Repainting means editing the block at the top.
 
-    No web font is requested. The page is served with
-    `default-src 'none'; style-src 'self'`, and a deployed site frequently runs
-    on a network with no route to the internet, so a font that has to be
-    fetched is a font that will not arrive.
+    The one web font is Nevera, for the Aegis wordmark, and it is served by the
+    guard itself from /__aegis/. Archivo and IBM Plex are used when the machine
+    has them and fall back to the system face otherwise: the page is served with
+    `default-src 'none'`, and a deployed site frequently runs on a network with
+    no route to the internet, so a font that has to be fetched from elsewhere is
+    a font that will not arrive.
 */
 
+@font-face {
+    font-family: 'Nevera';
+    src: url('/__aegis/nevera.otf') format('opentype');
+    font-display: swap;
+}
+
 :root {
-    --page: #080808;
-    --card-bg: #101012;
-    --card-border: #1f1f22;
-    --input-bg: #0d0d0d;
-    --input-border: #2a2a2a;
-    --input-border-focus: #3b89ff;
-    --accent: #3b89ff;
-    --accent-hover: #6ca6ff;
-    --on-accent: #061225;
-    --text: #ffffff;
-    --text-body: #cfcfcf;
-    --text-muted: #8f8f8f;
-    --text-faint: #6a6a6a;
-    --error: #ee1d36;
-    --focus-ring: rgba(59, 137, 255, 0.35);
+    --surface: #ffffff;
+    --sunken: #f5f5f7;
+    --ink: #080808;
+    --ink-pressed: #1c1c1e;
+    --on-ink: #ffffff;
+    --body: #363636;
+    --muted: #5a5a5a;
+    --border: #e4e4e4;
+    --border-control: #8a8a8a;
+    --focus-ring: #14305c;
+    --danger: #c50f2c;
+    --danger-wash: #fef5f6;
+    --danger-border: #f6ccd2;
 
-    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Archivo', Roboto, Helvetica, Arial, sans-serif;
+    --font-display: 'Archivo', -apple-system, 'Segoe UI', sans-serif;
+    --font-ui: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-wordmark: 'Nevera', 'Archivo', sans-serif;
 
-    --radius-sm: 8px;
-    --radius-lg: 16px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-pill: 999px;
+
     --space-1: 4px;
     --space-2: 8px;
     --space-3: 12px;
     --space-4: 16px;
     --space-6: 24px;
     --space-8: 32px;
-    --space-10: 40px;
+
+    --control-height: 36px;
+    --card-width: 424px;
+    --site-icon: 32px;
+    --brand-mark: 20px;
+    --press-time: 120ms;
+}
+
+/* A finger needs a bigger target than a mouse: 44px, rule 10 of the system. */
+@media (pointer: coarse) {
+    :root {
+        --control-height: 44px;
+    }
 }
 
 *,
@@ -55,58 +78,83 @@
     padding: 0;
 }
 
-html,
-body {
-    height: 100%;
-}
-
+/*
+    A column of three: the site, the form, the guard. The middle one takes the
+    room that is left, so the corners stay corners at any height. The refusal
+    page has no site header and the same rule still holds.
+*/
 .auth-body {
-    font-family: var(--font-ui);
-    background: var(--page);
-    color: var(--text-body);
-    -webkit-font-smoothing: antialiased;
-}
-
-.auth-shell {
     min-height: 100vh;
     min-height: 100dvh;
     display: flex;
+    flex-direction: column;
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 22px;
+    background: var(--sunken);
+    color: var(--body);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ── Top left: the site the visitor came for ─────────────────── */
+
+.auth-site {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-6) var(--space-8);
+}
+
+.auth-site-icon {
+    flex: none;
+    width: var(--site-icon);
+    height: var(--site-icon);
+    object-fit: contain;
+    display: block;
+}
+
+.auth-site-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+    color: var(--ink);
+}
+
+/* ── The form ─────────────────────────────────────────────────── */
+
+.auth-shell {
+    flex: 1;
+    display: flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space-10) var(--space-6);
+    padding: var(--space-6) var(--space-4);
 }
 
 .auth-card {
-    width: 400px;
+    width: var(--card-width);
     max-width: 100%;
-    padding: var(--space-10);
-    background: var(--card-bg);
-    border: 1px solid var(--card-border);
+    padding: var(--space-8);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: var(--radius-lg);
 }
 
-.auth-site {
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-    margin-bottom: var(--space-2);
-    overflow-wrap: anywhere;
-}
-
 .auth-title {
-    font-size: 24px;
-    font-weight: 700;
-    color: var(--text);
-    margin-bottom: var(--space-2);
+    font-family: var(--font-display);
+    font-size: 20px;
+    line-height: 28px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    margin-bottom: var(--space-1);
 }
 
 .auth-subtitle {
-    font-size: 14px;
-    line-height: 1.5;
-    color: var(--text-muted);
-    margin-bottom: var(--space-8);
+    color: var(--muted);
+    margin-bottom: var(--space-6);
 }
 
 .auth-field {
@@ -115,27 +163,29 @@ body {
 
 .auth-label {
     display: block;
-    font-size: 13px;
+    font-size: 12px;
+    line-height: 16px;
     font-weight: 500;
-    color: var(--text-body);
+    color: var(--muted);
     margin-bottom: var(--space-2);
 }
 
 .auth-input {
     width: 100%;
-    padding: var(--space-3) var(--space-4);
+    height: var(--control-height);
+    padding: 0 var(--space-3);
     font-family: inherit;
     font-size: 14px;
-    color: var(--text);
-    background: var(--input-bg);
-    border: 1px solid var(--input-border);
-    border-radius: var(--radius-sm);
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border-control);
+    border-radius: var(--radius-md);
     outline: none;
 }
 
-.auth-input:focus {
-    border-color: var(--input-border-focus);
-    box-shadow: 0 0 0 3px var(--focus-ring);
+.auth-input:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
 }
 
 /*
@@ -144,50 +194,105 @@ body {
     second placeholder to control its visibility.
 */
 .auth-error {
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--error);
-    margin: var(--space-1) 0 var(--space-4);
+    color: var(--danger);
+    background: var(--danger-wash);
+    border: 1px solid var(--danger-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-4);
+    overflow-wrap: anywhere;
 }
 
 .auth-error:empty {
     display: none;
 }
 
+/* The one primary action of the page: the ink pill. */
 .auth-submit {
     width: 100%;
-    padding: var(--space-3) var(--space-4);
+    height: var(--control-height);
+    margin-top: var(--space-2);
+    padding: 0 var(--space-6);
     font-family: inherit;
     font-size: 14px;
     font-weight: 600;
-    color: var(--on-accent);
-    background: var(--accent);
+    color: var(--on-ink);
+    background: var(--ink);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
     cursor: pointer;
+    transition: transform var(--press-time) ease;
 }
 
 .auth-submit:hover {
-    background: var(--accent-hover);
+    background: var(--ink-pressed);
+}
+
+.auth-submit:active {
+    transform: scale(0.95);
 }
 
 .auth-submit:focus-visible {
-    outline: 2px solid var(--accent-hover);
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
 }
 
-.auth-footer {
-    margin-top: var(--space-8);
-    font-size: 12px;
-    text-align: center;
-    color: var(--text-faint);
+@media (prefers-reduced-motion: reduce) {
+    .auth-submit {
+        transition: none;
+    }
+
+    .auth-submit:active {
+        transform: none;
+    }
 }
 
 /*
     The refusal page (siteAuth.renderError) borrows .auth-shell, .auth-card,
-    .auth-title and .auth-error, so it needs no rules of its own and no colour
-    of its own. It carries no form, hence the spacing correction.
+    .auth-title and .auth-error, so it needs no colour of its own. It carries no
+    form, hence the spacing correction.
 */
+.auth-card>.auth-title+.auth-error {
+    margin-top: var(--space-4);
+}
+
 .auth-card>.auth-error:last-child {
     margin-bottom: 0;
+}
+
+/* ── Bottom left: what guards the site ───────────────────────── */
+
+.auth-brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-6) var(--space-8);
+}
+
+.auth-brand-mark {
+    flex: none;
+    width: var(--brand-mark);
+    height: var(--brand-mark);
+    display: block;
+}
+
+.auth-brand-word {
+    font-family: var(--font-wordmark);
+    font-size: 16px;
+    line-height: 20px;
+    color: var(--ink);
+}
+
+/* ── Phones: the corners keep the page gutter ────────────────── */
+
+@media (max-width: 640px) {
+
+    .auth-site,
+    .auth-brand {
+        padding: var(--space-4);
+    }
+
+    .auth-card {
+        padding: var(--space-6);
+    }
 }

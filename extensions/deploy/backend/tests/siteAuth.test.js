@@ -403,6 +403,91 @@ test('login page: Accept-Language chooses English when French is not asked for',
 });
 
 /* ------------------------------------------------------------------ */
+/* the page's corners and its own files                                */
+/* ------------------------------------------------------------------ */
+
+test('login page: the site icon top left, Aegis bottom left, and a CSP that still allows no script', async () => {
+    const slug = 'tenant-corners';
+    const tenantPaths = seed(slug, 'corners',
+        { name: 'Sales', auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
+    const res = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/__aegis/login'), res,
+        { slug, tenantPaths, project: { id: 'corners', name: 'Sales' } });
+
+    assert.match(res.body, /<header class="auth-site">[\s\S]*src="\/__aegis\/site-icon"[\s\S]*Sales[\s\S]*<\/header>/);
+    assert.match(res.body, /<footer class="auth-brand"[\s\S]*src="\/__aegis\/aegis-mark.svg"[\s\S]*Aegis[\s\S]*<\/footer>/);
+    const csp = res.headers['Content-Security-Policy'];
+    assert.match(csp, /default-src 'none'/);
+    assert.match(csp, /img-src 'self'/);
+    assert.match(csp, /font-src 'self'/);
+    assert.ok(!/script-src/.test(csp), 'the page runs no script, so the policy names none');
+    assert.strictEqual(res.headers['Referrer-Policy'], 'no-referrer');
+    assert.ok(!/<script/i.test(res.body));
+});
+
+test('assets: the stylesheet, the Aegis mark and the wordmark font, each with its own type', async () => {
+    const slug = 'tenant-assets';
+    const tenantPaths = seed(slug, 'assets',
+        { name: 'Assets', auth: { enabled: true, allowedGroups: [] } }, null);
+    const ctx = { slug, tenantPaths, project: { id: 'assets', name: 'Assets' } };
+    const want = {
+        '/__aegis/login.css': /^text\/css/,
+        '/__aegis/aegis-mark.svg': /^image\/svg\+xml$/,
+        '/__aegis/nevera.otf': /^font\/otf$/
+    };
+    for (const [url, type] of Object.entries(want)) {
+        const res = fakeRes();
+        // No directory configured: the refusal page needs these all the same.
+        assert.strictEqual(await siteAuth.gate(fakeReq('GET', url), res, ctx), true);
+        assert.strictEqual(res.statusCode, 200, url);
+        assert.match(res.headers['Content-Type'], type, url);
+        assert.strictEqual(res.headers['X-Content-Type-Options'], 'nosniff', url);
+        assert.ok(res.headers['Content-Length'] > 0, url);
+    }
+});
+
+test('site icon: read from the deployed files before sign-in, a monogram when there are none', async () => {
+    const slug = 'tenant-icon';
+    const tenantPaths = seed(slug, 'icon',
+        { name: 'Sales', auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-icon-root-'));
+    fs.writeFileSync(path.join(root, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>');
+
+    const withIcon = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/__aegis/site-icon'), withIcon,
+        { slug, tenantPaths, project: { id: 'icon', name: 'Sales' }, root });
+    assert.strictEqual(withIcon.statusCode, 200);
+    assert.match(withIcon.body, /<circle/);
+    assert.match(withIcon.headers['Content-Security-Policy'], /sandbox/);
+
+    const without = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/__aegis/site-icon'), without,
+        { slug, tenantPaths, project: { id: 'icon', name: 'Sales' } });
+    assert.strictEqual(without.statusCode, 200);
+    assert.match(without.body, />S<\/text>/);
+});
+
+test('site icon: an unprotected site keeps the whole prefix reserved', async () => {
+    const slug = 'tenant-icon-open';
+    const tenantPaths = seed(slug, 'open', { name: 'Open' }, GOOD_CONFIG);
+    const res = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/__aegis/site-icon'), res,
+        { slug, tenantPaths, project: { id: 'open', name: 'Open' } });
+    assert.strictEqual(res.statusCode, 404);
+});
+
+test('refusal page: it carries the Aegis mark like the form does', async () => {
+    const slug = 'tenant-refusal-brand';
+    const tenantPaths = seed(slug, 'refused',
+        { name: 'Refused', auth: { enabled: true, allowedGroups: [] } }, null);
+    const res = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/'), res,
+        { slug, tenantPaths, project: { id: 'refused', name: 'Refused' } });
+    assert.strictEqual(res.statusCode, 503);
+    assert.match(res.body, /class="auth-brand"[\s\S]*aegis-mark.svg/);
+});
+
+/* ------------------------------------------------------------------ */
 /* the login exchange, with an injected verifier                       */
 /* ------------------------------------------------------------------ */
 
@@ -542,6 +627,11 @@ test('login: the sixth attempt from one address is answered with 429', async () 
         assert.strictEqual(res.statusCode, 429);
         assert.ok(Number(res.headers['Retry-After']) > 0);
         assert.ok(/\b\d+\b/.test(res.body), 'the page states how long is left');
+        // The form it shows must be one that can be submitted once the wait is
+        // over: its token and its cookie have to be the same pair.
+        const field = /name="csrf" value="([^"]+)"/.exec(res.body);
+        assert.ok(field, 'the locked page still carries a form');
+        assert.strictEqual(cookieValue(res.headers['Set-Cookie'], 'aegis_site_csrf'), field[1]);
     } finally {
         siteAuth._setVerifier(null);
         siteAuth._clearFailures(ip, 'brute');

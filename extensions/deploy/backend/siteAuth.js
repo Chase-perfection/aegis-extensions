@@ -65,13 +65,26 @@ const projectStore = require('./projectStore');
 const authStore = require('./authStore');
 const authMethods = require('./authMethods');
 const accessPolicy = require('./accessPolicy');
+const siteIcon = require('./siteIcon');
 
 /** Everything under here belongs to the guard and never to the site. */
 const PREFIX = '/__aegis/';
 const LOGIN_PATH = '/__aegis/login';
 const LOGOUT_PATH = '/__aegis/logout';
 const CSS_PATH = '/__aegis/login.css';
+const MARK_PATH = '/__aegis/aegis-mark.svg';
+const ICON_PATH = '/__aegis/site-icon';
 const WHOAMI_PATH = '/__aegis/whoami';
+
+/**
+ * The page's own files, by fixed path. A table and not a folder lookup: the URL
+ * never chooses a file name, so there is nothing to traverse.
+ */
+const ASSETS = {
+    [CSS_PATH]: { file: 'login.css', type: 'text/css; charset=utf-8' },
+    [MARK_PATH]: { file: 'aegis-mark.svg', type: 'image/svg+xml' },
+    '/__aegis/nevera.otf': { file: 'Nevera-Regular.otf', type: 'font/otf' }
+};
 
 const SESSION_COOKIE = 'aegis_site';
 const CSRF_COOKIE = 'aegis_site_csrf';
@@ -574,19 +587,25 @@ function safeNext(raw) {
     return value;
 }
 
-/** The template and the stylesheet, re-read when they change on disk. */
+/** The template and the page's assets, re-read when they change on disk. */
 const fileCache = new Map();
 
-function readPageFile(name) {
+/** Bytes, because the font is not text. */
+function readPageBytes(name) {
     const file = path.join(PAGE_DIR, name);
     let mtime = 0;
     try { mtime = fs.statSync(file).mtimeMs; } catch (_) { return null; }
     const hit = fileCache.get(name);
     if (hit && hit.mtime === mtime) return hit.body;
     let body;
-    try { body = fs.readFileSync(file, 'utf8'); } catch (_) { return null; }
+    try { body = fs.readFileSync(file); } catch (_) { return null; }
     fileCache.set(name, { mtime, body });
     return body;
+}
+
+function readPageFile(name) {
+    const body = readPageBytes(name);
+    return body === null ? null : body.toString('utf8');
 }
 
 function renderLogin({ lang, siteName, next, error, csrf, username }) {
@@ -631,7 +650,11 @@ function renderError(lang, heading, message) {
         + '<section class="auth-card">\n'
         + `<h1 class="auth-title">${escapeHtml(heading)}</h1>\n`
         + `<p class="auth-error">${escapeHtml(message)}</p>\n`
-        + '</section>\n</main>\n</body>\n</html>\n';
+        + '</section>\n</main>\n'
+        + `<footer class="auth-brand" aria-label="${escapeHtml(tr(lang, 'footer'))}">\n`
+        + `<img class="auth-brand-mark" src="${MARK_PATH}" alt="" width="20" height="20">\n`
+        + '<span class="auth-brand-word" aria-hidden="true">Aegis</span>\n'
+        + '</footer>\n</body>\n</html>\n';
 }
 
 function sendHtml(res, status, body, extraHeaders) {
@@ -641,9 +664,14 @@ function sendHtml(res, status, body, extraHeaders) {
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'DENY',
-        // The login page loads its own stylesheet and posts to its own origin.
-        // Nothing else, so nothing else is allowed.
-        'Content-Security-Policy': "default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        // The `next` path rides in the URL; no other origin needs to read it.
+        'Referrer-Policy': 'no-referrer',
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        // The login page loads its own stylesheet, font and images, and posts
+        // to its own origin. Nothing else, so nothing else is allowed. Still no
+        // script-src: the page runs none.
+        'Content-Security-Policy': "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; "
+            + "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     }, extraHeaders || {});
     res.writeHead(status, headers);
     res.end(body);
@@ -691,6 +719,13 @@ function csrfCookie(token, secure) {
         + (secure ? '; Secure' : '');
 }
 
+/** Equal and non-empty, compared in constant time. */
+function sameToken(a, b) {
+    const x = Buffer.from(String(a || ''), 'utf8');
+    const y = Buffer.from(String(b || ''), 'utf8');
+    return x.length > 0 && x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
 function readCookie(req, name) {
     const header = (req.headers && req.headers.cookie) || '';
     for (const part of String(header).split(';')) {
@@ -728,17 +763,17 @@ function readBody(req, limit) {
 /* the gate                                                            */
 /* ------------------------------------------------------------------ */
 
-function serveCss(res) {
-    const body = readPageFile('login.css');
-    if (body === null) return sendHtml(res, 500, 'stylesheet missing');
-    const buf = Buffer.from(body, 'utf8');
+function serveAsset(req, res, asset) {
+    const buf = readPageBytes(asset.file);
+    if (buf === null) return sendHtml(res, 500, 'asset missing');
     res.writeHead(200, {
-        'Content-Type': 'text/css; charset=utf-8',
+        'Content-Type': asset.type,
         'Content-Length': buf.length,
         'Cache-Control': 'no-cache',
-        'X-Content-Type-Options': 'nosniff'
+        'X-Content-Type-Options': 'nosniff',
+        'Cross-Origin-Resource-Policy': 'same-origin'
     });
-    res.end(buf);
+    res.end(req.method === 'HEAD' ? undefined : buf);
 }
 
 /**
@@ -780,7 +815,8 @@ function loginPage(res, status, ctx, opts) {
         return sendHtml(res, 500,
             renderError(ctx.lang, tr(ctx.lang, 'errUnavailableTitle'), tr(ctx.lang, 'errUnavailable')));
     }
-    return sendHtml(res, status, body, { 'Set-Cookie': csrfCookie(csrf, ctx.secure === true) });
+    return sendHtml(res, status, body,
+        Object.assign({ 'Set-Cookie': csrfCookie(csrf, ctx.secure === true) }, opts.headers));
 }
 
 /**
@@ -790,7 +826,7 @@ function loginPage(res, status, ctx, opts) {
  * anything, false when it is authenticated and the file server should proceed.
  * Returns a promise on the POST path only; the caller handles both.
  */
-function gate(req, res, { slug, tenantPaths, project }) {
+function gate(req, res, { slug, tenantPaths, project, root }) {
     const projectId = project && project.id;
     const siteName = (project && (project.name || project.id)) || 'site';
     const pathOnly = String(req.url || '/').split('?')[0];
@@ -815,11 +851,19 @@ function gate(req, res, { slug, tenantPaths, project }) {
     const lang = pickLang(req);
     const ctx = { slug, tenantPaths, projectId, siteName, lang, secure: isSecure(req) };
 
-    // Served before the directory is consulted: it carries nothing, and the
-    // refusal page below needs it to be legible.
-    if (pathOnly === CSS_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
-        serveCss(res);
-        return true;
+    // Served before the directory is consulted: they carry nothing secret, and
+    // the refusal page below needs them to be legible. The site icon is the one
+    // file read out of the site itself; siteIcon.js says what keeps that to an
+    // image inside the site.
+    if (req.method === 'GET' || req.method === 'HEAD') {
+        if (Object.prototype.hasOwnProperty.call(ASSETS, pathOnly)) {
+            serveAsset(req, res, ASSETS[pathOnly]);
+            return true;
+        }
+        if (pathOnly === ICON_PATH) {
+            siteIcon.serve(req, res, { root, siteName });
+            return true;
+        }
     }
 
     // Which door this site opens. `none` returned above; every method this
@@ -1013,18 +1057,20 @@ async function handleLogin(req, res, ctx, config) {
 
     const locked = lockRemaining(ip, ctx.projectId);
     if (locked > 0) {
-        const body = renderLogin({
-            lang: ctx.lang, siteName: ctx.siteName, next,
-            error: tr(ctx.lang, 'errLocked', locked), csrf: newToken(), username
+        // Through loginPage, so the form's new token and its cookie travel
+        // together. Rendered with a token and no cookie, the first try after
+        // the wait failed the CSRF check and counted as one more failure.
+        loginPage(res, 429, ctx, {
+            next, error: tr(ctx.lang, 'errLocked', locked), username,
+            headers: { 'Retry-After': String(locked) }
         });
-        sendHtml(res, 429, body === null ? 'Too many attempts' : body, { 'Retry-After': String(locked) });
         return true;
     }
 
     // Double submit: a form posted from another origin cannot read the cookie,
     // so it cannot produce a matching field. Counted as a failure like any
     // other, because a real user never trips it twice.
-    if (!sentCsrf || !cookieCsrf || sentCsrf !== cookieCsrf) {
+    if (!sameToken(sentCsrf, cookieCsrf)) {
         noteFailure(ip, ctx.projectId);
         loginPage(res, 400, ctx, { next, error: tr(ctx.lang, 'errSession'), username });
         return true;

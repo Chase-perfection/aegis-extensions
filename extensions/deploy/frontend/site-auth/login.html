@@ -11,6 +11,10 @@
 
     No script. The form posts and the server answers; there is nothing here for
     JavaScript to do, and a page with no script is a page with no XSS sink.
+
+    Three regions: the site the visitor came for in the top left corner (its own
+    favicon, served by siteIcon.js), the form in the middle, and what guards it
+    in the bottom left corner.
 -->
 <html lang="{{LANG}}">
 
@@ -19,14 +23,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
     <title>{{T_TITLE}} | {{SITE_NAME}}</title>
+    <link rel="icon" href="/__aegis/site-icon">
     <link rel="stylesheet" href="/__aegis/login.css">
 </head>
 
 <body class="auth-body">
+    <header class="auth-site">
+        <img class="auth-site-icon" src="/__aegis/site-icon" alt="" width="32" height="32">
+        <span class="auth-site-name">{{SITE_NAME}}</span>
+    </header>
+
     <main class="auth-shell">
-        <section class="auth-card">
-            <p class="auth-site">{{SITE_NAME}}</p>
-            <h1 class="auth-title">{{T_TITLE}}</h1>
+        <section class="auth-card" aria-labelledby="auth-title">
+            <h1 class="auth-title" id="auth-title">{{T_TITLE}}</h1>
             <p class="auth-subtitle">{{T_SUBTITLE}}</p>
 
             <form class="auth-form" method="post" action="/__aegis/login" autocomplete="on">
@@ -45,14 +54,17 @@
                         autocomplete="current-password" required>
                 </div>
 
-                <p class="auth-error">{{ERROR}}</p>
+                <p class="auth-error" role="alert">{{ERROR}}</p>
 
                 <button class="auth-submit" type="submit">{{T_SUBMIT}}</button>
             </form>
-
-            <p class="auth-footer">{{T_FOOTER}}</p>
         </section>
     </main>
+
+    <footer class="auth-brand" aria-label="{{T_FOOTER}}">
+        <img class="auth-brand-mark" src="/__aegis/aegis-mark.svg" alt="" width="20" height="20">
+        <span class="auth-brand-word" aria-hidden="true">Aegis</span>
+    </footer>
 </body>
 
 </html>

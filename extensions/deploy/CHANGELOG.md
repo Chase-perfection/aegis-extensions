@@ -2,6 +2,29 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.9
+
+**The sign-in page of a protected site follows the Aegis design system.** It
+was dark with a bright blue button. It is now light: a white card on a grey
+ground, an ink pill to sign in, the site's own icon and name in the top left
+corner, and the Aegis mark in the bottom left. The refusal pages carry the
+mark too.
+
+**The site's icon is read from its files before sign-in, and nothing else
+is.** `/__aegis/site-icon` takes the icon the entry page declares, or a
+`favicon.*` at the root or in `public/`, `static/` or `assets/`. It serves
+only an image type, only a file whose real path stays inside the site, and
+only up to 512 KB, with `sandbox` in its CSP. A site without an icon gets the
+first letter of its name on an ink tile.
+
+**Fixed: the page shown during a lockout could not be submitted.** Its form
+carried a CSRF token with no matching cookie, so the first try after the wait
+was refused as an expired session and counted as one more failure.
+
+The login page now also sends `Referrer-Policy: no-referrer` and
+`Cross-Origin-Opener-Policy: same-origin`, and compares the CSRF pair in
+constant time.
+
 ## 0.2.8
 
 **A project can keep its data in a Postgres database you run.** A gear at the
