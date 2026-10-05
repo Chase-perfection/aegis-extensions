@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-02T09:29:45Z",
+  "generatedAt": "2026-10-05T12:04:39Z",
   "repo": "Chase-perfection/aegis-extensions",
   "extensions": [
     {
@@ -45,12 +45,12 @@
       ],
       "requiresHostOptIn": true,
       "file": "deploy-0.2.8.zip",
-      "size": 389811,
-      "sha256": "4eb69c0bece4abb978a515c3d22de432e99bafdf28e9318637dca26c892cb5ef",
+      "size": 443479,
+      "sha256": "ba37c357b2b9986f2331b1d4379601096918264236eca5a90090b9152c12d8d0",
       "download": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.2.8/deploy-0.2.8.zip",
       "manifest": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.2.8/deploy-0.2.8.manifest.json",
       "signature": "https://github.com/Chase-perfection/aegis-extensions/releases/download/deploy-v0.2.8/deploy-0.2.8.manifest.json.sig",
-      "publishedAt": "2026-10-02T09:29:42Z",
+      "publishedAt": "2026-10-05T12:04:37Z",
       "channel": "stable",
       "image": "https://raw.githubusercontent.com/Chase-perfection/aegis-extensions/main/extensions/deploy/card.png",
       "imageSha256": "123aa6b66015357dfb46db0db36305dc83ed5b85a29358807d78ce0a8aaba342",
