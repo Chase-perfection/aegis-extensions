@@ -2058,28 +2058,298 @@ button.dep-listrow {
     font-variant-numeric: tabular-nums;
 }
 
-/* The resources a deployed site declares, one block each.
+/* Access by resource (aegis.access.json), drawn to the Aegis design system.
 
-   Indented behind a rule rather than boxed: these are settings of the site
-   above them and not a second card, and the operator reads the whole column
-   top to bottom. The name is the heading because the manifest carries no
-   display text, so what is on screen is the string the site wrote and the
-   string the refusal page names. */
-.dep-auth-grant {
-    margin-top: var(--space-md);
-    padding-left: var(--space-md);
-    border-left: 2px solid var(--dep-line);
+   A section header (title, meta, hairline rule), one sentence, the matrix that
+   answers "who opens what", then one flat card per resource. Colour only on
+   the status glyphs: a resource is not a category to tint, and the three
+   services of a site must read as equals. Labels are captions in sentence case,
+   never uppercase. Every value is an --ag-* token, with the page's own as the
+   fallback when aegis-white.css is not loaded. */
+.dep-access {
+    margin-top: var(--ag-space-8, var(--space-lg));
+    padding-top: var(--ag-space-6, var(--space-md));
+    font-family: var(--ag-font-ui, inherit);
+    color: var(--ag-ink, var(--text-main));
 }
 
+.dep-access-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--ag-space-3, var(--space-sm));
+    margin-bottom: var(--ag-space-2, var(--space-xs));
+}
+
+.dep-access-title {
+    margin: 0;
+    font-family: var(--ag-font-display, inherit);
+    font-size: 20px;
+    line-height: 28px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ag-ink, var(--text-main));
+    white-space: nowrap;
+}
+
+.dep-access-meta {
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--ag-meta, var(--zinc-400));
+}
+
+.dep-access-rule {
+    flex: 1;
+    align-self: center;
+    min-width: var(--ag-space-4, var(--space-sm));
+    height: 1px;
+    background: var(--ag-border, var(--dep-line));
+}
+
+.dep-access-lead {
+    margin: 0 0 var(--ag-space-6, var(--space-md));
+    max-width: 72ch;
+    font-size: 14px;
+    line-height: 22px;
+    color: var(--ag-body, var(--zinc-300));
+}
+
+/* The matrix sits in a sunken well: it is a reading of the form, not a
+   control, and the surface change says so without a second card border. */
+.dep-access-matrix {
+    padding: var(--ag-space-6, var(--space-md));
+    margin-bottom: var(--ag-space-6, var(--space-md));
+    background: var(--ag-sunken, var(--dep-sunken));
+    border-radius: var(--ag-radius-lg, var(--radius-md));
+}
+
+.dep-access-matrix-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--ag-space-3, var(--space-sm));
+    margin-bottom: var(--ag-space-4, var(--space-sm));
+}
+
+.dep-access-subtitle {
+    margin: 0;
+    font-family: var(--ag-font-display, inherit);
+    font-size: 16px;
+    line-height: 24px;
+    font-weight: 600;
+    color: var(--ag-ink, var(--text-main));
+}
+
+.dep-access-table-wrap {
+    overflow-x: auto;
+}
+
+.dep-access-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    line-height: 22px;
+    background: var(--ag-surface, var(--dep-surface));
+    border: 1px solid var(--ag-border, var(--dep-line));
+    border-radius: var(--ag-radius-md, var(--radius-sm));
+}
+
+.dep-access-table th,
+.dep-access-table td {
+    padding: var(--ag-space-3, var(--space-sm)) var(--ag-space-4, var(--space-sm));
+    text-align: left;
+    vertical-align: middle;
+    border-bottom: 1px solid var(--ag-hairline, var(--dep-line));
+}
+
+.dep-access-table tbody tr:last-child th,
+.dep-access-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.dep-access-table thead th {
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--ag-muted, var(--zinc-400));
+    white-space: nowrap;
+}
+
+.dep-access-table tbody th {
+    font-weight: 400;
+    min-width: 14rem;
+}
+
+.dep-access-who {
+    display: block;
+    font-weight: 600;
+    color: var(--ag-ink, var(--text-main));
+}
+
+/* A directory group is a name the directory wrote: mono, verbatim. */
+.dep-access-who.is-mono {
+    font-family: var(--ag-font-mono, monospace);
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.dep-access-who-sub {
+    display: block;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--ag-meta, var(--zinc-400));
+}
+
+.dep-access-no {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--ag-meta, var(--zinc-400));
+}
+
+.dep-access-empty {
+    margin: var(--ag-space-3, var(--space-sm)) 0 0;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--ag-muted, var(--zinc-400));
+}
+
+/* StatusChip: a line glyph plus the word, white chip, hairline edge. Only the
+   glyph is coloured. */
+.dep-access-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 var(--ag-space-2, var(--space-xs));
+    border-radius: var(--ag-radius-sm, 4px);
+    background: var(--ag-surface, var(--dep-surface));
+    border: 1px solid var(--ag-border, var(--dep-line));
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--ag-ink, var(--text-main));
+    white-space: nowrap;
+}
+
+.dep-access-chip svg { flex: none; }
+.dep-access-chip.is-on svg { color: var(--ag-success, #0b7a22); }
+.dep-access-chip.is-off svg { color: var(--ag-muted, var(--zinc-400)); }
+.dep-access-chip.is-admin svg { color: var(--ag-ink, var(--text-main)); }
+
+.dep-access-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
+    gap: var(--ag-space-4, var(--space-sm));
+}
+
+/* One resource, one flat card: surface, hairline border, large radius, no
+   shadow. */
+.dep-auth-grant {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ag-space-4, var(--space-sm));
+    padding: var(--ag-space-6, var(--space-md));
+    background: var(--ag-surface, var(--dep-surface));
+    border: 1px solid var(--ag-border, var(--dep-line));
+    border-radius: var(--ag-radius-lg, var(--radius-md));
+}
+
+.dep-access-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--ag-space-2, var(--space-xs));
+    padding-bottom: var(--ag-space-3, var(--space-sm));
+    border-bottom: 1px solid var(--ag-hairline, var(--dep-line));
+}
+
+.dep-access-card-title {
+    margin: 0;
+    font-family: var(--ag-font-display, inherit);
+    font-size: 16px;
+    line-height: 24px;
+    font-weight: 600;
+    color: var(--ag-ink, var(--text-main));
+}
+
+.dep-access-card-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ag-space-2, var(--space-xs));
+}
+
+.dep-access-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ag-space-1, 4px);
+}
+
+/* Field label: caption, muted, sentence case, above its control. */
+.dep-access-label,
 .dep-auth-grant .dep-label {
-    font-family: var(--font-mono);
+    margin: 0;
+    font-family: var(--ag-font-ui, inherit);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
     text-transform: none;
     letter-spacing: 0;
+    color: var(--ag-muted, var(--zinc-400));
 }
 
-/* The picker inside a binding sits under its groups field, not beside it, and
-   gives back the margin `.dep-auth-site-people` carries when it owns a column. */
+.dep-access-help {
+    margin: 0;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--ag-meta, var(--zinc-400));
+}
+
+.dep-access-admins {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--ag-space-2, var(--space-xs));
+    margin: 0;
+}
+
+/* The picker inside a card follows the card's rhythm rather than owning a
+   column of its own. */
 .dep-auth-grant .dep-auth-site-people {
-    margin-top: var(--space-xs);
-    margin-bottom: 0;
+    margin: 0;
+}
+
+.dep-auth-grant .dep-auth-site-people .dep-hint {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--ag-meta, var(--zinc-400));
+}
+
+.dep-access-all .dep-access-chip { font-weight: 500; }
+
+/* The input carries its own bottom margin for a form that owns a column;
+   inside a card the field's gap does that job. */
+.dep-auth-grant .dep-input { margin-bottom: 0; }
+
+/* The rest of the Authentication tab follows the same caption rule: labels
+   in sentence case, never uppercase or letter-spaced (design system rule 8).
+   Scoped to the tab, so the other panes are unchanged until they are redone. */
+.dep-auth-tab .dep-label {
+    font-family: var(--ag-font-ui, inherit);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ag-muted, var(--zinc-400));
+}
+
+.dep-auth-tab .dep-auth-site-sub {
+    font-family: var(--ag-font-display, inherit);
+    font-size: 16px;
+    line-height: 24px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ag-ink, var(--text-main));
 }

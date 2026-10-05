@@ -1267,7 +1267,14 @@ There is no list of declared resources in the file. The vocabulary is the set of
 closes the path rather than opening it, so a declaration list would only catch a
 mistake that already fails towards a locked door.
 
-Five rules the guard holds.
+Six rules the guard holds.
+
+**The site administrator holds every resource.** A person ticked Administrator
+in the Authentication tab passes every rule without being named under it. The
+tick is carried by a named person and never by a group, so this is a decision
+taken about one person. A demotion lands with the revalidation that clears it.
+An application that reads `/__aegis/whoami` and sees `admin` should open its
+own resources to that person too, or the two guards disagree.
 
 **Aegis refuses, and the application is never asked.** A request matching a rule
 whose resource the visitor does not hold gets 403 from the guard. The

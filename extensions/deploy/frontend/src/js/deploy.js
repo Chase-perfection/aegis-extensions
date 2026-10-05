@@ -24,6 +24,85 @@
         return v && v !== key ? v : fallback;
     }
 
+    /**
+     * Strings this extension owns, merged into the core table at load.
+     *
+     * Added, never overwritten: a key the core already defines keeps the core's
+     * wording, so a core translation fix always wins. Kept here rather than in
+     * the core's translations.js so the extension ships its own copy and
+     * deleting extensions/deploy/ leaves no orphan keys behind (ADR 0001).
+     */
+    var OWN_STRINGS = {
+        en: {
+            deploy_access_title: 'Access by resource',
+            deploy_access_meta: '{n} declared in aegis.access.json',
+            deploy_access_lead: 'Each resource opens one part of the site. It stays closed until somebody is named under it. The site administrators hold every resource without being named.',
+            deploy_access_matrix: 'Who opens what',
+            deploy_access_matrix_note: 'Worked out from the settings below, before you apply them.',
+            deploy_access_col_who: 'Person or group',
+            deploy_access_yes: 'Access',
+            deploy_access_no: 'No',
+            deploy_access_admin_cell: 'Every resource, as site administrator',
+            deploy_access_row_admin: 'Site administrator',
+            deploy_access_row_person: 'Person',
+            deploy_access_row_group: 'Directory group',
+            deploy_access_none: 'Nobody is named under a resource yet, so only the administrators get in.',
+            deploy_access_admins: 'Administrators',
+            deploy_access_admins_auto: 'automatic access',
+            deploy_access_admins_none: 'Nobody is ticked Administrator above.',
+            deploy_access_groups: 'Directory groups',
+            deploy_access_groups_help: 'Separated by commas.',
+            deploy_access_people: 'People',
+            deploy_access_open: 'Open',
+            deploy_access_closed: 'Closed',
+            deploy_access_admins_only: 'Administrators only',
+            deploy_access_person_one: 'person', deploy_access_person_many: 'people',
+            deploy_access_group_one: 'group', deploy_access_group_many: 'groups'
+        },
+        fr: {
+            deploy_access_title: 'Accès par ressource',
+            deploy_access_meta: '{n} déclarées dans aegis.access.json',
+            deploy_access_lead: 'Chaque ressource ouvre une partie du site. Elle reste fermée tant que personne n\'y est nommé. Les administrateurs du site les détiennent toutes, sans y être nommés.',
+            deploy_access_matrix: 'Qui ouvre quoi',
+            deploy_access_matrix_note: 'Calculé à partir des réglages ci-dessous, avant de les appliquer.',
+            deploy_access_col_who: 'Personne ou groupe',
+            deploy_access_yes: 'Accès',
+            deploy_access_no: 'Non',
+            deploy_access_admin_cell: 'Toutes les ressources, en tant qu\'administrateur du site',
+            deploy_access_row_admin: 'Administrateur du site',
+            deploy_access_row_person: 'Personne',
+            deploy_access_row_group: 'Groupe de l\'annuaire',
+            deploy_access_none: 'Personne n\'est encore nommé sous une ressource : seuls les administrateurs entrent.',
+            deploy_access_admins: 'Administrateurs',
+            deploy_access_admins_auto: 'accès automatique',
+            deploy_access_admins_none: 'Personne n\'est coché Administrateur plus haut.',
+            deploy_access_groups: 'Groupes de l\'annuaire',
+            deploy_access_groups_help: 'Séparés par des virgules.',
+            deploy_access_people: 'Personnes',
+            deploy_access_open: 'Ouverte',
+            deploy_access_closed: 'Fermée',
+            deploy_access_admins_only: 'Administrateurs seulement',
+            deploy_access_person_one: 'personne', deploy_access_person_many: 'personnes',
+            deploy_access_group_one: 'groupe', deploy_access_group_many: 'groupes'
+        }
+    };
+    (function mergeOwnStrings() {
+        var table = window.translations;
+        if (!table) return;
+        Object.keys(OWN_STRINGS).forEach(function (lang) {
+            var target = table[lang] || (table[lang] = {});
+            Object.keys(OWN_STRINGS[lang]).forEach(function (k) {
+                if (!(k in target)) target[k] = OWN_STRINGS[lang][k];
+            });
+        });
+    })();
+
+    /** `n` followed by the singular or plural word, both translated. */
+    function counted(n, oneKey, manyKey) {
+        var en = OWN_STRINGS.en;
+        return n + ' ' + (n === 1 ? tr(oneKey, en[oneKey]) : tr(manyKey, en[manyKey]));
+    }
+
     function el(tag, cls, text) {
         var n = document.createElement(tag);
         if (cls) n.className = cls;
@@ -5079,26 +5158,21 @@
         hint.setAttribute('data-i18n', 'deploy_auth_allowed_hint');
         groupsBlock.appendChild(hint);
 
-        var peopleBlock = buildPeopleBlock(site, canSearch);
-
-        // The resources the deployed commit declares, one row each. Nothing is
-        // drawn for a site that declares none, which is every site until one
-        // carries an aegis.access.json.
-        var grantsBlock = el('div', 'dep-auth-grants');
-        var grantRows = (site.resources || []).map(function (name) {
-            return { name: name, row: buildGrantRow(site, name, (site.grants || {})[name], canSearch) };
+        // The access section reads who is ticked Administrator from this block,
+        // so it is told when the list changes. `access` exists only once the
+        // section below is built; the first paint happens before that.
+        var access = null;
+        var peopleBlock = buildPeopleBlock(site, canSearch, {
+            onChange: function () { if (access) access.repaint(); }
         });
-        if (grantRows.length) {
-            var grantsTitle = el('h5', 'dep-auth-site-sub', tr('deploy_auth_grants',
-                'Access inside this site'));
-            grantsTitle.setAttribute('data-i18n', 'deploy_auth_grants');
-            grantsBlock.appendChild(grantsTitle);
-            var grantsHint = el('p', 'dep-hint', tr('deploy_auth_grants_hint',
-                'This site names these in aegis.access.json. Each one is closed until somebody is named under it.'));
-            grantsHint.setAttribute('data-i18n', 'deploy_auth_grants_hint');
-            grantsBlock.appendChild(grantsHint);
-            grantRows.forEach(function (g) { grantsBlock.appendChild(g.row.root); });
-        }
+
+        // The resources the deployed commit declares. Nothing is drawn for a
+        // site that declares none, which is every site until one carries an
+        // aegis.access.json.
+        access = buildAccessSection(site, canSearch, function () {
+            return peopleBlock.value().filter(function (p) { return p.admin === true; });
+        });
+        var grantsBlock = access.root;
 
         wrap.appendChild(audienceLabel);
         wrap.appendChild(audienceSelect);
@@ -5136,11 +5210,7 @@
                 groups: groups,
                 audience: audienceSelect,
                 people: peopleBlock.value,
-                grants: function () {
-                    var out = {};
-                    grantRows.forEach(function (g) { out[g.name] = g.row.value(); });
-                    return out;
-                }
+                grants: access.value
             }, apply, note);
         });
         wrap.appendChild(apply);
@@ -5221,6 +5291,273 @@
     }
 
     /**
+     * A status chip of the design system: a line glyph plus the word, no dot.
+     * Only the glyph carries colour (`is-on` success, otherwise muted).
+     */
+    var ACCESS_GLYPHS = { on: 'M3 8.5l3 3 7-7', off: 'M3 8h10', admin: 'M3 8.5l3 3 7-7' };
+    function accessChip(kind, word) {
+        var chip = el('span', 'dep-access-chip is-' + kind);
+        var svg = document.createElementNS(NS, 'svg');
+        svg.setAttribute('viewBox', '0 0 16 16');
+        svg.setAttribute('width', '12');
+        svg.setAttribute('height', '12');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('focusable', 'false');
+        var path = document.createElementNS(NS, 'path');
+        path.setAttribute('d', ACCESS_GLYPHS[kind] || ACCESS_GLYPHS.off);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', 'currentColor');
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('stroke-linejoin', 'round');
+        svg.appendChild(path);
+        chip.appendChild(svg);
+        chip.appendChild(document.createTextNode(word));
+        return chip;
+    }
+
+    function splitGroups(text) {
+        return String(text || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    }
+
+    /**
+     * Access inside the site: who opens which resource, then one card per
+     * resource to change it.
+     *
+     * The matrix comes first because it is the question an operator arrives
+     * with ("can Mandy open Comptabilité?"), and it is answered from the form as
+     * it stands, so a change shows its effect before Apply. The cards below are
+     * where the answer is changed. The administrators ticked above appear in
+     * both, marked as automatic: the gate lets them through every resource, so
+     * listing them as missing would be the one wrong thing this screen could say.
+     *
+     * `admins()` returns the people currently ticked Administrator.
+     */
+    function buildAccessSection(site, canSearch, admins) {
+        var root = el('section', 'dep-access');
+        var names = site.resources || [];
+        if (!names.length) {
+            return { root: root, value: function () { return {}; }, repaint: function () {} };
+        }
+        var en = OWN_STRINGS.en;
+
+        var head = el('div', 'dep-access-head');
+        head.appendChild(el('h4', 'dep-access-title', tr('deploy_access_title', en.deploy_access_title)));
+        head.appendChild(el('span', 'dep-access-meta',
+            tr('deploy_access_meta', en.deploy_access_meta).replace('{n}', names.length)));
+        head.appendChild(el('span', 'dep-access-rule'));
+        root.appendChild(head);
+        root.appendChild(el('p', 'dep-access-lead', tr('deploy_access_lead', en.deploy_access_lead)));
+
+        // Who opens what.
+        var matrix = el('div', 'dep-access-matrix');
+        var matrixHead = el('div', 'dep-access-matrix-head');
+        matrixHead.appendChild(el('h5', 'dep-access-subtitle', tr('deploy_access_matrix', en.deploy_access_matrix)));
+        matrixHead.appendChild(el('span', 'dep-access-meta', tr('deploy_access_matrix_note', en.deploy_access_matrix_note)));
+        matrix.appendChild(matrixHead);
+        var tableWrap = el('div', 'dep-access-table-wrap');
+        matrix.appendChild(tableWrap);
+        root.appendChild(matrix);
+
+        var cards = el('div', 'dep-access-cards');
+        root.appendChild(cards);
+
+        var rows = names.map(function (name) {
+            var row = buildGrantRow(site, name, (site.grants || {})[name], canSearch, repaint);
+            cards.appendChild(row.root);
+            return { name: name, row: row };
+        });
+
+        function current() {
+            var out = {};
+            rows.forEach(function (g) { out[g.name] = g.row.value(); });
+            return out;
+        }
+
+        function repaint() {
+            var grants = current();
+            var adminList = admins();
+            var adminSids = {};
+            adminList.forEach(function (p) { adminSids[String(p.sid).toUpperCase()] = true; });
+
+            // One line per administrator, then per person, then per group, each
+            // once even when named under several resources.
+            var lines = [];
+            adminList.forEach(function (p) {
+                lines.push({ kind: 'admin', label: p.name || p.login || p.sid, sub: p.login || '' });
+            });
+            var people = {};
+            var groups = {};
+            names.forEach(function (name) {
+                (grants[name].users || []).forEach(function (u) {
+                    var key = String(u.sid).toUpperCase();
+                    if (adminSids[key]) return;
+                    if (!people[key]) {
+                        people[key] = { kind: 'person', label: u.name || u.login || u.sid, sub: u.login || '', has: {} };
+                        lines.push(people[key]);
+                    }
+                    people[key].has[name] = true;
+                });
+                (grants[name].groups || []).forEach(function (g) {
+                    var key = g.toLowerCase();
+                    if (!groups[key]) {
+                        groups[key] = { kind: 'group', label: g, sub: '', has: {} };
+                        lines.push(groups[key]);
+                    }
+                    groups[key].has[name] = true;
+                });
+            });
+
+            tableWrap.textContent = '';
+            var table = el('table', 'dep-access-table');
+            var thead = el('thead');
+            var tr0 = el('tr');
+            tr0.appendChild(el('th', '', tr('deploy_access_col_who', en.deploy_access_col_who)));
+            names.forEach(function (name) { tr0.appendChild(el('th', '', name)); });
+            thead.appendChild(tr0);
+            table.appendChild(thead);
+            var tbody = el('tbody');
+            lines.forEach(function (line) {
+                var r = el('tr', 'is-' + line.kind);
+                var who = el('th', '');
+                who.scope = 'row';
+                who.appendChild(el('span', line.kind === 'group' ? 'dep-access-who is-mono' : 'dep-access-who', line.label));
+                var subText = line.kind === 'admin' ? tr('deploy_access_row_admin', en.deploy_access_row_admin)
+                    : line.kind === 'group' ? tr('deploy_access_row_group', en.deploy_access_row_group)
+                    : tr('deploy_access_row_person', en.deploy_access_row_person);
+                who.appendChild(el('span', 'dep-access-who-sub', subText + (line.sub ? ' · ' + line.sub : '')));
+                r.appendChild(who);
+                if (line.kind === 'admin') {
+                    // One cell across every column: an administrator is not
+                    // granted resource by resource, and repeating the same chip
+                    // in each column made the exception look like the rule.
+                    var all = el('td', 'dep-access-all');
+                    all.colSpan = names.length;
+                    all.appendChild(accessChip('admin', tr('deploy_access_admin_cell', en.deploy_access_admin_cell)));
+                    r.appendChild(all);
+                    tbody.appendChild(r);
+                    return;
+                }
+                names.forEach(function (name) {
+                    var cell = el('td', '');
+                    if (line.has[name]) {
+                        cell.appendChild(accessChip('on', tr('deploy_access_yes', en.deploy_access_yes)));
+                    } else {
+                        cell.appendChild(el('span', 'dep-access-no', tr('deploy_access_no', en.deploy_access_no)));
+                    }
+                    r.appendChild(cell);
+                });
+                tbody.appendChild(r);
+            });
+            table.appendChild(tbody);
+            tableWrap.appendChild(table);
+            if (!lines.some(function (l) { return l.kind !== 'admin'; })) {
+                tableWrap.appendChild(el('p', 'dep-access-empty', tr('deploy_access_none', en.deploy_access_none)));
+            }
+
+            rows.forEach(function (g) { g.row.paintStatus(grants[g.name], adminList); });
+        }
+
+        repaint();
+        return { root: root, value: current, repaint: repaint };
+    }
+
+    /**
+     * One resource the deployed commit declares, and who holds it, as a card.
+     *
+     * Drawn from `site.resources`, which the backend reads out of the manifest
+     * in the commit that is live. A resource the site stopped declaring is
+     * therefore no longer offered, and a binding left pointing at it grants
+     * nothing: the safe direction, and the one a rollback needs.
+     *
+     * The name is the title. `aegis.access.json` carries no display text, so
+     * what the operator reads here is exactly the string the site wrote, which
+     * is also the string the refusal page names.
+     */
+    function buildGrantRow(site, resource, grant, canSearch, onChange) {
+        var en = OWN_STRINGS.en;
+        var card = el('div', 'dep-auth-grant');
+        card.setAttribute('data-resource', resource);
+
+        var head = el('div', 'dep-access-card-head');
+        head.appendChild(el('h5', 'dep-access-card-title', resource));
+        var statusBox = el('div', 'dep-access-card-status');
+        head.appendChild(statusBox);
+        card.appendChild(head);
+
+        // The administrators, read-only: they are ticked in the list above and
+        // hold this resource because of that tick, not because of this card.
+        var adminsBox = el('div', 'dep-access-field');
+        adminsBox.appendChild(el('span', 'dep-access-label', tr('deploy_access_admins', en.deploy_access_admins)));
+        var adminsLine = el('p', 'dep-access-admins');
+        adminsBox.appendChild(adminsLine);
+        card.appendChild(adminsBox);
+
+        var groupsBox = el('div', 'dep-access-field');
+        var label = el('label', 'dep-access-label', tr('deploy_access_groups', en.deploy_access_groups));
+        var groups = document.createElement('input');
+        groups.type = 'text';
+        groups.className = 'dep-input';
+        groups.autocomplete = 'off';
+        groups.spellcheck = false;
+        groups.value = ((grant && grant.groups) || []).join(', ');
+        groups.disabled = !isAdmin;
+        groups.id = 'deploy-grant-groups-' + site.id + '-' + resource;
+        label.htmlFor = groups.id;
+        groupsBox.appendChild(label);
+        groupsBox.appendChild(groups);
+        groupsBox.appendChild(el('p', 'dep-access-help', tr('deploy_access_groups_help', en.deploy_access_groups_help)));
+        card.appendChild(groupsBox);
+        groups.addEventListener('input', function () { if (onChange) onChange(); });
+
+        var picker = buildPeopleBlock(site, canSearch, {
+            slot: 'grant-' + resource,
+            chosen: (grant && grant.users) || [],
+            withAdmin: false,
+            label: tr('deploy_access_people', en.deploy_access_people),
+            onChange: function () { if (onChange && picker) onChange(); }
+        });
+        card.appendChild(picker.root);
+
+        function value() {
+            return {
+                groups: splitGroups(groups.value),
+                users: picker.value().map(function (u) {
+                    return { sid: u.sid, login: u.login, name: u.name };
+                })
+            };
+        }
+
+        function paintStatus(v, adminList) {
+            statusBox.textContent = '';
+            var nPeople = v.users.length;
+            var nGroups = v.groups.length;
+            if (nPeople || nGroups) {
+                statusBox.appendChild(accessChip('on', tr('deploy_access_open', en.deploy_access_open)));
+                var parts = [];
+                if (nPeople) parts.push(counted(nPeople, 'deploy_access_person_one', 'deploy_access_person_many'));
+                if (nGroups) parts.push(counted(nGroups, 'deploy_access_group_one', 'deploy_access_group_many'));
+                statusBox.appendChild(el('span', 'dep-access-meta', parts.join(', ')));
+            } else {
+                statusBox.appendChild(accessChip('off', adminList.length
+                    ? tr('deploy_access_admins_only', en.deploy_access_admins_only)
+                    : tr('deploy_access_closed', en.deploy_access_closed)));
+            }
+            adminsLine.textContent = '';
+            if (!adminList.length) {
+                adminsLine.appendChild(el('span', 'dep-access-help', tr('deploy_access_admins_none', en.deploy_access_admins_none)));
+                return;
+            }
+            adminList.forEach(function (p) {
+                adminsLine.appendChild(accessChip('admin', p.name || p.login || p.sid));
+            });
+            adminsLine.appendChild(el('span', 'dep-access-help', tr('deploy_access_admins_auto', en.deploy_access_admins_auto)));
+        }
+
+        return { root: card, value: value, paintStatus: paintStatus };
+    }
+
+    /**
      * The people named on one site, and which of them administers it.
      *
      * A search field over the directory rather than a text box, because a SID
@@ -5240,62 +5577,6 @@
      * application would live in Aegis and be edited in Aegis every time an
      * application changed its mind about roles.
      */
-    /**
-     * One resource the deployed commit declares, and who holds it.
-     *
-     * Drawn from `site.resources`, which the backend reads out of the manifest
-     * in the commit that is live. A resource the site stopped declaring is
-     * therefore no longer offered, and a binding left pointing at it grants
-     * nothing: the safe direction, and the one a rollback needs.
-     *
-     * The name is the label. `aegis.access.json` carries no display text, so
-     * what the operator reads here is exactly the string the site wrote, which
-     * is also the string the refusal page names.
-     */
-    function buildGrantRow(site, resource, grant, canSearch) {
-        var row = el('div', 'dep-auth-grant');
-        row.setAttribute('data-resource', resource);
-
-        var label = el('label', 'dep-label', resource);
-        var groups = document.createElement('input');
-        groups.type = 'text';
-        groups.className = 'dep-input';
-        groups.autocomplete = 'off';
-        groups.spellcheck = false;
-        groups.value = ((grant && grant.groups) || []).join(', ');
-        groups.disabled = !isAdmin;
-        groups.id = 'deploy-grant-groups-' + site.id + '-' + resource;
-        label.htmlFor = groups.id;
-        row.appendChild(label);
-        row.appendChild(groups);
-
-        var hint = el('p', 'dep-hint', tr('deploy_auth_grant_hint',
-            'Groups separated by commas. Nobody holds this until a group or a person is named.'));
-        hint.setAttribute('data-i18n', 'deploy_auth_grant_hint');
-        row.appendChild(hint);
-
-        var picker = buildPeopleBlock(site, canSearch, {
-            slot: 'grant-' + resource,
-            chosen: (grant && grant.users) || [],
-            withAdmin: false,
-            label: tr('deploy_auth_grant_people', 'People')
-        });
-        row.appendChild(picker.root);
-
-        return {
-            root: row,
-            value: function () {
-                return {
-                    groups: groups.value.split(',').map(function (s) { return s.trim(); })
-                        .filter(Boolean),
-                    users: picker.value().map(function (u) {
-                        return { sid: u.sid, login: u.login, name: u.name };
-                    })
-                };
-            }
-        };
-    }
-
     function buildPeopleBlock(site, canSearch, opts) {
         // One picker, two callers. The site's own list carries the Administrator
         // tick; a resource binding does not, because "who runs the place" is
@@ -5386,8 +5667,13 @@
         var results = [];
         var active = -1;
 
+        // Told after every change of the list or of a tick, so a summary drawn
+        // elsewhere (the access matrix) follows the form before it is applied.
+        function changed() { if (typeof o.onChange === 'function') o.onChange(); }
+
         function paint() {
             chips.textContent = '';
+            changed();
             // The tick is explained where it can be ticked. With no way to name
             // anybody and nobody named, it describes a control that is not on
             // screen, and the gate above has already said why.
@@ -5419,6 +5705,7 @@
                     adminBox.disabled = !isAdmin;
                     adminBox.addEventListener('change', function () {
                         chosen[index].admin = adminBox.checked;
+                        changed();
                     });
                     adminWrap.appendChild(adminBox);
                     adminWrap.appendChild(el('span', '', tr('deploy_auth_person_admin', 'Administrator')));

@@ -2,6 +2,23 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.9
+
+**The site administrator opens every part of the site.** A person ticked
+Administrator in the Authentication tab passes every rule of
+`aegis.access.json` without being named under each resource. Before, the person
+Aegis named to run a site found its private paths closed until somebody named
+them again, resource by resource, and a resource added by a later commit
+locked them out of it.
+
+**Who opens what, at a glance.** The resources a site declares are drawn as one
+section in the Authentication tab: a matrix of every person and group named
+under a resource, one column per resource, worked out from the form before it
+is applied, then one card per resource with its status ("Ouverte, 2 personnes,
+1 groupe", "Administrateurs seulement", "Fermée"), the administrators who hold
+it automatically, its groups and its people. The labels of the tab follow the
+design system: captions in sentence case, no uppercase.
+
 ## 0.2.8
 
 **A project can keep its data in a Postgres database you run.** A gear at the

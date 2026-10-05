@@ -918,7 +918,14 @@ function gate(req, res, { slug, tenantPaths, project }) {
         // is invisible. This one cannot be forgotten: the request never
         // reaches the application at all.
         const policy = policyFor(slug, tenantPaths, projectId);
-        if (policy.rules.length) {
+        // The site administrator holds every resource the site declares. The
+        // tick is carried by a named person and never by a group (`a group can
+        // never confer admin`), so this is a decision taken about one person,
+        // not a door a group membership opens. Without it, the person Aegis
+        // names to run the site would have to be named again under each
+        // resource, and would find a room locked the day the site added one.
+        // A demotion lands with the revalidation that clears `session.admin`.
+        if (policy.rules.length && session.admin !== true) {
             const auth = authRecordFor(slug, tenantPaths, projectId) || {};
             const seen = accessPolicy.verdict({
                 rules: policy.rules,
