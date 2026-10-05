@@ -4,6 +4,47 @@ Clones a git branch and serves it as a site, with an optional sandboxed build.
 
 ## 0.2.8
 
+**A project can keep its data in a Postgres database you run.** A gear at the
+right of the project header opens a page that says where the data lives and
+offers a five-step setup: the address, the credentials, ten checks, a rehearsal
+of the copy, the switch. Each field has a note with an arrow pointing at it that
+says what the value is and where to find it, for a Supabase stack or for any
+other Postgres server. The rehearsal plays the project's migrations and copies
+every row inside a transaction it rolls back, with the site still up, so what
+the page shows is what a real copy did. The switch stops the site, does the same
+for real, compares row counts and restarts the site with `DATABASE_URL`. A
+failure at any point leaves the site running on its local file. The file is
+never written again, and "Go back to local files" restarts the site on it.
+
+**A database address is approved on the server, never from a browser.** A
+deployed site is denied the internal network. An administrator adds each
+`host:port` to `database-targets.txt` in the Deploy data folder, with one
+command the page shows, and no restart. With `AEGIS_DEPLOY_FIREWALL=1`, Deploy
+then narrows the sandbox account's block rules around that one address and
+port at each process start, and puts them back for a project on local files.
+
+**The project's code has to speak Postgres.** Deploy knows it does when the
+deployed version carries `migrations/postgres/*.sql`, and refuses the switch
+otherwise. Once a project is on Postgres, a deployment plays those files on the
+database and leaves the SQLite migrations unplayed.
+
+**The Data tab of a switched project** shows whether the database answers, its
+tables with their row counts, and a link to the database's own console.
+
+Needs an Aegis core that hands extensions `postgres`, `reauthenticate` and
+`readOnlyDb.rows`. On an older core the page says so and nothing else changes.
+This was republished under 0.2.8 rather than released as 0.3.0.
+
+**Every state on the page is the Aegis status chip.** A project, a deployment,
+a build stage, a readiness line and the directory connection used to show a
+coloured dot of Deploy's own, and the Status row of a project stretched its
+chip across the whole column. They now use the chip the rest of Aegis draws: a
+line glyph and the word, with only the glyph in colour. A stage reads as a
+tick, an exclamation, the loader or a dashed ring, a cancelled deployment as
+stopped rather than as never published, and the square beside the tenant name
+is gone. On an Aegis core older than the chip, the words show without glyphs.
+This was republished under 0.2.8 rather than released as 0.2.9.
+
 **A project served by a process deploys again after its first version.** Every
 push after the first failed with `EBUSY: resource busy or locked, rename
 '...\current' -> '...\releases\<sha>'`, with the site still up and nothing

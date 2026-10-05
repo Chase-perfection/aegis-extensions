@@ -39,7 +39,9 @@ const projectSettings = require('./projectSettings');
 const projectEnv = require('./projectEnv');
 const migrations = require('./migrations');
 const cloner = require('./cloner');
-const { deployNow, promoteNow, releasesFor, isDeploying, startAllRuntimes, useWritableDb } = require('./deployService');
+const { deployNow, promoteNow, releasesFor, isDeploying, startAllRuntimes, useWritableDb, usePostgres } = require('./deployService');
+const projectStorage = require('./projectStorage');
+const storageRoutes = require('./storageRoutes');
 const runs = require('./runs');
 const runStore = require('./runStore');
 const { startPoller, SAME_SHA_ATTEMPTS } = require('./poller');
@@ -640,7 +642,14 @@ function registerPublic(router, { resolver, moduleGate }) {
 }
 
 /** Routes below the session wall. The module gate is already mounted. */
-function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writableDb, resolveChrome, puppeteer }) {
+function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writableDb, resolveChrome, puppeteer, postgres, reauthenticate }) {
+    // Core's Postgres client, for a project whose data is on a database of its
+    // own (`projectStorage.js`). Set before anything starts a process, and
+    // outside the opt-in below because it starts nothing by itself. Undefined
+    // on an Aegis that predates it: a deployment then refuses to play Postgres
+    // migrations, and the storage routes answer `capable: false`.
+    usePostgres(postgres);
+
     // The browser capabilities, handed straight down. `chromePath` and puppeteer
     // both live in the Aegis tree, which an extension installed under
     // C:\ProgramData\Aegis\extensions\ cannot reach by any path; the loader's
@@ -1146,6 +1155,9 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         releases: releasesFor(req.tenantPaths, p),
         runtime: p.runtime === 'node' ? 'node' : 'static',
         startCmd: p.startCmd || null,
+        // `local` or `postgres`. One word, so the Data tab knows whether there
+        // is a file to open without asking the storage route first.
+        storageMode: projectStorage.mode(p),
         // A process that is not running leaves the port answering 503, which is
         // a different state from a site that never deployed.
         running: p.runtime === 'node' ? runtime.isRunning(req.tenant.slug, p.id) : null,
@@ -2439,6 +2451,10 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 return dataError(res, e, 'appliedMigrations');
             }
         });
+
+    // --- Where the project keeps its data: its file, or a database --------
+    // The routes are in storageRoutes.js. This file is long enough.
+    storageRoutes.register(router, { requireOptIn, requireRole, projectOr404, postgres, reauthenticate, readOnlyDb });
 
     // --- Environment variables (tranche 1.1 of plan 0002) ----------------
 

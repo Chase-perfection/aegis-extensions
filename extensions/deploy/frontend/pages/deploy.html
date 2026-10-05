@@ -16,7 +16,9 @@
     <link rel="stylesheet" href="../src/css/common.css">
     <link rel="stylesheet" href="../src/css/navbar.css">
     <link rel="stylesheet" href="../src/css/index.css">
+    <link rel="stylesheet" href="../src/css/ag-loader.css">
     <link rel="stylesheet" href="../src/css/deploy.css">
+    <link rel="stylesheet" href="../src/css/deploy-storage.css">
     <link rel="stylesheet" href="../src/css/aegis-white.css">
     <script defer src="../src/js/translations.js"></script>
     <script defer src="../src/js/tenant.js"></script>
@@ -46,7 +48,6 @@
                          so they are not drawn. -->
                     <aside class="dep-side">
                         <div class="dep-side-brand">
-                            <span class="dep-side-mark" aria-hidden="true"></span>
                             <span class="dep-side-tenant" id="deploy-side-tenant"></span>
                             <span class="dep-side-badge" data-i18n="deploy_side_badge">Extension</span>
                         </div>
@@ -375,7 +376,7 @@
                                 <h1 class="dep-pane-title" id="deploy-run-name"></h1>
                                 <span class="dep-chip" id="deploy-run-branch" hidden></span>
                                 <span class="dep-chip dep-mono" id="deploy-run-sha" hidden></span>
-                                <span class="dep-pill" id="deploy-run-status"></span>
+                                <span class="dep-status-slot" id="deploy-run-status"></span>
                                 <span class="dep-mono dep-run-clock" id="deploy-run-clock"></span>
                                 <button type="button" id="deploy-run-cancel" class="dep-btn dep-btn-ghost"
                                     hidden data-i18n="deploy_run_cancel">Cancel</button>
@@ -392,9 +393,12 @@
                             <div class="dep-run-head">
                                 <a class="dep-crumb" href="#projects" data-i18n="deploy_nav_projects">Projects</a>
                                 <h1 class="dep-pane-title" id="deploy-detail-name"></h1>
-                                <span class="dep-pill" id="deploy-detail-status"></span>
+                                <span class="dep-status-slot" id="deploy-detail-status"></span>
                                 <a class="dep-mono dep-detail-url" id="deploy-detail-url" target="_blank"
                                     rel="noopener noreferrer"></a>
+                                <!-- The storage gear. Empty until the backend says this
+                                     project can use it: see deploy-storage.js. -->
+                                <span class="dep-detail-tools" id="deploy-detail-tools"></span>
                             </div>
                             <div id="deploy-detail-body"></div>
                         </section>
@@ -574,8 +578,7 @@
                             <div id="deploy-auth" class="dep-block">
                                 <div class="dep-pane-head">
                                     <h1 class="dep-pane-title" data-i18n="deploy_auth_title">Authentication</h1>
-                                    <span id="deploy-auth-state" class="dep-pill is-idle"
-                                        data-i18n="deploy_auth_state_none">Not configured</span>
+                                    <span id="deploy-auth-state" class="dep-status-slot"></span>
                                 </div>
                                 <p class="dep-body" data-i18n="deploy_auth_body">A deployed site answers on its own
                                     port to anyone who can reach it. Connect your directory once here; each site then
@@ -789,6 +792,11 @@
     <script defer src="../src/js/common.js"></script>
     <script defer src="../src/js/navbar.js"></script>
     <script defer src="../src/js/deploy.js"></script>
+    <!-- After deploy.js, which lends them its helpers, and in this order: the
+         sentences, the guided setup, then the page that uses both. -->
+    <script defer src="../src/js/deploy-storage-text.js"></script>
+    <script defer src="../src/js/deploy-storage-steps.js"></script>
+    <script defer src="../src/js/deploy-storage.js"></script>
 </body>
 
 </html>

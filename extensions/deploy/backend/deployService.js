@@ -24,9 +24,61 @@ const projectEnv = require('./projectEnv');
 const runtime = require('./runtime');
 const shots = require('./shots');
 const migrations = require('./migrations');
+const pgMigrations = require('./pgMigrations');
+const projectStorage = require('./projectStorage');
+const storageNetwork = require('./storageNetwork');
 
 /** `<tenant>/<project>` while a deployment is in flight. */
 const inFlight = new Set();
+
+/**
+ * Runs `fn` while holding a project the way a deployment holds it.
+ *
+ * For the storage switch, which stops the process, copies its data and starts
+ * it again. A push picked up by the poller in the middle of that would start a
+ * version on a half-filled database, so the switch takes the same lock a
+ * deployment takes, and each refuses while the other runs.
+ */
+async function exclusive(slug, projectId, fn) {
+    const k = key(slug, projectId);
+    if (inFlight.has(k)) return { busy: true };
+    inFlight.add(k);
+    try {
+        return { busy: false, value: await fn() };
+    } finally {
+        inFlight.delete(k);
+    }
+}
+
+/**
+ * Core's Postgres client, injected once at mount like `writableDb` below and
+ * for the same reason: every path into `deployNow` then has it or none does.
+ * Null on an Aegis that predates the capability.
+ */
+let postgres = null;
+
+function usePostgres(cap) { postgres = cap || null; }
+
+/**
+ * What a project's storage adds to the start of its process.
+ *
+ * One function for the three places a process starts (a deployment, a promote,
+ * the boot) and for the switch, so none of them can start a project on a
+ * database without its address, or leave a firewall path open for a project
+ * that went back to local files. `prepare` is called by `runtime.restart` with
+ * the account it chose.
+ */
+function runtimeExtras(project) {
+    const onPostgres = !project.parentId && projectStorage.mode(project) === 'postgres';
+    const saved = onPostgres ? projectStorage.targetOf(project) : null;
+    // Read again at every start. An administrator who takes an address off
+    // the approved list means the path closed, and the next start closes it.
+    const target = saved && projectStorage.isApproved(saved.host, saved.port) ? saved : null;
+    return {
+        env: projectStorage.runtimeEnv(project),
+        prepare: (account) => storageNetwork.ensureFor(account, target)
+    };
+}
 
 /**
  * Le module d'ecriture du coeur, injecte une fois au montage.
@@ -235,6 +287,17 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
         : null;
 
     try {
+        // Where the data lives is read again, now that the project is held.
+        // The record a caller passes can be minutes old (the poller's sweep
+        // reads every project once), and a storage switch may have completed
+        // since. Deploying from the stale one would start the new version on
+        // the old file and play the wrong migrations.
+        const onDisk = projectStore.getProject(tenantPaths, project.id);
+        if (onDisk) {
+            if (onDisk.storage === undefined) delete project.storage;
+            else project.storage = onDisk.storage;
+        }
+
         // No installation means a public repository, cloned with no credential.
         // `cloneToCurrent` builds a plain https URL when the token is null.
         const token = await tokenForProject(app, tenantPaths, project, report);
@@ -309,7 +372,66 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
         // deploiement, une phrase alarmante qui ne parlait de rien.
         const found = migrations.list(migDir);
 
-        if (found.length) {
+        // A project on an external database gets its Postgres files played
+        // there, and its SQLite file is left exactly as the switch froze it:
+        // that file is the way back, and a migration applied to it would make
+        // it something other than what the operator was told is kept.
+        const onPostgres = byProcess && !project.parentId && projectStorage.mode(project) === 'postgres';
+        if (onPostgres) {
+            const pgDir = pgMigrations.dirFor(versionDir, project);
+            const pgFound = pgMigrations.list(pgDir);
+            {
+                if (report) report.stage('migrate', 'running', `${pgFound.length} in ${migName}/${pgMigrations.SUBDIR}/`);
+                // Nothing has moved: the version waits in `releases/` and the
+                // previous one is still on the port.
+                const stop = (code, message) => {
+                    if (report) {
+                        report.log(message);
+                        report.stage('migrate', 'failed');
+                        report.log('the version that was serving is still serving');
+                    }
+                    throw Object.assign(new Error(message), { code });
+                };
+                // A version that lost its Postgres files is a version whose
+                // code expects the local file again. The switch refused that
+                // at its `code` check; a later push must not walk around it.
+                // Started with the database address, it would answer its
+                // health check and fail on the first page that reads data.
+                if (!pgFound.length) {
+                    stop('migration_failed',
+                        `this project keeps its data in Postgres and this version has no file in ${migName}/${pgMigrations.SUBDIR}/: its code cannot use the database`);
+                }
+                if (!postgres || typeof postgres.connect !== 'function') {
+                    stop('migrations_unsupported',
+                        `${migName}/${pgMigrations.SUBDIR}/ holds ${pgFound.length} migration(s) and this Aegis cannot reach a Postgres database: update Aegis on this host`);
+                }
+                const target = projectStorage.targetOf(project);
+                // The service is not behind the sandbox's firewall rules, so
+                // the approved list is checked here too, every time: nothing
+                // in this extension connects to an address that is not on it.
+                if (!projectStorage.isApproved(target.host, target.port)) {
+                    stop('migration_failed',
+                        `${target.host}:${target.port} is no longer approved on this server, so its migrations cannot be played`);
+                }
+                let m;
+                let client = null;
+                try {
+                    client = await postgres.connect(Object.assign({}, target, { password: projectStorage.passwordOf(project) }));
+                    m = await pgMigrations.run({ client, dir: pgDir, sha });
+                } catch (e) {
+                    stop('migration_failed', `migration refused: ${e.message}`);
+                } finally {
+                    if (client) await client.end().catch(() => { });
+                }
+                if (report) {
+                    m.applied.forEach((n) => report.log(`migration applied: ${n}`));
+                    if (!m.applied.length) report.log(`${pgFound.length} migration(s) already applied, the schema is up to date`);
+                    report.stage('migrate', 'done');
+                }
+            }
+        }
+
+        if (!onPostgres && found.length) {
             if (report) {
                 report.stage('migrate', 'running',
                     `${found.length} dans ${migName}/`);
@@ -386,6 +508,7 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
         if (byProcess) {
             if (report) report.stage('publish', 'running', project.startCmd || '');
             try {
+                const extras = runtimeExtras(project);
                 const started = await runtime.restart({
                     slug,
                     project,
@@ -395,12 +518,16 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
                     // after the upgrade is when it should get one.
                     dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
                     startCmd: project.startCmd || '',
-                    env: projectEnv.forBuild(
+                    // The storage address last, so a variable of the same name
+                    // typed in the Variables tab cannot point a switched
+                    // project at another database than the one that was checked.
+                    env: Object.assign(projectEnv.forBuild(
                         project.parentId
                             ? (projectStore.getProject(tenantPaths, project.parentId) || project)
                             : project,
                         { target: project.parentId ? 'preview' : 'production', sha, branch: project.branch }
-                    ),
+                    ), extras.env),
+                    prepare: extras.prepare,
                     report
                 });
                 if (report) report.log(`application answering on 127.0.0.1:${started.port}`);
@@ -549,15 +676,17 @@ async function promoteNow({ slug, tenantPaths, project, sha, actor }) {
                 currentSha: project.lastSha || null,
                 previousSha: project.previousSha || null
             });
+            const extras = runtimeExtras(project);
             await runtime.restart({
                 slug,
                 project,
                 dir: found.dir,
                 dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
                 startCmd: project.startCmd || '',
-                env: projectEnv.forBuild(project, {
+                env: Object.assign(projectEnv.forBuild(project, {
                     target: 'production', sha: found.sha, branch: project.branch
-                })
+                }), extras.env),
+                prepare: extras.prepare
             });
             repointCurrent({ slug, tenantPaths, project, sha: found.sha, oldSha: project.lastSha || null });
             return finishPromote({ slug, tenantPaths, project, restored: found.sha, sha, actor });
@@ -632,6 +761,31 @@ function releasesFor(tenantPaths, project) {
 }
 
 /**
+ * Starts the version a project already published, as it is on disk.
+ *
+ * What the boot does for every project, and what the storage switch does for
+ * one after it changed where the data lives. No clone and no migration: the
+ * caller knows the version is the one that was serving.
+ */
+function startCurrent({ slug, tenantPaths, project }) {
+    const extras = runtimeExtras(project);
+    return runtime.restart({
+        slug,
+        project,
+        // The folder behind the link, not the link: a process started
+        // through `current` would hold whatever it points at when the
+        // next deployment repoints it.
+        dir: cloner.resolveCurrent(projectStore.currentDir(tenantPaths, project.id)),
+        dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
+        startCmd: project.startCmd || '',
+        env: Object.assign(projectEnv.forBuild(project, {
+            target: 'production', sha: project.lastSha, branch: project.branch
+        }), extras.env),
+        prepare: extras.prepare
+    });
+}
+
+/**
  * Starts the process for every project that is served by one.
  *
  * Called at boot, next to `startAllSites`. A backend restart otherwise leaves
@@ -651,19 +805,7 @@ function startAllRuntimes({ pathsFor, tenantsRoot }) {
         for (const project of projectStore.listProjects(tenantPaths)) {
             if (project.runtime !== 'node' || !project.lastSha || !project.port) continue;
             started += 1;
-            runtime.restart({
-                slug,
-                project,
-                // The folder behind the link, not the link: a process started
-                // through `current` would hold whatever it points at when the
-                // next deployment repoints it.
-                dir: cloner.resolveCurrent(projectStore.currentDir(tenantPaths, project.id)),
-                dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
-                startCmd: project.startCmd || '',
-                env: projectEnv.forBuild(project, {
-                    target: 'production', sha: project.lastSha, branch: project.branch
-                })
-            }).then(({ port }) => {
+            startCurrent({ slug, tenantPaths, project }).then(({ port }) => {
                 console.log(`[Deploy] ${slug}: ${project.id} application answering on 127.0.0.1:${port}`);
             }).catch((e) => {
                 console.error(`[Deploy] ${slug}: ${project.id} did not start (${e.code || 'error'}): ${e.message}`);
@@ -675,7 +817,7 @@ function startAllRuntimes({ pathsFor, tenantsRoot }) {
 
 module.exports = {
     deployNow, promoteNow, releasesFor, isDeploying, reasonFor, startAllRuntimes,
-    useWritableDb,
+    useWritableDb, usePostgres, exclusive, runtimeExtras, startCurrent,
     // Test seam. Reaching this through deployNow would mean a real clone, a
     // real build and a real runtime for a decision made before any of them.
     _tokenForProject: tokenForProject,

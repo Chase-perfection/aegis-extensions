@@ -257,7 +257,7 @@ test('metaRow builds a key/value row, skips a falsy value entirely, and passes t
     // wrapping it in a .dep-meta-value span.
     await page.evaluate(function () { window.location.hash = '#project/site-a/overview'; });
     await page.waitForFunction(function () {
-      return !!document.querySelector('#deploy-detail-body .dep-prod-fact .dep-pill');
+      return !!document.querySelector('#deploy-detail-body .dep-prod-fact .ag-status');
     }, { timeout: 5000 });
 
     const statusRow = await page.evaluate(function () {
@@ -270,7 +270,7 @@ test('metaRow builds a key/value row, skips a falsy value entirely, and passes t
       return {
         className: row.className,
         hasValueSpan: !!row.querySelector('.dep-meta-value'),
-        hasPill: !!row.querySelector('.dep-pill')
+        hasPill: !!row.querySelector('.ag-status')
       };
     });
     assert.ok(statusRow, 'no Status row rendered in overview');

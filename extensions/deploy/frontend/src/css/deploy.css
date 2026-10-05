@@ -97,14 +97,6 @@
     padding: 0 6px;
 }
 
-.dep-side-mark {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 2px;
-    background: var(--accent);
-}
-
 .dep-side-tenant {
     flex: 1;
     min-width: 0;
@@ -202,7 +194,7 @@
     color: var(--ag-warning, #a35c00);
     border: 1px solid var(--ag-warning-border, #f0d9a8);
     background: var(--ag-warning-wash-alt, #fdf7ec);
-    border-radius: var(--ag-r-pill, 999px);
+    border-radius: var(--ag-radius-sm, 4px);
     padding: 1px 6px;
 }
 
@@ -459,20 +451,14 @@
     border-radius: var(--radius-md);
 }
 
-/* The dot carries the state, so the row keeps one border colour and the page
-   does not turn into a traffic light. */
-.dep-dot {
+/* The glyph carries the state (core agStatusGlyph, coloured by the
+   ag-status-* class on this span), so the row keeps one border colour and the
+   page does not turn into a traffic light. */
+.dep-row-mark {
     flex: 0 0 auto;
-    width: 8px;
-    height: 8px;
-    margin-top: 0.45rem;
-    border-radius: 50%;
-    background: var(--zinc-500);
+    display: inline-flex;
+    margin-top: 0.2rem;
 }
-
-.dep-ok .dep-dot { background: var(--risk-low); }
-.dep-todo .dep-dot { background: var(--risk-medium); }
-.dep-blocked .dep-dot { background: var(--risk-critical); }
 
 .dep-row-body {
     display: flex;
@@ -1136,51 +1122,23 @@ select.dep-input option:disabled {
     color: var(--risk-critical);
 }
 
-/* --- Status pills ------------------------------------------------------ */
+/* --- Status ------------------------------------------------------------ */
 
-.dep-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-xs);
-    padding: 0.2rem var(--space-sm);
-    border: 1px solid var(--dep-line);
-    border-radius: 999px;
-    background: var(--dep-sunken);
-    color: var(--zinc-300);
-    font-size: var(--text-xxs);
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    white-space: nowrap;
-}
+/* Every state on this page is core's StatusChip (agStatus, ag-loader.css).
+   Only placement lives here. */
 
-.dep-pill::before {
-    content: '';
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--zinc-500);
-}
-
-.dep-pill.is-live::before { background: var(--risk-low); }
-.dep-pill.is-live { color: var(--risk-low); }
-.dep-pill.is-running::before { background: var(--accent-bright); }
-.dep-pill.is-running { color: var(--accent-bright); }
-.dep-pill.is-failed::before { background: var(--risk-critical); }
-.dep-pill.is-failed { color: var(--risk-critical); }
-.dep-pill.is-down::before { background: var(--risk-critical); }
-.dep-pill.is-down { color: var(--risk-critical); }
-.dep-pill.is-idle::before { background: var(--risk-medium); }
-
-/* Above the screenshot, and opaque: it now sits over a photograph of an
-   arbitrary page rather than over a flat plate, so it cannot borrow contrast
-   from what is behind it. */
-.dep-card-art .dep-pill {
+/* Above the screenshot: it sits over a photograph of an arbitrary page, so it
+   keeps its opaque surface and cannot borrow contrast from what is behind it. */
+.dep-card-art .ag-status {
     position: absolute;
     top: 10px;
     right: 10px;
     z-index: 2;
-    background: var(--ag-surface, #fff);
+}
+
+/* A fact column is a flex column, which would stretch the chip across it. */
+.dep-prod-fact > .ag-status {
+    align-self: flex-start;
 }
 
 .dep-chip {
@@ -1348,38 +1306,20 @@ button.dep-listrow {
 }
 
 .dep-stage-detail {
-    margin: var(--space-xs) 0 0 1.15rem;
+    margin: var(--space-xs) 0 0 calc(12px + var(--space-sm));
     color: var(--zinc-400);
     font-family: var(--font-mono);
     font-size: var(--text-mono-sm);
     overflow-wrap: anywhere;
 }
 
-/* The mark that tells the stage states apart without colour alone: a ring
-   while pending, a filled dot while running, a tick when done, a cross
-   when refused. A stage with nothing to do is not drawn at all. Drawn in CSS because it has no meaning to announce; the stage
-   name and the log next to it carry that. */
+/* The stage's state as core's status glyph: a dashed ring while pending,
+   the loader while running, a tick when done, an exclamation when refused.
+   A stage with nothing to do is not drawn at all. The name and the log
+   next to it carry the meaning, so the glyph is aria-hidden. */
 .dep-stage-mark {
     flex: none;
-    width: 0.85rem;
-    height: 0.85rem;
-    border-radius: 50%;
-    border: 2px solid var(--zinc-600);
-}
-
-.dep-stage.is-running .dep-stage-mark {
-    border-color: var(--accent-bright);
-    background: var(--accent-soft);
-}
-
-.dep-stage.is-done .dep-stage-mark {
-    border-color: var(--risk-low);
-    background: var(--risk-low);
-}
-
-.dep-stage.is-failed .dep-stage-mark {
-    border-color: var(--risk-critical);
-    background: var(--risk-critical);
+    display: inline-flex;
 }
 
 .dep-log {

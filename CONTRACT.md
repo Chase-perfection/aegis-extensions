@@ -126,12 +126,14 @@ capabilities as an object. The keys, from `backend/src/server.js`:
 | `requireRole` | private | `requireRole('admin')`, the role check every mutating route uses |
 | `pathsFor` | private | Tenant-scoped filesystem paths, `pathsFor(slug)` |
 | `tenantsRoot` | private | The root every tenant subtree hangs off |
-| `readOnlyDb` | private | A read-only SQLite reader, `describe(file)` and `page(file, opts)`. In core because `sqlite3` does not resolve from an extension |
+| `readOnlyDb` | private | A read-only SQLite reader, `describe(file)`, `page(file, opts)` for a grid, and `rows(file, { table, limit, offset })` for the values themselves (whole text, real buffers; since the release that follows 1.0.8). In core because `sqlite3` does not resolve from an extension |
 | `writableDb` | private | A guarded SQLite writer: `updateCell`, `insertRow`, `deleteRow`, `execScript`, `appliedMigrations`, `recordMigration`. In core for the same reason as `readOnlyDb`, with a sharper edge: `execScript` runs arbitrary SQL and is meant only for a migration file that came from a repository. Wiring it to a request input opens an injection the core can no longer refuse on the extension's behalf |
 | `resolveChrome` | private | The Chromium the host actually has, for a headless capture. In core because `chromePath.js` reads the install locations of Chrome and Edge, and two copies of that list would drift |
 | `broadcastLog` | private | `broadcastLog(slug, text)`: one line into the tenant's audit console, the stream `/api/audit/events` serves. Since Aegis 1.0.7 |
 | `broadcastAuditEvent` | private | `broadcastAuditEvent(slug, payload)`: one JSON payload onto that same stream, for a page that listens for a typed event such as `{ scan_progress }`. Deliberately narrower than handing over the tenant's in-memory state. Since Aegis 1.0.7 |
 | `recordActivity` | private | `recordActivity(req, type, key, meta)`: one entry in the tenant's activity ledger. Swallows its own failures, so a missing ledger costs the entry and nothing else. Since Aegis 1.0.7 |
+| `postgres` | private | `postgres.connect({ host, port, database, user, password, ssl })`: one bounded connection to a Postgres server, handing back `query(text, params)` and `end()`. In core because `pg` does not resolve from an extension. It is not the driver of Aegis's own storage, and the caller decides which address may be reached. Since the Aegis release that follows 1.0.8 |
+| `reauthenticate` | private | `reauthenticate(req)`: the session's administrator, proved again by `req.body.password`, or null. For an action that should not ride on a session somebody left open. The extension gets the answer and never the account table. Same release |
 
 The private phase is mounted below the session wall, so a route registered there
 already has a session, a tenant and the module gate behind it.

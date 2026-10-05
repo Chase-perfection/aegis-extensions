@@ -216,8 +216,51 @@
         return (ms / 1000).toFixed(1) + ' s';
     }
 
+    /**
+     * Deploy's state names onto the design system's StatusChip vocabulary
+     * (core `agStatus`, ag-loader.css): a line glyph plus the word, no dot.
+     * Callers keep speaking Deploy; only this table knows the other side.
+     */
+    var AG_KIND = {
+        live: 'live', running: 'running', failed: 'error', down: 'error',
+        idle: 'inactive', published: 'active', cancelled: 'stopped',
+        pending: 'queued', done: 'active',
+        ok: 'active', todo: 'update', blocked: 'error'
+    };
+
+    function agKind(kind) {
+        return AG_KIND[kind] || 'inactive';
+    }
+
+    function fromHtml(html) {
+        var tpl = document.createElement('template');
+        tpl.innerHTML = html;
+        return tpl.content.firstElementChild;
+    }
+
+    /**
+     * A state as a chip: glyph and word. A core older than the StatusChip has
+     * no agStatus; the word alone is still right there, so it gets that.
+     */
     function pill(kind, label) {
-        return el('span', 'dep-pill is-' + kind, label);
+        if (typeof window.agStatus !== 'function') return el('span', 'ag-status', label);
+        return fromHtml(window.agStatus(agKind(kind), label));
+    }
+
+    /**
+     * The glyph alone, for a row whose own label already says what it is (a
+     * readiness line, a build stage). The wrapper carries the colour class.
+     */
+    function statusMark(cls, kind) {
+        var k = agKind(kind);
+        var glyph = typeof window.agStatusGlyph === 'function' ? window.agStatusGlyph(k) : '';
+        return fromHtml('<span class="' + cls + ' ag-status-' + k + '">' + glyph + '</span>');
+    }
+
+    /** Puts a fresh chip in a static slot of the page, replacing the last one. */
+    function setPill(slot, kind, label) {
+        slot.textContent = '';
+        slot.appendChild(pill(kind, label));
     }
 
     /**
@@ -311,7 +354,7 @@
      */
     function row(state, label, detail, fix, note) {
         var wrap = el('div', 'dep-row dep-' + state);
-        wrap.appendChild(el('span', 'dep-dot', ''));
+        wrap.appendChild(statusMark('dep-row-mark', state));
         var body = el('div', 'dep-row-body');
         body.appendChild(el('span', 'dep-row-label', label));
         if (detail) body.appendChild(el('span', 'dep-row-detail', detail));
@@ -1529,6 +1572,8 @@
         var rowEl = document.getElementById('deploy-readiness-github');
         if (!rowEl || !none) return;
         rowEl.className = 'dep-row dep-todo';
+        var mark = rowEl.querySelector('.dep-row-mark');
+        if (mark) rowEl.replaceChild(statusMark('dep-row-mark', 'todo'), mark);
         var detail = rowEl.querySelector('.dep-row-detail');
         if (detail) {
             detail.textContent = tr('deploy_gh_no_install',
@@ -2104,8 +2149,8 @@
 
     function runStateOf(run) {
         if (run.status === 'running') return 'running';
-        if (run.status === 'ready') return 'live';
-        if (run.status === 'cancelled') return 'idle';
+        if (run.status === 'ready') return 'published';
+        if (run.status === 'cancelled') return 'cancelled';
         return 'failed';
     }
 
@@ -2181,9 +2226,7 @@
         shaEl.textContent = run.sha ? run.sha.slice(0, 8) : '';
         shaEl.hidden = !run.sha;
 
-        var statusEl = document.getElementById('deploy-run-status');
-        statusEl.className = 'dep-pill is-' + runStateOf(run);
-        statusEl.textContent = runStateLabel(run);
+        setPill(document.getElementById('deploy-run-status'), runStateOf(run), runStateLabel(run));
 
         var cancel = document.getElementById('deploy-run-cancel');
         cancel.hidden = run.status !== 'running' || !isAdmin;
@@ -2213,7 +2256,7 @@
             if (s.status === 'skipped') return;
             var wrap = el('div', 'dep-stage is-' + s.status);
             var head = el('div', 'dep-stage-head');
-            head.appendChild(el('span', 'dep-stage-mark', ''));
+            head.appendChild(statusMark('dep-stage-mark', s.status));
             head.appendChild(el('span', 'dep-stage-name', stageLabel(s.key)));
             if (s.startedAt && s.endedAt) {
                 head.appendChild(el('span', 'dep-stage-time', clock(s.endedAt - s.startedAt)));
@@ -2532,7 +2575,7 @@
 
     // --- One project --------------------------------------------------------
 
-    var HISTORY_STATE = { ready: 'live', failed: 'failed', cancelled: 'idle' };
+    var HISTORY_STATE = { ready: 'published', failed: 'failed', cancelled: 'cancelled' };
 
     /**
      * The label on a history row's pill.
@@ -2618,7 +2661,20 @@
     function renderDetail(projectId, tab) {
         var p = projectById(projectId);
         var body = document.getElementById('deploy-detail-body');
-        body.textContent = '';
+        var tools = document.getElementById('deploy-detail-tools');
+        var storage = window.DeployStorage;
+
+        // The storage page holds a form somebody is halfway through, and this
+        // function runs again whenever the project list is refetched: after a
+        // deployment, after a switch. Rebuilding the page then would empty the
+        // form under their hands, so a page already drawn for this project is
+        // left where it is and only the header is repainted.
+        var keep = !!p && !!storage && tab === 'storage' && body.getAttribute('data-storage') === p.id;
+        if (!keep) {
+            body.textContent = '';
+            body.removeAttribute('data-storage');
+        }
+        if (tools) tools.textContent = '';
 
         if (!p) {
             document.getElementById('deploy-detail-name').textContent = '';
@@ -2631,13 +2687,24 @@
 
         document.getElementById('deploy-detail-name').textContent = p.name;
         var state = projectState(p);
-        var statusEl = document.getElementById('deploy-detail-status');
-        statusEl.className = 'dep-pill is-' + state;
-        statusEl.textContent = stateLabel(state);
+        setPill(document.getElementById('deploy-detail-status'), state, stateLabel(state));
 
         var urlEl = document.getElementById('deploy-detail-url');
         urlEl.textContent = p.lastSha ? p.url : '';
         urlEl.href = p.url || '#';
+
+        // Where the project keeps its data (deploy-storage.js). The gear draws
+        // itself once the backend says this project can use it, and its page
+        // is a sub-page rather than a tab: it is visited to move the data and
+        // not to read anything.
+        if (storage && tools) storage.gear(p, tools);
+        if (storage && tab === 'storage') {
+            if (!keep) {
+                body.setAttribute('data-storage', p.id);
+                body.appendChild(storage.page(p));
+            }
+            return;
+        }
 
         var at = projectTabName(tab);
         body.appendChild(projectTabBar(p, at));
@@ -3635,6 +3702,12 @@
      * entry to press Back through.
      */
     function dataPanel(project) {
+        // A project whose data moved to a database has no file to open here.
+        // It gets the summary and the link to the database's own console.
+        if (window.DeployStorage && project.storageMode === 'postgres') {
+            return window.DeployStorage.dataSummary(project);
+        }
+
         var wrap = el('div', 'dep-block');
         wrap.appendChild(el('h2', 'dep-subtitle', tr('deploy_data_title', 'Data')));
         wrap.appendChild(el('p', 'dep-hint', tr('deploy_data_body',
@@ -4796,17 +4869,19 @@
         var chip = document.getElementById('deploy-auth-state');
         if (!chip) return;
         var LABELS = {
-            none: ['deploy_auth_state_none', 'Not configured', 'is-idle'],
-            untested: ['deploy_auth_state_untested', 'Saved, not checked', 'is-idle'],
-            checking: ['deploy_auth_state_checking', 'Checking', 'is-running'],
-            ok: ['deploy_auth_state_ok', 'Connected', 'is-live'],
-            failed: ['deploy_auth_state_failed', 'Not reachable', 'is-failed']
+            none: ['deploy_auth_state_none', 'Not configured', 'idle'],
+            untested: ['deploy_auth_state_untested', 'Saved, not checked', 'idle'],
+            checking: ['deploy_auth_state_checking', 'Checking', 'running'],
+            ok: ['deploy_auth_state_ok', 'Connected', 'live'],
+            failed: ['deploy_auth_state_failed', 'Not reachable', 'failed']
         };
-        var row = LABELS[state] || LABELS.none;
-        chip.className = 'dep-pill ' + row[2];
-        chip.setAttribute('data-i18n', row[0]);
-        chip.textContent = tr(row[0], row[1]);
+        authShown = LABELS[state] ? state : 'none';
+        var row = LABELS[authShown];
+        // No data-i18n on the slot: applyTranslations would set its textContent
+        // and wipe the glyph. onLanguageChange repaints it from authShown.
+        setPill(chip, row[2], tr(row[0], row[1]));
     }
+    var authShown = null;
 
     /**
      * The authorities this directory trusts on top of the machine store.
@@ -6418,6 +6493,7 @@
             if (at.name === 'env') renderEnvPane();
             if (at.name === 'domains') renderDomainsPane();
             if (at.name === 'usage') renderUsagePane();
+            if (authShown) authState(authShown);
         };
 
         renderPlan();
@@ -6438,6 +6514,21 @@
             return load();
         });
     }
+
+    /**
+     * What `deploy-storage.js` borrows from this file.
+     *
+     * Everything above is private to this closure, and the storage page is a
+     * file of its own because this one is long enough. It needs the same row,
+     * the same chip and the same translated text as the rest of the page, and
+     * copies of them would drift, so they are lent rather than rewritten.
+     * `isAdmin` is a function because the role is learned after this line runs.
+     */
+    window.DeployKit = {
+        tr: tr, el: el, icon: icon, row: row, pill: pill, readJson: readJson, ago: ago,
+        isAdmin: function () { return isAdmin; },
+        reload: function () { return loadProjects(); }
+    };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

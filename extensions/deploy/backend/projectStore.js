@@ -148,13 +148,37 @@ function getProject(tenantPaths, id) {
     return readAll(tenantPaths).find((p) => p.id === id) || null;
 }
 
-/** Inserts or replaces by id, and returns what was stored. */
-function saveProject(tenantPaths, project) {
+/**
+ * Inserts or replaces by id, and returns what was stored.
+ *
+ * One field is not the caller's to replace: `storage`, which says whether the
+ * project's rows are in its file or in a database (`projectStorage.js`). This
+ * function replaces the whole row, and most of its callers hold a record they
+ * read a while ago: the poller's sweep reads every project once and may reach
+ * this one minutes later. A switch that completed in between would be written
+ * back to "local files" by a save that only meant to record a commit, and the
+ * site would restart on a file that stopped being the truth.
+ *
+ * So the row on disk keeps its `storage` unless the caller says it owns it,
+ * with `{ storage: true }`. Only the storage routes and the switch do.
+ */
+function saveProject(tenantPaths, project, options) {
     if (!PROJECT_ID_RE.test(project.id || '')) throw new Error(`invalid project id: ${project.id}`);
-    const projects = readAll(tenantPaths).filter((p) => p.id !== project.id);
-    projects.push(project);
+    const all = readAll(tenantPaths);
+    let row = project;
+    if (!(options && options.storage)) {
+        const before = all.find((p) => p.id === project.id);
+        const kept = before ? before.storage : project.storage;
+        if (kept !== project.storage) {
+            row = Object.assign({}, project);
+            if (kept === undefined) delete row.storage;
+            else row.storage = kept;
+        }
+    }
+    const projects = all.filter((p) => p.id !== project.id);
+    projects.push(row);
     writeAll(tenantPaths, projects);
-    return project;
+    return row;
 }
 
 /**

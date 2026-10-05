@@ -1383,6 +1383,14 @@ The order the rest arrives in, and what each one costs, is
 | Environment variables | `backend/projectEnv.js` |
 | `vercel.json`, redirects, rewrites, headers, the fallback | `backend/siteConfig.js` |
 | Getting them into the sandbox | `backend/build/launcher.js`, `backend/build/run-sandboxed-build.ps1` |
+| Where a project keeps its data, the approved addresses | `backend/projectStorage.js` |
+| The checks of the storage setup | `backend/storageChecks.js` |
+| The firewall path from a sandbox account to a database | `backend/storageNetwork.js` |
+| Postgres migrations | `backend/pgMigrations.js` |
+| The copy from SQLite to Postgres | `backend/storageCopy.js` |
+| The switch, the way back, the rehearsal | `backend/storageSwitch.js` |
+| The storage routes | `backend/storageRoutes.js` |
+| The storage page, its steps, its sentences | `frontend/src/js/deploy-storage.js`, `deploy-storage-steps.js`, `deploy-storage-text.js` |
 
 ## The project's own data
 
@@ -1467,3 +1475,180 @@ Refusals: `bad_file`, `unknown_file`, `not_a_database`, `unknown_table`,
 Nothing here writes. An editable grid needs a primary-key story for tables that
 have none, and that is a decision worth making on its own rather than smuggling
 in behind a read path.
+
+## A database of the project's own
+
+A project served by a process keeps its rows in a SQLite file under `data/` by
+default. It can instead keep them in a Postgres database you run: a Supabase
+stack, or any Postgres 13 or newer. Deploy runs no database. It stores the
+address, checks it, opens the network path for the project's process, prepares
+the schema, copies the rows across and gives the process one variable.
+
+The gear at the right of the project header opens the page. It is drawn for a
+tenant administrator, on a project served by a process, and not on a preview.
+
+### What your repository has to carry
+
+Postgres migrations, in `<migrationsDir>/postgres/`, which is `migrations/postgres/`
+unless the project says otherwise. Numbered `.sql` files, played once each in
+the order of their names, exactly like the SQLite ones one folder up, and
+recorded in the same ledger table, `_aegis_migrations`. The SQLite runner does
+not descend into that folder, so a repository carries both dialects while it
+moves.
+
+That folder is also how Deploy knows your code can speak Postgres. A version
+with no file there expects a SQLite file, and the switch is refused at the
+check named `code`, before anything stops.
+
+Each file runs in a transaction with its ledger row, so do not write `BEGIN` or
+`COMMIT` in it.
+
+Your application reads `DATABASE_URL`:
+
+```
+postgresql://<user>:<password>@<host>:<port>/<database>
+```
+
+with `?sslmode=require` appended when SSL is on. It is set at runtime only,
+after the project's own variables, so a variable of the same name in the
+Variables tab does not override it. `AEGIS_DATA_DIR` is still set: files an
+application keeps stay in `data/`.
+
+Connect when the process boots and exit when the connection fails. Deploy's
+proof that a version works is that it answers on its port, and a process that
+connects on the first request would answer, be put on the port, and fail under
+the first visitor.
+
+A preview deployment never receives `DATABASE_URL`. It keeps a SQLite file of
+its own, so a branch under review needs the SQLite path of your code to work,
+or a start command that needs no data.
+
+### Approving an address, on the host
+
+A deployed site is denied the networks the directory lives on. A database on one
+of them is reachable only at an address an administrator approved on the Aegis
+server itself. No page and no route can add one.
+
+The list is a text file beside the machine key, one `host:port` per line, `#`
+for a comment:
+
+```powershell
+Add-Content -Path 'C:\ProgramData\Aegis\deploy\database-targets.txt' -Value '<host>:<port>'
+```
+
+Run it in PowerShell as administrator. The file is read at each request, so no
+restart is needed. Step 1 of the setup shows this command with your address in
+it when the address is not on the list.
+
+### The five steps
+
+| Step | What it asks | What Aegis does |
+|---|---|---|
+| Address | Type, host, port, database, SSL, console address | Saves the target and checks it is approved |
+| Credentials | User and password | Nothing yet |
+| Checks | Nothing | Runs ten checks in order and stops at the first failure |
+| Data | Nothing | Rehearses: plays the migrations and copies every row in a transaction, then rolls it back |
+| Switch | Your Aegis password | Stops the site, does the same for real, restarts on the database |
+
+The checks, in order: `runtime`, `capability`, `approved`, `ssl`, `reachable`,
+`login`, `version`, `create`, `code`, `path`. Nothing connects to an address
+before `approved` has passed. A check never writes: the right to create a table
+is proved by creating one in a transaction that is rolled back.
+
+The password is kept, encrypted with the machine key, once the database has
+accepted it. No route returns it.
+
+### What the copy does
+
+Source: every table of the project's SQLite file except SQLite's own and the
+migration ledger. Target: the tables your Postgres migrations created, in the
+schema the connection writes to.
+
+- A table of the file must exist in the database with every one of its columns.
+  Names match without regard to case, since SQLite ignores it and Postgres
+  folds an unquoted name to lower case.
+- A table that held rows before the migrations ran is refused. Rows a migration
+  inserted as reference data are replaced by the file's.
+- Tables are filled parents first, by foreign key. A cycle is refused.
+- Serial and identity sequences are moved past the highest copied value.
+- Row counts are compared before the transaction commits.
+
+The SQLite file is opened read-only and is not modified, then or later. Once a
+project is on Postgres, a deployment plays its Postgres migrations on the
+database and leaves the SQLite ones unplayed. A version pushed later with no
+file in `<migrationsDir>/postgres/` is refused as `migration_failed`, and the
+version on the port keeps serving: its code would expect the local file again.
+
+The approved list is read again before every connection the service makes and
+at every process start. Take an address off it and the next deployment of that
+project is refused, the Data tab stops asking the database, and the next start
+of its process closes the firewall path.
+
+### When the switch fails
+
+| It fails at | The site | The database |
+|---|---|---|
+| The checks or the rehearsal | Never stopped | Untouched |
+| The copy | Restarted on its file | Nothing committed |
+| The start on the database | Restarted on its file | The copied rows are removed |
+
+A switch and a deployment hold the same lock: each is refused while the other
+runs. After the stop, the switch waits out the drain of a version a deployment
+replaced a moment earlier, so nothing can still write to the file while it is
+copied. Asking for a switch a project has already made is refused as
+`already_on_postgres` or `already_local`.
+
+Where the data lives is the storage routes' to write and nobody else's. Every
+other save of a project record leaves that field as the disk has it, so a
+deployment working from a record it read earlier cannot put a switched project
+back on its file.
+
+### Going back
+
+"Go back to local files" asks for your password, restarts the site without
+`DATABASE_URL` and puts the firewall rules back. Rows written to the database
+since the switch stay there and are not copied back. The connection is kept, and
+a second switch offers to replace the rows the first one copied, for that
+database only.
+
+### The network path
+
+`Create-BuildAccounts.ps1` gives each sandbox account one outbound block rule
+per denied subnet. Windows applies a block over any allow, so the block is
+narrowed instead: for the account a process is about to run as, each rule blocks
+its subnet minus the database's address, and three more rules block that address
+again on every TCP port but the database's, on UDP and on ICMPv4. A project on
+local files gets its account's rules put back whole. This runs at every process
+start, and only where `AEGIS_DEPLOY_FIREWALL=1`.
+
+Nothing probes the path as the account before the switch. The proof is the
+application booting on the database.
+
+### What the core has to provide
+
+`postgres`, `reauthenticate` and `readOnlyDb.rows`, listed in `CONTRACT.md`. On
+an Aegis that predates them the gear's page says so, the `capability` check
+fails, and nothing else changes.
+
+### Routes
+
+All under `/api/deploy/projects/:id/storage`, all for a tenant administrator.
+
+| Route | Does |
+|---|---|
+| `GET` | The record, without its password, and whether the gear applies |
+| `POST /check` | Saves the target and runs the checks |
+| `POST /preview` | The rehearsal |
+| `POST /switch` | `{ to: 'postgres' \| 'local', password }`. The password is your Aegis one |
+| `GET /summary` | Tables and row counts, for the Data tab |
+
+Refusals: `bad_kind`, `bad_host`, `bad_port`, `bad_database`, `bad_user`,
+`bad_console_url`, `switch_back_first`, `not_approved`, `no_target`,
+`never_deployed`, `core_too_old`, `password`, `deploy_in_progress`,
+`not_on_postgres`, `already_on_postgres`, `already_local`.
+
+### Not built
+
+Browsing or editing the database's tables in Aegis: its own console does that,
+and the Data tab links to it. Copying rows back from Postgres to the file. A
+probe of the network path as the sandbox account.

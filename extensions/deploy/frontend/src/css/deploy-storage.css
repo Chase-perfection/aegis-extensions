@@ -1,0 +1,301 @@
+/*
+ * The storage page of a Deploy project: the gear, the two cards, the stepper
+ * and the callouts beside its fields.
+ *
+ * A file of its own beside deploy.css, loaded after it, and built on its
+ * tokens: the `--dep-*` surfaces declared on #deploy-view, and base.css for
+ * spacing, type and radii. No colour, size or radius is written here as a
+ * value. Classes keep the `dep-` prefix and states the `is-` one, for the
+ * reasons deploy.css gives.
+ *
+ * Nothing moves. The page has no transition of its own and no animation.
+ */
+
+/* --- The gear in the project header ------------------------------------- */
+
+/* Empty until deploy-storage.js draws the gear, and an empty flex child would
+   still take one gap of the header row. */
+.dep-detail-tools { display: inline-flex; flex: none; }
+.dep-detail-tools:empty { display: none; }
+
+#deploy-view .dep-storage-gear svg {
+    width: 1.05rem;
+    height: 1.05rem;
+}
+
+/* --- Where the data lives: two cards ------------------------------------ */
+
+.dep-storage-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    max-width: 60rem;
+    margin-top: var(--space-lg);
+}
+
+/* Room around the page's own heading. Scoped to the view id for the reason
+   given at the callout below: the skin resets these margins. */
+#deploy-view .dep-storage > .dep-crumb {
+    display: inline-block;
+    margin-bottom: var(--space-md);
+}
+
+#deploy-view .dep-storage > .dep-subtitle { margin: 0 0 var(--space-xs); }
+#deploy-view .dep-storage > .dep-hint { margin: 0; }
+#deploy-view .dep-step-body > .dep-note { margin: var(--space-md) 0; }
+
+.dep-storage-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: var(--space-md);
+}
+
+.dep-storage-card {
+    padding: var(--space-md);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+}
+
+/* The one in use. The chip says it in words; the border lets the eye find it
+   before reading. */
+.dep-storage-card.is-active { border-color: var(--accent); }
+
+.dep-storage-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+}
+
+.dep-storage-card-title {
+    margin: 0;
+    font-size: var(--text-body);
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.dep-storage-card-list {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: var(--zinc-400);
+    font-size: var(--text-sm);
+    line-height: 1.55;
+}
+
+/* --- The stepper --------------------------------------------------------- */
+
+.dep-steps {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm) 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.dep-step {
+    display: flex;
+    align-items: center;
+    flex: 0 1 auto;
+}
+
+/* The rule between two steps. On the second and later ones, so the row does
+   not end on a line leading nowhere. */
+.dep-step + .dep-step::before {
+    content: '';
+    width: var(--space-xl);
+    height: 1px;
+    margin: 0 var(--space-sm);
+    background: var(--dep-line-strong);
+}
+
+.dep-step-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) 0;
+    font: inherit;
+    font-size: var(--text-sm);
+    color: var(--zinc-500);
+    background: none;
+    border: 0;
+    cursor: pointer;
+}
+
+.dep-step-btn:disabled { cursor: default; }
+.dep-step-btn:not(:disabled):hover .dep-step-label { color: var(--accent); }
+
+.dep-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 1.7rem;
+    height: 1.7rem;
+    border: 1px solid var(--dep-line-strong);
+    border-radius: 50%;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.dep-step-num svg {
+    width: 0.85rem;
+    height: 0.85rem;
+}
+
+.dep-step.is-done .dep-step-num {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.dep-step.is-current .dep-step-num {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--zinc-950);
+}
+
+.dep-step.is-current .dep-step-label {
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.dep-step-body { margin-top: var(--space-lg); }
+
+.dep-step-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+}
+
+/* --- A field and the callout that points at it --------------------------- */
+
+.dep-guided-form {
+    display: flex;
+    flex-direction: column;
+    max-width: 60rem;
+}
+
+.dep-guided {
+    --dep-callout-gap: var(--space-xl);
+    display: grid;
+    grid-template-columns: minmax(0, 22rem) minmax(0, 30rem);
+    column-gap: var(--dep-callout-gap);
+    align-items: start;
+}
+
+.dep-guided .dep-input,
+.dep-guided .dep-select { max-width: 100%; }
+
+/* A select carries no bottom margin of its own in deploy.css, where it sits in
+   toolbars. In this column it is a field like the inputs under it. */
+.dep-guided .dep-select {
+    width: 100%;
+    margin-bottom: var(--space-md);
+}
+
+.dep-checkbox {
+    display: block;
+    width: 1.1rem;
+    height: 1.1rem;
+    margin: 0 0 var(--space-md);
+    accent-color: var(--accent);
+}
+
+/* The note. Pushed down by the height of the label above the input, so its
+   arrow lands on the control and not on the word that names it. */
+/* Scoped to the view id: the white skin resets the margin of every paragraph
+   with a rule that outranks a bare class, the trap deploy.css describes for
+   its links. */
+#deploy-view .dep-callout {
+    position: relative;
+    margin: 1.45rem 0 var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    color: var(--zinc-400);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line-strong);
+    border-radius: var(--radius-sm);
+}
+
+/* The shaft of the arrow, across the gap between the field and the note. */
+.dep-callout::after {
+    content: '';
+    position: absolute;
+    top: 0.95rem;
+    right: 100%;
+    width: var(--dep-callout-gap);
+    height: 1px;
+    background: var(--dep-line-strong);
+}
+
+/* Its head, at the field's end: a square showing two of its sides. */
+.dep-callout::before {
+    content: '';
+    position: absolute;
+    top: calc(0.95rem - 0.22rem);
+    left: calc(-1 * var(--dep-callout-gap));
+    width: 0.45rem;
+    height: 0.45rem;
+    border-left: 1px solid var(--dep-line-strong);
+    border-bottom: 1px solid var(--dep-line-strong);
+    transform: rotate(45deg);
+}
+
+.dep-field-error {
+    display: block;
+    margin: calc(-1 * var(--space-sm)) 0 var(--space-md);
+    color: var(--risk-critical);
+    font-size: var(--text-xs);
+}
+
+.dep-input[aria-invalid='true'],
+.dep-select[aria-invalid='true'] { border-color: var(--risk-critical); }
+
+/* One column on a narrow screen. The note goes under its field and the arrow
+   turns to point up at it. */
+@media (max-width: 760px) {
+    .dep-guided { grid-template-columns: minmax(0, 1fr); }
+
+    #deploy-view .dep-callout { margin-top: 0; }
+
+    .dep-callout::after {
+        top: auto;
+        right: auto;
+        bottom: 100%;
+        left: var(--space-lg);
+        width: 1px;
+        height: var(--space-sm);
+    }
+
+    .dep-callout::before {
+        top: calc(-1 * var(--space-sm) - 0.05rem);
+        left: calc(var(--space-lg) - 0.22rem);
+        transform: rotate(135deg);
+    }
+}
+
+/* --- The approval panel, the copy plan ---------------------------------- */
+
+.dep-approve,
+.dep-data-plan {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    max-width: 60rem;
+}
+
+.dep-approve { margin-top: var(--space-sm); }
+
+.dep-approve .dep-row,
+.dep-data-plan .dep-row,
+.dep-data-plan .dep-rows { align-self: stretch; }
+
+.dep-data-plan .dep-rows { margin-top: 0; }

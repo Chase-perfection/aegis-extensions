@@ -208,7 +208,7 @@ async function startProcess({ dir, account, startCmd, port, env, spawn, report, 
  * one. A new process that never answers leaves the old one exactly where it was
  * and throws, so the deployment fails with the site still up.
  */
-async function restart({ slug, project, dir, startCmd, env, spawn, report, drainMs, dataDir }) {
+async function restart({ slug, project, dir, startCmd, env, spawn, report, drainMs, dataDir, prepare }) {
     if (!isEnabled()) {
         throw Object.assign(new Error('the node runtime is not enabled on this host'),
             { code: 'runtime_disabled' });
@@ -219,6 +219,21 @@ async function restart({ slug, project, dir, startCmd, env, spawn, report, drain
     const port = portFor(project.port, slot);
     const account = accountFor(slug, project.id);
     const proxyKey = crypto.randomBytes(32).toString('base64url');
+
+    // What the host has to hold for this account before the process exists,
+    // which today is the firewall path to the project's database
+    // (`storageNetwork.js`). Here and not at the callers, because the account
+    // is only known here, and it can differ from the one this project held
+    // before the service restarted. A failure is logged and the start goes
+    // on: a process that cannot reach what it needs stops at boot, and the
+    // health check below is what turns that into a refused deployment.
+    if (prepare) {
+        try {
+            await prepare(account);
+        } catch (e) {
+            console.warn(`[Deploy] ${slug}: ${project.id} could not prepare ${account}: ${e.message}`);
+        }
+    }
 
     const child = await startProcess({
         dir, account, startCmd, port, env, spawn, report, dataDir, proxyKey
