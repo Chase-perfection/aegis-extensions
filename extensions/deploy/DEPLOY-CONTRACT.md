@@ -692,8 +692,20 @@ Five are set for every build, and a project can override the first one:
 | `AEGIS_GIT_COMMIT_SHA` | The commit being built |
 | `AEGIS_GIT_BRANCH` | The tracked branch |
 
-`target` is `all`, `production` or `preview`. Previews are not built yet, so a
-`preview` variable is stored and read by nothing until they are.
+`target` is `all`, `production`, `preview` or `runtime`.
+
+| Target | Install and build | Live site's process | Preview's process |
+|---|---|---|---|
+| `all` | yes | yes | yes |
+| `production` | live site's build | yes | no |
+| `preview` | preview's build | no | yes |
+| `runtime` | **never** | yes | no |
+
+`runtime` is for a credential to a server outside the sandbox: a business
+database, an API key. The install and the build run code the branch chose,
+`pip install` and `npm install` included, so a package compromised upstream
+reads every variable they are handed. A `runtime` value is handed to the live
+site's process only. The page calls it "Live site only, never the build".
 
 They reach the build the way the sandbox account password does: one JSON blob in
 the launcher's own environment, read by `run-sandboxed-build.ps1`, put on the
@@ -1652,10 +1664,72 @@ All under `/api/deploy/projects/:id/storage`, all for a tenant administrator.
 Refusals: `bad_kind`, `bad_host`, `bad_port`, `bad_database`, `bad_user`,
 `bad_console_url`, `switch_back_first`, `not_approved`, `no_target`,
 `never_deployed`, `core_too_old`, `password`, `deploy_in_progress`,
-`not_on_postgres`, `already_on_postgres`, `already_local`.
+`not_on_postgres`, `already_on_postgres`, `already_local`, `egress_set`.
 
 ### Not built
 
 Browsing or editing the database's tables in Aegis: its own console does that,
 and the Data tab links to it. Copying rows back from Postgres to the file. A
 probe of the network path as the sandbox account.
+
+## Internal network access
+
+A project on local files can still need one server on the internal network: a
+business system's database, an internal API. Its process runs under a sandbox
+account that is denied those networks. An administrator opens one server for
+it, on the project's **Settings** tab, section **Internal network access**,
+under the tracked branch. The Variables tab points there.
+
+What opens is one TCP port of one machine, for the live site's process only. It
+uses the same network path as a database (above): the deny rules are narrowed by
+that one address, and every other port of it, UDP and ICMP stay blocked.
+
+Three rules hold it:
+
+- **An IPv4 address and a port.** Not a host name, which resolves to whatever
+  DNS says on the day; not a list. `0.0.0.0`, `255.255.255.255` and `127.x` are
+  refused.
+- **Approved on the host first**, in the same `database-targets.txt` as a
+  database (see "Approving an address, on the host"). An address that is not on
+  the list is refused with the `Add-Content` line to run on the server. The list
+  is read again at every process start: take the line off and the next start
+  closes the path.
+- **Set by a tenant administrator, never by the repository.** `aegis.deploy.json`
+  has no key for it, and every save of a project record other than these routes
+  keeps the field as the disk has it.
+
+A running site is restarted at once when the access is opened or closed, the way
+a deployment restarts it: the new process starts, the proxy moves once it
+answers. Nothing running means it applies at the next start.
+
+A preview never gets it. A project holds one opening at a time: a project on an
+external database is refused (`egress_with_postgres`), and the storage switch
+to Postgres is refused while an access is set (`egress_set`).
+
+The password for that server goes in Variables with the target **Live site only,
+never the build** (`runtime`), so the install and the build never see it.
+
+| Route | Does |
+|---|---|
+| `POST /api/deploy/projects/:id/egress` | `{ host, port }`. Admin only. Answers `applied`: `restarted`, `next_start` or `restart_failed` |
+| `DELETE /api/deploy/projects/:id/egress` | Closes it. Admin only |
+
+The project record in `GET /api/deploy/projects` carries `egress`:
+`{ host, port, approved, setAt, setBy }` or `null`.
+
+Refusals: `bad_egress_host`, `bad_egress_port`, `preview_egress`,
+`egress_with_postgres`, `egress_not_approved` (with `approveCommand`),
+`no_egress`, `settings_write_failed`.
+
+Proof on the host, as the runtime account (`aegis-run-01`), after opening
+`<address>:<port>`:
+
+```powershell
+Test-NetConnection <address> -Port <port>   # succeeds
+Test-NetConnection <address> -Port 445      # fails
+Test-NetConnection <another LAN host> -Port <port>   # fails
+```
+
+If the host's firewall blocks outbound traffic by default, narrowing the deny
+rules is not enough: the account also needs an allow rule for that port. Deploy
+does not write one.

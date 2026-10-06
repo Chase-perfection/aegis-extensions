@@ -42,6 +42,8 @@ const cloner = require('./cloner');
 const { deployNow, promoteNow, releasesFor, isDeploying, startAllRuntimes, useWritableDb, usePostgres } = require('./deployService');
 const projectStorage = require('./projectStorage');
 const storageRoutes = require('./storageRoutes');
+const egressRoutes = require('./egressRoutes');
+const projectEgress = require('./projectEgress');
 const runs = require('./runs');
 const runStore = require('./runStore');
 const { startPoller, SAME_SHA_ATTEMPTS } = require('./poller');
@@ -1158,6 +1160,9 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // `local` or `postgres`. One word, so the Data tab knows whether there
         // is a file to open without asking the storage route first.
         storageMode: projectStorage.mode(p),
+        // The one internal `address:port` an administrator opened to the
+        // process, whether the host still approves it, and who set it.
+        egress: projectEgress.publicView(p),
         // A process that is not running leaves the port answering 503, which is
         // a different state from a site that never deployed.
         running: p.runtime === 'node' ? runtime.isRunning(req.tenant.slug, p.id) : null,
@@ -2455,6 +2460,10 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
     // --- Where the project keeps its data: its file, or a database --------
     // The routes are in storageRoutes.js. This file is long enough.
     storageRoutes.register(router, { requireOptIn, requireRole, projectOr404, postgres, reauthenticate, readOnlyDb });
+
+    // --- The one internal address the process may reach ------------------
+    // The routes are in egressRoutes.js, for the same reason.
+    egressRoutes.register(router, { requireOptIn, requireRole, projectOr404 });
 
     // --- Environment variables (tranche 1.1 of plan 0002) ----------------
 

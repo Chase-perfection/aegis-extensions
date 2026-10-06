@@ -177,6 +177,7 @@
         deploy_in_progress: 'A deployment of this project is running. Wait for it to finish, then try again.',
         already_on_postgres: 'This project already runs on its external database.',
         already_local: 'This project already runs on its local file.',
+        egress_set: 'This project has an internal network access set in Settings, and a project holds one opening at a time. Remove it in Settings, Internal network access, then switch.',
 
         result_ok: 'The site now runs on the external database',
         result_ok_detail: '$1 row(s) copied.',

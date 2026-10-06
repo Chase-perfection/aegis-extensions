@@ -95,6 +95,33 @@ test('a production build sees all and production, never preview', () => {
     assert.strictEqual(preview.PROD, undefined);
 });
 
+test('a runtime value reaches the live process only: not the install, not the build, not a preview', () => {
+    const env = withEnv([
+        { key: 'SHARED', value: 's', target: 'all' },
+        { key: 'PROD', value: 'p', target: 'production' },
+        { key: 'DB_PASSWORD', value: 'only-the-site', target: 'runtime' }
+    ]);
+
+    // The install and the build of the live site, and of a preview.
+    for (const target of ['production', 'preview']) {
+        const build = projectEnv.forBuild({ env }, { target });
+        assert.strictEqual('DB_PASSWORD' in build, false, `the ${target} build was handed a runtime value`);
+        assert.ok(!Object.values(build).includes('only-the-site'));
+    }
+
+    const live = projectEnv.forProcess({ env }, { target: 'production' });
+    assert.strictEqual(live.DB_PASSWORD, 'only-the-site');
+    assert.strictEqual(live.SHARED, 's');
+    assert.strictEqual(live.PROD, 'p');
+
+    const preview = projectEnv.forProcess({ env }, { target: 'preview' });
+    assert.strictEqual('DB_PASSWORD' in preview, false, 'a preview process was handed a runtime value');
+    assert.strictEqual(preview.SHARED, 's');
+
+    assert.deepStrictEqual(projectEnv.list({ env }).find((e) => e.key === 'DB_PASSWORD').target, 'runtime');
+    assert.throws(() => withEnv([{ key: 'X', value: '1', target: 'runtimes' }]), /runtime/);
+});
+
 test('forBuild sets the built-ins, and a project CI overrides the default', () => {
     const bare = projectEnv.forBuild({ env: [] }, { target: 'production', sha: 'abc123', branch: 'main' });
     assert.strictEqual(bare.CI, '1');

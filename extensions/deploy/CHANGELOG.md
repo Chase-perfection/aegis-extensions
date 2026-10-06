@@ -2,6 +2,28 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.10
+
+**A site can reach one server on the internal network.** A project's process
+runs under an account denied the internal networks, which kept a site on local
+files from reading a business database or an internal API. An administrator now
+opens one server for it on the Settings tab, section Internal network access:
+an IPv4 address and a port, already approved on the Aegis server in
+`database-targets.txt`. Only that port of that machine opens, for the live
+site's process, never for a preview. Opening or closing it restarts a running
+site at once. The repository cannot set it, and no other write of the project
+record can change it.
+
+**A variable can be kept from the build.** The new target "Live site only, never
+the build" (`runtime`) hands a value to the live site's process and to nothing
+else: not the install, not the build, not a preview. The install and the build
+run code the branch chose, and a package compromised upstream would read every
+variable they are given. A password to another server belongs there.
+
+A project holds one opening at a time: a project on an external database
+cannot also open a server, and the switch to an external database is refused
+while an access is set.
+
 ## 0.2.9
 
 **The sign-in page of a protected site follows the Aegis design system.** It

@@ -31,6 +31,7 @@ const path = require('path');
 
 const projectStore = require('./projectStore');
 const projectStorage = require('./projectStorage');
+const projectEgress = require('./projectEgress');
 const storageChecks = require('./storageChecks');
 const storageNetwork = require('./storageNetwork');
 const storageSwitch = require('./storageSwitch');
@@ -266,6 +267,11 @@ function register(router, { requireOptIn, requireRole, projectOr404, postgres, r
         // could only be refused. `toPostgres` refuses this too.
         if (to === projectStorage.mode(project)) {
             return res.status(409).json({ success: false, error: to === 'postgres' ? 'already_on_postgres' : 'already_local' });
+        }
+        // One opening per account (`projectEgress.js`): the network access set
+        // on the Settings tab is removed first, by the person who set it.
+        if (to === 'postgres' && projectEgress.of(project)) {
+            return res.status(409).json({ success: false, error: 'egress_set' });
         }
 
         // The administrator, proved again by their password. Core reads
