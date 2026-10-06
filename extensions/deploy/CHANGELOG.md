@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## Unreleased
+## 0.2.11
 
 **Opening a server on the internal network no longer sends anyone to the Aegis
 server.** In Settings, section Internal network access, an address that no site
