@@ -42,6 +42,16 @@ function holding(state) {
 }
 
 const ACCOUNT = 'aegis-run-01';
+
+/** The three rules that confine one opened address, as the firewall gives them back. */
+function confined(ip, ports, account) {
+    const name = (what) => `Aegis Deploy data: ${account || ACCOUNT} ${what} ${ip}`;
+    return [
+        { name: name('tcp'), remote: [ip], ports },
+        { name: name('udp'), remote: [ip], ports: ['Any'] },
+        { name: name('icmp'), remote: [ip], ports: ['Any'] }
+    ];
+}
 const DENY_24 = { name: 'AegisBuild-aegis-run-01-DenyDomain-192_0_2_0_24', enabled: 'True', remote: ['192.0.2.0/255.255.255.0'] };
 const DENY_10 = { name: 'AegisBuild-aegis-run-01-DenyDomain-10_0_0_0_8', enabled: 'True', remote: ['10.0.0.0/255.0.0.0'] };
 
@@ -126,6 +136,136 @@ test('the ports that stay blocked are all of them but the database port', () => 
     assert.deepStrictEqual(net.otherPorts(65534), ['1-65533', '65535']);
 });
 
+test('two ports on one machine stay the only two open', () => {
+    assert.deepStrictEqual(net.otherPorts([5432, 8443]), ['1-5431', '5433-8442', '8444-65535']);
+    assert.deepStrictEqual(net.otherPorts([8443, 5432, 5432]), ['1-5431', '5433-8442', '8444-65535'], 'order and repeats do not matter');
+    assert.deepStrictEqual(net.otherPorts([5432, 5433]), ['1-5431', '5434-65535']);
+    assert.deepStrictEqual(net.otherPorts([1, 3]), ['2', '4-65535']);
+    assert.deepStrictEqual(net.otherPorts([65534, 65535]), ['1-65533']);
+});
+
+test('subtractAll leaves every asked address out and every neighbour in', () => {
+    const cases = [
+        ['192.0.2.0/24', ['192.0.2.10', '192.0.2.98'], ['192.0.2.0-192.0.2.9', '192.0.2.11-192.0.2.97', '192.0.2.99-192.0.2.255']],
+        ['192.0.2.0/24', ['192.0.2.98', '192.0.2.10'], ['192.0.2.0-192.0.2.9', '192.0.2.11-192.0.2.97', '192.0.2.99-192.0.2.255']],
+        ['192.0.2.0/24', ['192.0.2.10', '192.0.2.11'], ['192.0.2.0-192.0.2.9', '192.0.2.12-192.0.2.255']],
+        ['192.0.2.0/24', ['192.0.2.0', '192.0.2.255'], ['192.0.2.1-192.0.2.254']],
+        ['192.0.2.0/24', ['192.0.2.10', '192.0.2.10'], ['192.0.2.0-192.0.2.9', '192.0.2.11-192.0.2.255']],
+        ['192.0.2.0/24', ['192.0.2.10', '198.51.100.7'], ['192.0.2.0-192.0.2.9', '192.0.2.11-192.0.2.255']],
+        ['192.0.2.8/31', ['192.0.2.8', '192.0.2.9'], []],
+        ['192.0.2.0/24', [], ['192.0.2.0/24']],
+        ['192.0.2.0/24', ['198.51.100.7', 'not an address'], ['192.0.2.0/24']]
+    ];
+    for (const [cidr, ips, expected] of cases) {
+        assert.deepStrictEqual(net.subtractAll(cidr, ips), expected, `${cidr} minus ${ips.join(' and ')}`);
+    }
+    // One address asked for is what `subtract` already answers.
+    assert.deepStrictEqual(net.subtractAll('10.0.0.0/8', ['10.20.30.40']), net.subtract('10.0.0.0/8', '10.20.30.40'));
+
+    const left = net.subtractAll('192.0.2.0/24', ['192.0.2.10', '192.0.2.98']);
+    const opened = [];
+    for (let i = 0; i < 256; i++) {
+        if (!blocks(left, `192.0.2.${i}`)) opened.push(`192.0.2.${i}`);
+    }
+    assert.deepStrictEqual(opened, ['192.0.2.10', '192.0.2.98'], 'an address was opened and nobody asked');
+    assert.strictEqual(net.subtractAll('garbage', ['192.0.2.1']), null);
+});
+
+test('two targets: each address is confined to its own port before the subnet is narrowed', async () => {
+    await withFirewall(holding({ deny: [DENY_24, DENY_10], data: null }), async (scripts) => {
+        const res = await net.ensureFor(ACCOUNT, [{ host: '192.0.2.10', port: 5432 }, { host: '192.0.2.98', port: 8443 }]);
+        assert.deepStrictEqual(res, { ok: true, changed: true, managed: true, inside: true });
+
+        const steps = scripts[1].split('; ');
+        const at = (needle) => steps.findIndex((s) => s.includes(needle));
+        const narrow = at('-RemoteAddress 192.0.2.0-192.0.2.9,192.0.2.11-192.0.2.97,192.0.2.99-192.0.2.255');
+        assert.ok(narrow !== -1, scripts[1]);
+
+        for (const [ip, ports] of [['192.0.2.10', '1-5431,5433-65535'], ['192.0.2.98', '1-8442,8444-65535']]) {
+            const tcp = at(`'Aegis Deploy data: aegis-run-01 tcp ${ip}'`);
+            assert.ok(tcp !== -1 && tcp < narrow, `${ip} was reachable before it was confined`);
+            assert.ok(steps[tcp].includes(`-Action Block -RemoteAddress ${ip} -Owner $sid -Protocol TCP -RemotePort ${ports}`), steps[tcp]);
+            assert.ok(at(`'Aegis Deploy data: aegis-run-01 udp ${ip}'`) < narrow);
+            assert.ok(at(`'Aegis Deploy data: aegis-run-01 icmp ${ip}'`) < narrow);
+        }
+        assert.strictEqual(steps.filter((s) => s.startsWith('New-NetFirewallRule')).length, 6);
+        assert.ok(!scripts[1].includes('-Action Allow'));
+    });
+
+    // Held exactly as asked: one read and no write.
+    const state = {
+        deny: [Object.assign({}, DENY_24, { remote: ['192.0.2.0-192.0.2.9', '192.0.2.11-192.0.2.97', '192.0.2.99-192.0.2.255'] })],
+        data: confined('192.0.2.10', ['1-5431', '5433-65535']).concat(confined('192.0.2.98', ['1-8442', '8444-65535']))
+    };
+    await withFirewall(holding(state), async (scripts) => {
+        const res = await net.ensureFor(ACCOUNT, [{ host: '192.0.2.98', port: 8443 }, { host: '192.0.2.10', port: 5432 }]);
+        assert.deepStrictEqual(res, { ok: true, changed: false, managed: true, inside: true });
+        assert.strictEqual(scripts.length, 1);
+    });
+
+    // One of the two given up: its address is closed again, the other stays.
+    await withFirewall(holding(state), async (scripts) => {
+        const res = await net.ensureFor(ACCOUNT, [{ host: '192.0.2.10', port: 5432 }]);
+        assert.strictEqual(res.changed, true);
+        assert.ok(scripts[1].includes('-RemoteAddress 192.0.2.0-192.0.2.9,192.0.2.11-192.0.2.255'));
+        assert.ok(!scripts[1].includes('192.0.2.98'), 'the address given up is named nowhere in what is written');
+    });
+});
+
+test('two targets on one machine open two ports of it and nothing more', async () => {
+    await withFirewall(holding({ deny: [DENY_24], data: null }), async (scripts) => {
+        const res = await net.ensureFor(ACCOUNT, [{ host: '192.0.2.10', port: 5432 }, { host: '192.0.2.10', port: 8443 }]);
+        assert.strictEqual(res.changed, true);
+        const steps = scripts[1].split('; ');
+        assert.strictEqual(steps.filter((s) => s.startsWith('New-NetFirewallRule')).length, 3, 'one machine, three rules');
+        assert.ok(scripts[1].includes('-Protocol TCP -RemotePort 1-5431,5433-8442,8444-65535'));
+        assert.ok(scripts[1].includes('-RemoteAddress 192.0.2.0-192.0.2.9,192.0.2.11-192.0.2.255'));
+    });
+});
+
+test('one target inside the denied subnets and one outside: only the first asks for rules', async () => {
+    await withFirewall(holding({ deny: [DENY_24], data: null }), async (scripts) => {
+        const res = await net.ensureFor(ACCOUNT, [{ host: '203.0.113.5', port: 5432 }, { host: '192.0.2.98', port: 8443 }]);
+        assert.strictEqual(res.inside, true);
+        assert.ok(!scripts[1].includes('203.0.113.5'), 'an address that was never blocked got a rule');
+        assert.strictEqual(scripts[1].split('; ').filter((s) => s.startsWith('New-NetFirewallRule')).length, 3);
+    });
+});
+
+test('all or nothing: one target that cannot be opened and no rule is touched', async () => {
+    await withFirewall(holding({ deny: [DENY_24], data: null }), async (scripts) => {
+        const bad = await net.ensureFor(ACCOUNT, [{ host: '192.0.2.10', port: 5432 }, { host: '192.0.2.98', port: 0 }]);
+        assert.deepStrictEqual([bad.ok, bad.error], [false, 'not a port']);
+        const lost = await net.ensureFor(ACCOUNT, [{ host: '192.0.2.10', port: 5432 }, { host: 'svc.corp.local', port: 8443 }],
+            { lookup: async () => { throw new Error('ENOTFOUND'); } });
+        assert.strictEqual(lost.ok, false);
+        assert.strictEqual(scripts.length, 0);
+    });
+});
+
+test('a rule written before addresses were in the names is replaced, not trusted', async () => {
+    const state = {
+        deny: [Object.assign({}, DENY_24, { remote: ['192.0.2.0-192.0.2.9', '192.0.2.11-192.0.2.255'] })],
+        data: [{ name: 'Aegis Deploy data: aegis-run-01 tcp', remote: ['192.0.2.10'], ports: ['1-5431', '5433-65535'] },
+            { name: 'Aegis Deploy data: aegis-run-01 udp', remote: ['192.0.2.10'], ports: ['Any'] },
+            { name: 'Aegis Deploy data: aegis-run-01 icmp', remote: ['192.0.2.10'], ports: ['Any'] }]
+    };
+    await withFirewall(holding(state), async (scripts) => {
+        const res = await net.ensureFor(ACCOUNT, { host: '192.0.2.10', port: 5432 });
+        assert.strictEqual(res.changed, true);
+        const steps = scripts[1].split('; ');
+        const sweep = steps.findIndex((s) => s.includes("-DisplayName 'Aegis Deploy data: aegis-run-01 *'") && s.includes('Remove-NetFirewallRule'));
+        const create = steps.findIndex((s) => s.includes("'Aegis Deploy data: aegis-run-01 tcp 192.0.2.10'"));
+        assert.ok(sweep !== -1 && create > sweep);
+    });
+    // The read of one account does not take in an account whose name starts like its own.
+    await withFirewall(holding({ deny: [], data: null }), async (scripts) => {
+        await net.ensureFor(ACCOUNT, null);
+        assert.ok(scripts[0].includes("-DisplayName 'Aegis Deploy data: aegis-run-01 *'"),
+            'the space before the star is what separates run-01 from run-010');
+    });
+});
+
 test('off unless the host switch is set: nothing is read and nothing is written', async () => {
     const before = process.env.AEGIS_DEPLOY_FIREWALL;
     delete process.env.AEGIS_DEPLOY_FIREWALL;
@@ -150,14 +290,14 @@ test('opening: the address is confined before the subnet is narrowed', async () 
         const steps = scripts[1].split('; ');
         const at = (needle) => steps.findIndex((s) => s.includes(needle));
 
-        const confine = at("New-NetFirewallRule -DisplayName 'Aegis Deploy data: aegis-run-01 tcp'");
+        const confine = at("New-NetFirewallRule -DisplayName 'Aegis Deploy data: aegis-run-01 tcp 192.0.2.10'");
         const narrow = at('-RemoteAddress 192.0.2.0-192.0.2.9,192.0.2.11-192.0.2.255');
         assert.ok(confine !== -1 && narrow !== -1);
         assert.ok(confine < narrow, 'the subnet was narrowed before the address was confined');
 
         assert.match(steps[confine], /-Direction Outbound -Action Block -RemoteAddress 192\.0\.2\.10 -Owner \$sid -Protocol TCP -RemotePort 1-5431,5433-65535/);
-        assert.ok(at("'Aegis Deploy data: aegis-run-01 udp'") !== -1);
-        assert.ok(at("'Aegis Deploy data: aegis-run-01 icmp'") !== -1);
+        assert.ok(at("'Aegis Deploy data: aegis-run-01 udp 192.0.2.10'") !== -1);
+        assert.ok(at("'Aegis Deploy data: aegis-run-01 icmp 192.0.2.10'") !== -1);
         assert.ok(at("Get-LocalUser -Name 'aegis-run-01'") < confine);
 
         // The subnet the address is not in keeps its whole block.
@@ -171,7 +311,7 @@ test('opening: the address is confined before the subnet is narrowed', async () 
 test('already open for this target: one read and no write', async () => {
     const state = {
         deny: [Object.assign({}, DENY_24, { remote: ['192.0.2.0-192.0.2.9', '192.0.2.11-192.0.2.255'] }), DENY_10],
-        data: { remote: ['192.0.2.10'], ports: ['1-5431', '5433-65535'] }
+        data: confined('192.0.2.10', ['1-5431', '5433-65535'])
     };
     await withFirewall(holding(state), async (scripts) => {
         const res = await net.ensureFor(ACCOUNT, { host: '192.0.2.10', port: 5432 });
@@ -183,7 +323,7 @@ test('already open for this target: one read and no write', async () => {
 test('a rule left by another project is replaced, not kept beside the new one', async () => {
     const state = {
         deny: [Object.assign({}, DENY_24, { remote: ['192.0.2.0-192.0.2.19', '192.0.2.21-192.0.2.255'] })],
-        data: { remote: ['192.0.2.20'], ports: ['1-5431', '5433-65535'] }
+        data: confined('192.0.2.20', ['1-5431', '5433-65535'])
     };
     await withFirewall(holding(state), async (scripts) => {
         const res = await net.ensureFor(ACCOUNT, { host: '192.0.2.10', port: 6543 });
@@ -199,13 +339,13 @@ test('a rule left by another project is replaced, not kept beside the new one', 
 test('no target puts every rule back and removes the per-address ones', async () => {
     const state = {
         deny: [Object.assign({}, DENY_24, { remote: ['192.0.2.0-192.0.2.9', '192.0.2.11-192.0.2.255'] })],
-        data: { remote: ['192.0.2.10'], ports: ['1-5431', '5433-65535'] }
+        data: confined('192.0.2.10', ['1-5431', '5433-65535'])
     };
     await withFirewall(holding(state), async (scripts) => {
         const res = await net.ensureFor(ACCOUNT, null);
         assert.deepStrictEqual(res, { ok: true, changed: true, managed: true, inside: false });
         assert.ok(scripts[1].includes('-RemoteAddress 192.0.2.0/24 -Enabled True'));
-        assert.ok(scripts[1].includes("Remove-NetFirewallRule -DisplayName 'Aegis Deploy data: aegis-run-01 tcp'"));
+        assert.ok(scripts[1].includes("Get-NetFirewallRule -DisplayName 'Aegis Deploy data: aegis-run-01 *' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"));
         assert.ok(!scripts[1].includes('New-NetFirewallRule'));
     });
 
@@ -233,7 +373,7 @@ test('a /32 deny rule that is the address is disabled, and enabled again on the 
     });
     const opened = {
         deny: [Object.assign({}, deny32, { enabled: 'False' })],
-        data: { remote: ['192.0.2.10'], ports: ['1-5431', '5433-65535'] }
+        data: confined('192.0.2.10', ['1-5431', '5433-65535'])
     };
     await withFirewall(holding(opened), async (scripts) => {
         assert.strictEqual((await net.ensureFor(ACCOUNT, { host: '192.0.2.10', port: 5432 })).changed, false);

@@ -144,7 +144,11 @@ test('an address taken off the approved list closes the path at the next start',
     process.env.AEGIS_DEPLOY_FIREWALL = '1';
     const opened = {
         deny: [{ name: 'AegisBuild-run-a-DenyDomain-10_0_0_0_8', enabled: 'True', remote: ['10.0.0.0-10.0.0.9', '10.0.0.11-10.255.255.255'] }],
-        data: { remote: ['10.0.0.10'], ports: ['1-5431', '5433-65535'] }
+        data: ['tcp', 'udp', 'icmp'].map((what) => ({
+            name: `Aegis Deploy data: run-a ${what} 10.0.0.10`,
+            remote: ['10.0.0.10'],
+            ports: what === 'tcp' ? ['1-5431', '5433-65535'] : ['Any']
+        }))
     };
     storageNetwork._setRunner((script) => {
         scripts.push(script);

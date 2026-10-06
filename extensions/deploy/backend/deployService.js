@@ -76,17 +76,14 @@ function runtimeExtras(project) {
     // the approved list means the path closed, and the next start closes it.
     const database = saved && projectStorage.isApproved(saved.host, saved.port) ? saved : null;
     // The one internal address an administrator opened for this project
-    // (`projectEgress.js`), approved on the host like the database is. One
-    // target per account: a record holding both keeps the database, which the
-    // process cannot boot without, and says so.
+    // (`projectEgress.js`), approved on the host like the database is. The two
+    // are separate decisions and a project may hold both: where its rows live
+    // says nothing about the other service it has to reach.
     const egress = projectEgress.targetFor(project);
-    if (database && egress) {
-        console.warn(`[Deploy] ${project.id}: network access to ${egress.host}:${egress.port} is not applied, the project is on a database`);
-    }
-    const target = database || egress;
+    const targets = [database, egress].filter(Boolean);
     return {
         env: projectStorage.runtimeEnv(project),
-        prepare: (account) => storageNetwork.ensureFor(account, target)
+        prepare: (account) => storageNetwork.ensureFor(account, targets)
     };
 }
 

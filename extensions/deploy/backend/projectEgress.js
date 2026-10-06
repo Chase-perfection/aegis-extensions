@@ -26,10 +26,11 @@
  *
  * A preview never gets it, for the reason `projectStorage.runtimeEnv` gives.
  *
- * ponytail: a project in Postgres mode cannot also hold one, because
- * `storageNetwork` opens one target per account. The route and the storage
- * switch each refuse the second, and `deployService.runtimeExtras` keeps the
- * database if a record ever has both.
+ * It is independent of where the project keeps its rows. A project on a
+ * database holds this opening beside the one to its database, and
+ * `deployService.runtimeExtras` hands both to `storageNetwork`. Still one
+ * service: what is not a list here is the number of things an administrator
+ * can open besides the storage.
  */
 
 'use strict';
@@ -59,7 +60,7 @@ function canonicalIp(text) {
 function normalise(input) {
     const raw = input || {};
     const host = canonicalIp(raw.host);
-    if (!host) throw refuse('bad_egress_host', 'the address is an IPv4 address such as 192.168.1.98, with no name and no port');
+    if (!host) throw refuse('bad_egress_host', 'the address is an IPv4 address such as 10.0.0.25, with no name and no port');
     if (host === '0.0.0.0' || host === '255.255.255.255' || host.split('.')[0] === '127') {
         throw refuse('bad_egress_host', `${host} is not one machine on the network`);
     }

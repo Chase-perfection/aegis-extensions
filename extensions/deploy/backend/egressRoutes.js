@@ -74,9 +74,6 @@ function register(router, { requireOptIn, requireRole, projectOr404, startCurren
         } catch (e) {
             return res.status(400).json({ success: false, error: e.code, detail: e.message });
         }
-        if (projectStorage.mode(project) === 'postgres') {
-            return res.status(409).json({ success: false, error: 'egress_with_postgres' });
-        }
         if (!projectStorage.isApproved(target.host, target.port)) {
             if (!req.body || req.body.approve !== true) {
                 return res.status(409).json({ success: false, error: 'egress_not_approved' });

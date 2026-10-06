@@ -1,5 +1,6 @@
 /**
- * Lets one sandbox account reach one database, and nothing else on its network.
+ * Lets one sandbox account reach the addresses its project was given, and
+ * nothing else on its network.
  *
  * `Create-BuildAccounts.ps1` denies every sandbox account the subnets the
  * directory lives on, with one outbound block rule per subnet, named
@@ -8,13 +9,17 @@
  *
  * Windows applies a block rule over any allow rule, so an exception cannot be
  * added beside the block. The block itself has to be narrowed. For one account
- * and one `address:port`:
+ * and each `address:port` it may reach:
  *
- *   - each deny rule keeps its name and blocks its subnet minus the address;
- *   - three more rules block that address again on every TCP port but the
- *     database's, on UDP and on ICMPv4.
+ *   - each deny rule keeps its name and blocks its subnet minus the addresses;
+ *   - three more rules per address block it again on every TCP port but the
+ *     ones opened, on UDP and on ICMPv4.
  *
- * What the account gains is one TCP port on one machine.
+ * What the account gains is one TCP port on one machine, per target. This
+ * module takes a list and has no opinion on its length. The callers do: a
+ * project has at most its database (`projectStorage.js`) and one internal
+ * service (`projectEgress.js`), each decided by an administrator, each
+ * approved on the host.
  *
  * The subnet a deny rule started with is in its name, so the desired state is
  * computed from the names and never from what the rule holds today. That makes
@@ -35,7 +40,7 @@
  * reach its database stops at boot, the health check sees it, and the version
  * that was serving keeps serving.
  *
- * ponytail: IPv4 only, and one database per account. Nothing probes the path as
+ * ponytail: IPv4 only. Nothing probes the path as
  * the account either; the application booting on the database is the proof. A
  * live probe needs the sandbox launcher and a Windows runner to test it on.
  */
@@ -180,11 +185,41 @@ function sameAddresses(current, wanted) {
     return a !== null && a === b;
 }
 
-/** The TCP ports that stay blocked on the database's machine: all of them but one. */
-function otherPorts(port) {
+/**
+ * A subnet without several addresses: what is left blocked when more than one
+ * machine of it is opened. `subtract` once per address, on ranges.
+ */
+function subtractAll(cidr, ips) {
+    const range = cidrRange(cidr);
+    if (!range) return null;
+    const holes = Array.from(new Set((ips || []).map(ipToInt)))
+        .filter((at) => at !== null && at >= range[0] && at <= range[1])
+        .sort((a, b) => a - b);
+    if (!holes.length) return [String(cidr).trim()];
     const out = [];
-    if (port > 1) out.push(port === 2 ? '1' : `1-${port - 1}`);
-    if (port < 65535) out.push(port === 65534 ? '65535' : `${port + 1}-65535`);
+    let from = range[0];
+    for (const at of holes) {
+        if (at > from) out.push(rangeText(from, at - 1));
+        from = at + 1;
+    }
+    if (from <= range[1]) out.push(rangeText(from, range[1]));
+    return out;
+}
+
+/**
+ * The TCP ports that stay blocked on an opened machine: all of them but the
+ * ones asked for. One port is the usual case; two targets on the same machine
+ * give two.
+ */
+function otherPorts(ports) {
+    const open = Array.from(new Set([].concat(ports).map(Number))).sort((a, b) => a - b);
+    const out = [];
+    let from = 1;
+    for (const port of open) {
+        if (port > from) out.push(port - 1 === from ? String(from) : `${from}-${port - 1}`);
+        from = port + 1;
+    }
+    if (from <= 65535) out.push(from === 65535 ? '65535' : `${from}-65535`);
     return out;
 }
 
@@ -213,8 +248,22 @@ function subnetFromRuleName(name, account) {
     return cidrRange(cidr) ? cidr : null;
 }
 
-function dataRuleName(account, what) {
-    return `${GROUP}: ${account} ${what}`;
+const KINDS = ['tcp', 'udp', 'icmp'];
+
+/** The rule that confines one opened address, for one protocol. */
+function dataRuleName(account, what, ip) {
+    return `${GROUP}: ${account} ${what} ${ip}`;
+}
+
+/**
+ * Every per-address rule of one account, whatever address it names.
+ *
+ * The space before the star is what keeps `run-1` from matching `run-10`. It
+ * also matches the rules a version before this one wrote, which carried no
+ * address in their name: they are read as rules nobody asked for and replaced.
+ */
+function dataRulePattern(account) {
+    return `${GROUP}: ${account} *`;
 }
 
 function asList(value) {
@@ -227,9 +276,10 @@ async function read(account) {
         `$d = @(Get-NetFirewallRule -DisplayName '${denyPrefix(account)}*' -ErrorAction SilentlyContinue | ForEach-Object {`
         + ' [pscustomobject]@{ name = $_.DisplayName; enabled = "$($_.Enabled)";'
         + ' remote = @(($_ | Get-NetFirewallAddressFilter).RemoteAddress) } });'
-        + ` $t = Get-NetFirewallRule -DisplayName '${dataRuleName(account, 'tcp')}' -ErrorAction SilentlyContinue;`
-        + ' $x = if ($t) { [pscustomobject]@{ remote = @(($t | Get-NetFirewallAddressFilter).RemoteAddress);'
-        + ' ports = @(($t | Get-NetFirewallPortFilter).RemotePort) } } else { $null };'
+        + ` $x = @(Get-NetFirewallRule -DisplayName '${dataRulePattern(account)}' -ErrorAction SilentlyContinue | ForEach-Object {`
+        + ' [pscustomobject]@{ name = $_.DisplayName;'
+        + ' remote = @(($_ | Get-NetFirewallAddressFilter).RemoteAddress);'
+        + ' ports = @(($_ | Get-NetFirewallPortFilter).RemotePort) } });'
         + ' [pscustomobject]@{ deny = $d; data = $x } | ConvertTo-Json -Compress -Depth 4');
     if (!res.ok) return { ok: false, error: res.error };
 
@@ -246,34 +296,55 @@ async function read(account) {
         if (!subnet) continue;
         deny.push({ name: row.name, subnet, enabled: String(row.enabled) === 'True', remote: asList(row.remote) });
     }
-    const data = parsed.data
-        ? { remote: asList(parsed.data.remote), ports: asList(parsed.data.ports) }
-        : null;
+    const data = [].concat(parsed.data || []).filter((row) => row && row.name).map((row) => ({
+        name: String(row.name), remote: asList(row.remote), ports: asList(row.ports)
+    }));
     return { ok: true, deny, data };
 }
 
 /**
- * What the rules should be for this target, and whether they already are.
+ * What the rules should be for these targets, and whether they already are.
  *
- * Pure. `ip` null means a project on local files: every subnet whole, no
- * per-address rule.
+ * Pure. `targets` is `[{ ip, port }]`. Empty means a project with nothing to
+ * reach: every subnet whole, no per-address rule. A target outside every
+ * denied subnet was never blocked and asks for nothing.
+ *
+ * `open` is one entry per opened machine, with the ports it is opened on. Two
+ * targets at the same address are one machine with two ports.
  */
-function plan(state, ip, port) {
-    const inside = ip ? state.deny.some((r) => contains(r.subnet, ip)) : false;
+function plan(account, state, targets) {
+    const byIp = new Map();
+    for (const t of targets || []) {
+        if (!state.deny.some((r) => contains(r.subnet, t.ip))) continue;
+        if (!byIp.has(t.ip)) byIp.set(t.ip, new Set());
+        byIp.get(t.ip).add(t.port);
+    }
+    const open = Array.from(byIp.keys()).sort((a, b) => ipToInt(a) - ipToInt(b))
+        .map((ip) => ({ ip, ports: otherPorts(Array.from(byIp.get(ip))) }));
+    const ips = open.map((o) => o.ip);
+
     const deny = state.deny.map((r) => {
-        const wanted = inside ? subtract(r.subnet, ip) : [r.subnet];
+        const wanted = subtractAll(r.subnet, ips);
         const right = wanted.length
             ? r.enabled && sameAddresses(r.remote, wanted)
             : !r.enabled;
         return { name: r.name, subnet: r.subnet, wanted, right };
     });
 
-    const ports = inside ? otherPorts(port) : [];
-    const dataRight = inside
-        ? !!state.data && sameAddresses(state.data.remote, [ip]) && state.data.ports.join(',') === ports.join(',')
-        : !state.data;
+    // Exactly the rules asked for, and no other. A missing one is a machine
+    // opened on every port; an extra one is what another project left on this
+    // account, and it goes.
+    const held = new Map(state.data.map((r) => [r.name, r]));
+    let dataRight = held.size === open.length * KINDS.length;
+    for (const o of open) {
+        for (const what of KINDS) {
+            const rule = held.get(dataRuleName(account, what, o.ip));
+            if (!rule || !sameAddresses(rule.remote, [o.ip])) dataRight = false;
+            else if (what === 'tcp' && rule.ports.join(',') !== o.ports.join(',')) dataRight = false;
+        }
+    }
 
-    return { inside, deny, ports, upToDate: dataRight && deny.every((r) => r.right) };
+    return { inside: open.length > 0, open, deny, upToDate: dataRight && deny.every((r) => r.right) };
 }
 
 /**
@@ -287,22 +358,22 @@ function plan(state, ip, port) {
  * digits-and-underscore pattern, an account matched against `ACCOUNT_RE`, an
  * address rebuilt from numbers, or a port number. None can carry a quote.
  */
-function script(account, wanted, ip, port) {
+function script(account, wanted) {
     const lines = ["$ErrorActionPreference = 'Stop'"];
 
     for (const r of wanted.deny) {
         lines.push(`Set-NetFirewallRule -DisplayName '${r.name}' -RemoteAddress ${r.subnet} -Enabled True`);
     }
-    for (const what of ['tcp', 'udp', 'icmp']) {
-        lines.push(`Remove-NetFirewallRule -DisplayName '${dataRuleName(account, what)}' -ErrorAction SilentlyContinue`);
-    }
+    lines.push(`Get-NetFirewallRule -DisplayName '${dataRulePattern(account)}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule`);
 
     if (wanted.inside) {
-        const common = `-Group '${GROUP}' -Direction Outbound -Action Block -RemoteAddress ${ip} -Owner $sid`;
         lines.push(`$sid = (Get-LocalUser -Name '${account}').SID.Value`);
-        lines.push(`New-NetFirewallRule -DisplayName '${dataRuleName(account, 'tcp')}' ${common} -Protocol TCP -RemotePort ${wanted.ports.join(',')} | Out-Null`);
-        lines.push(`New-NetFirewallRule -DisplayName '${dataRuleName(account, 'udp')}' ${common} -Protocol UDP | Out-Null`);
-        lines.push(`New-NetFirewallRule -DisplayName '${dataRuleName(account, 'icmp')}' ${common} -Protocol ICMPv4 | Out-Null`);
+        for (const o of wanted.open) {
+            const common = `-Group '${GROUP}' -Direction Outbound -Action Block -RemoteAddress ${o.ip} -Owner $sid`;
+            lines.push(`New-NetFirewallRule -DisplayName '${dataRuleName(account, 'tcp', o.ip)}' ${common} -Protocol TCP -RemotePort ${o.ports.join(',')} | Out-Null`);
+            lines.push(`New-NetFirewallRule -DisplayName '${dataRuleName(account, 'udp', o.ip)}' ${common} -Protocol UDP | Out-Null`);
+            lines.push(`New-NetFirewallRule -DisplayName '${dataRuleName(account, 'icmp', o.ip)}' ${common} -Protocol ICMPv4 | Out-Null`);
+        }
         for (const r of wanted.deny) {
             if (r.wanted.length === 1 && r.wanted[0] === r.subnet) continue;
             lines.push(r.wanted.length
@@ -324,41 +395,46 @@ function resolveHost(host, lookup) {
 }
 
 /**
- * Makes one account's rules match one target, or no target.
+ * Makes one account's rules match its targets, or no target.
  *
- * `target` is `{ host, port }` or null. Answers `{ ok, changed }`, with
- * `managed: false` when this host does not let Aegis touch its firewall and
- * `error` when a call failed. Never throws.
+ * `targets` is `{ host, port }`, a list of them, or null. Answers
+ * `{ ok, changed }`, with `managed: false` when this host does not let Aegis
+ * touch its firewall and `error` when a call failed. Never throws.
+ *
+ * All or nothing: one target that is not an address and a port, or does not
+ * resolve, and no rule is touched. Opening the others would leave the process
+ * half connected, which looks like a fault of the service it cannot reach.
  */
-async function ensureFor(account, target, options) {
+async function ensureFor(account, targets, options) {
     if (!enabled()) return { ok: true, changed: false, managed: false };
     if (!ACCOUNT_RE.test(String(account || ''))) return { ok: false, changed: false, managed: true, error: 'not an account name' };
 
-    let ip = null;
-    let port = null;
-    if (target) {
-        port = Number(target.port);
+    const asked = [];
+    for (const target of [].concat(targets || []).filter(Boolean)) {
+        const port = Number(target.port);
         if (!Number.isInteger(port) || port < 1 || port > 65535) {
             return { ok: false, changed: false, managed: true, error: 'not a port' };
         }
-        ip = await resolveHost(target.host, options && options.lookup);
+        const ip = await resolveHost(target.host, options && options.lookup);
         if (!ip) return { ok: false, changed: false, managed: true, error: `${target.host} does not resolve to an IPv4 address` };
+        asked.push({ ip, port });
     }
 
     const state = await read(account);
     if (!state.ok) return { ok: false, changed: false, managed: true, error: state.error };
 
-    const wanted = plan(state, ip, port);
+    const wanted = plan(account, state, asked);
     if (wanted.upToDate) return { ok: true, changed: false, managed: true, inside: wanted.inside };
 
-    const res = await run(script(account, wanted, ip, port));
+    const res = await run(script(account, wanted));
     if (!res.ok) {
-        console.warn(`[Deploy] database path: could not set the firewall rules of ${account}: ${res.error}`);
+        console.warn(`[Deploy] network path: could not set the firewall rules of ${account}: ${res.error}`);
         return { ok: false, changed: false, managed: true, error: res.error };
     }
+    const reach = asked.filter((t) => wanted.open.some((o) => o.ip === t.ip)).map((t) => `${t.ip} on TCP ${t.port}`);
     console.log(wanted.inside
-        ? `[Deploy] database path: ${account} may reach ${ip} on TCP ${port}, and nothing else there`
-        : `[Deploy] database path: ${account} is back to its whole deny rules`);
+        ? `[Deploy] network path: ${account} may reach ${reach.join(' and ')}, and nothing else there`
+        : `[Deploy] network path: ${account} is back to its whole deny rules`);
     return { ok: true, changed: true, managed: true, inside: wanted.inside };
 }
 
@@ -387,7 +463,7 @@ async function inspect(accounts, target, options) {
 
 module.exports = {
     enabled, supported, ensureFor, inspect,
-    subtract, contains, subnetFromRuleName, otherPorts,
+    subtract, subtractAll, contains, subnetFromRuleName, otherPorts,
     GROUP,
     // Test seams.
     _setRunner,
