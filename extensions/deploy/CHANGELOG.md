@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## Unreleased
+## 0.2.12
 
 **A site on an external database can also reach one server on the internal
 network.** Until now a project held one opening at a time: switching its data to
