@@ -154,12 +154,68 @@ test('both routes are mounted behind the opt-in and the admin role', async () =>
     assert.strictEqual(w.project().egress, undefined);
 });
 
-test('an address the host has not approved is refused with the line that approves it', async () => {
+test('an address never opened here is refused once, so the page can ask', async () => {
     approve('192.0.2.98:5432\n');
     const w = world();
     const res = await w.router.call('post', BASE, w.req({ host: '192.0.2.98', port: 1433 }));
     assert.deepStrictEqual([res.statusCode, res.body.error], [409, 'egress_not_approved'],
         'approving a host is not approving its other ports');
+    assert.strictEqual(res.body.approveCommand, undefined, 'nobody is sent to the server for this');
+    assert.strictEqual(w.project().egress, undefined);
+    assert.strictEqual(projectStorage.isApproved('192.0.2.98', 1433), false, 'a first request approved on its own');
+
+    // `approve` has to be the boolean, not something truthy a form could send.
+    const loose = await w.router.call('post', BASE, w.req({ host: '192.0.2.98', port: 1433, approve: 'true' }));
+    assert.strictEqual(loose.body.error, 'egress_not_approved');
+});
+
+test('confirmed, the administrator approves and opens in one request, and the list says who', async () => {
+    approve('# kept by hand\n10.0.0.5:5432');
+    const w = world();
+    const res = await w.router.call('post', BASE, w.req({ host: '192.0.2.98', port: 1433, approve: true }));
+    assert.deepStrictEqual([res.statusCode, res.body.success, res.body.egress.approved], [200, true, true]);
+    assert.deepStrictEqual(w.project().egress.host, '192.0.2.98');
+
+    const lines = fs.readFileSync(projectStorage.targetsFile(), 'utf8').split('\n');
+    assert.deepStrictEqual(lines.slice(0, 2), ['# kept by hand', '10.0.0.5:5432'], 'the lines typed on the host were rewritten');
+    assert.match(lines[2], /^192\.0\.2\.98:1433 {2}# approved from Aegis by admin@acme\.test \(t[a-z0-9]+\/site\), \d{4}-\d\d-\d\dT/);
+    assert.strictEqual(projectStorage.isApproved('10.0.0.5', 5432), true);
+
+    // A second opening of the same address adds no second line.
+    await w.router.call('post', BASE, w.req({ host: '192.0.2.98', port: 1433, approve: true }));
+    assert.strictEqual(fs.readFileSync(projectStorage.targetsFile(), 'utf8').match(/192\.0\.2\.98:1433/g).length, 1);
+});
+
+test('a member cannot approve, and a bad address is refused before the list is touched', async () => {
+    approve('');
+    const w = world();
+    const member = await w.router.call('post', BASE, w.req({ host: '192.0.2.98', port: 1433, approve: true }, 'member'));
+    assert.strictEqual(member.statusCode, 403);
+    const bad = await w.router.call('post', BASE, w.req({ host: '0.0.0.0', port: 1433, approve: true }));
+    assert.strictEqual(bad.body.error, 'bad_egress_host');
+    assert.strictEqual(fs.readFileSync(projectStorage.targetsFile(), 'utf8'), '');
+});
+
+test('what is written beside the address cannot start a second line', () => {
+    approve('');
+    projectStorage.approve('192.0.2.7', 8080, 'eve@x.test\n10.0.0.1:22 # sneaked');
+    const text = fs.readFileSync(projectStorage.targetsFile(), 'utf8');
+    assert.strictEqual(text.trim().split('\n').length, 1);
+    assert.deepStrictEqual(projectStorage.approvedTargets(), [{ host: '192.0.2.7', port: 8080 }]);
+});
+
+test('when the list cannot be written, the command is the way left', async () => {
+    approve('');
+    const w = world();
+    const real = fs.appendFileSync;
+    fs.appendFileSync = () => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }); };
+    let res;
+    try {
+        res = await w.router.call('post', BASE, w.req({ host: '192.0.2.98', port: 1433, approve: true }));
+    } finally {
+        fs.appendFileSync = real;
+    }
+    assert.deepStrictEqual([res.statusCode, res.body.error], [500, 'egress_approval_failed']);
     assert.match(res.body.approveCommand, /^Add-Content -Path '.*database-targets\.txt' -Value '192\.0\.2\.98:1433'$/);
     assert.strictEqual(w.project().egress, undefined);
 });

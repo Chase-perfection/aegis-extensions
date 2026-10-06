@@ -8,9 +8,12 @@
  * record (`projectEgress.js`), and they are the only callers allowed to: they
  * save with `{ egress: true }`, every other save keeps the field as it is.
  *
- * Neither writes the approved list. An address that is not on it is refused,
- * with the one line an administrator of the server runs to approve it. That
- * keeps the decision where `projectStorage.js` puts it: on the host.
+ * An address that is not on the approved list is refused once, as
+ * `egress_not_approved`, so the page can ask the administrator to confirm.
+ * Sent again with `approve: true`, the same request adds the address to the
+ * list (`projectStorage.approve`, which records who) and opens it. Nothing has
+ * to be run on the server. The command is handed back only when the list
+ * cannot be written, the one case where the host is the only way left.
  *
  * A running process is restarted at once, both ways, so an opening takes
  * effect without a push and a closing does not wait for one. The restart is
@@ -75,11 +78,21 @@ function register(router, { requireOptIn, requireRole, projectOr404, startCurren
             return res.status(409).json({ success: false, error: 'egress_with_postgres' });
         }
         if (!projectStorage.isApproved(target.host, target.port)) {
-            return res.status(409).json({
-                success: false,
-                error: 'egress_not_approved',
-                approveCommand: projectStorage.approveCommand(target.host, target.port)
-            });
+            if (!req.body || req.body.approve !== true) {
+                return res.status(409).json({ success: false, error: 'egress_not_approved' });
+            }
+            const who = (req.user && req.user.email) || null;
+            try {
+                projectStorage.approve(target.host, target.port, `${who || 'unknown'} (${req.tenant.slug}/${project.id})`);
+            } catch (e) {
+                console.error(`[Deploy] ${req.tenant.slug}: ${project.id} approval of ${target.host}:${target.port} could not be written: ${e.message}`);
+                return res.status(500).json({
+                    success: false,
+                    error: 'egress_approval_failed',
+                    approveCommand: projectStorage.approveCommand(target.host, target.port)
+                });
+            }
+            console.log(`[Deploy] ${req.tenant.slug}: ${project.id} ${target.host}:${target.port} approved on this server by ${who}`);
         }
 
         let stored;

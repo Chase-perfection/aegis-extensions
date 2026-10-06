@@ -824,3 +824,70 @@ test('saving sends only the fields that changed, and says so', async () => {
     await close();
   }
 });
+
+// Internal network access. An address this server never opened is refused once
+// by the backend; the panel asks the administrator and sends it again with the
+// approval. Nobody is shown a command to run on the server.
+async function openEgress(page, answers) {
+  await page.waitForSelector('#deploy-detail-body .dep-egress-host', { timeout: 5000 });
+  await page.evaluate(function (queue) {
+    window.__egress = [];
+    var real = window.api;
+    window.api = function (url, init) {
+      if (String(url).indexOf('/egress') === -1) return real.apply(this, arguments);
+      window.__egress.push(JSON.parse((init && init.body) || 'null'));
+      var next = queue.shift();
+      return Promise.resolve(new Response(JSON.stringify(next.body),
+        { status: next.status, headers: { 'content-type': 'application/json' } }));
+    };
+  }, answers);
+  await page.type('#deploy-detail-body .dep-egress-host', '192.0.2.98');
+  await page.type('#deploy-detail-body .dep-egress-port', '1433');
+  await page.$eval('#deploy-detail-body .dep-egress .dep-btn', function (b) { b.click(); });
+}
+
+test('opening an address for the first time asks to confirm, then approves and opens it', async () => {
+  const { page, close } = await openPage(browser, detailUrl('project/site-a/settings'),
+    Object.assign(stubs([PROJECT]), { '/auth/me': ME_ADMIN }));
+  try {
+    const asked = [];
+    page.on('dialog', (d) => { asked.push(d.message()); d.accept(); });
+    await openEgress(page, [
+      { status: 409, body: { success: false, error: 'egress_not_approved' } },
+      { status: 200, body: { success: true, applied: 'next_start',
+        egress: { host: '192.0.2.98', port: 1433, approved: true, setAt: Date.now(), setBy: 'tester@example.com' } } }
+    ]);
+    await page.waitForFunction(function () { return window.__egress.length === 2; }, { timeout: 5000 });
+
+    assert.deepStrictEqual(await page.evaluate(function () { return window.__egress; }), [
+      { host: '192.0.2.98', port: 1433 },
+      { host: '192.0.2.98', port: 1433, approve: true }
+    ]);
+    assert.strictEqual(asked.length, 1, 'the administrator was not asked exactly once');
+    assert.match(asked[0], /192\.0\.2\.98:1433/);
+
+    await page.waitForFunction(function () {
+      return /192\.0\.2\.98:1433/.test(document.querySelector('#deploy-detail-body .dep-egress .dep-listrow-sub').textContent);
+    }, { timeout: 5000 });
+    assert.strictEqual(await page.$eval('#deploy-detail-body .dep-egress .dep-code', (c) => c.hidden), true,
+      'a command to run on the server is shown');
+  } finally {
+    await close();
+  }
+});
+
+test('declining the confirmation opens nothing and sends nothing more', async () => {
+  const { page, close } = await openPage(browser, detailUrl('project/site-a/settings'),
+    Object.assign(stubs([PROJECT]), { '/auth/me': ME_ADMIN }));
+  try {
+    page.on('dialog', (d) => d.dismiss());
+    await openEgress(page, [{ status: 409, body: { success: false, error: 'egress_not_approved' } }]);
+    await page.waitForFunction(function () {
+      var n = document.querySelector('#deploy-detail-body .dep-egress .dep-note');
+      return n && !n.hidden && /Nothing was opened/.test(n.textContent);
+    }, { timeout: 5000 });
+    assert.strictEqual(await page.evaluate(function () { return window.__egress.length; }), 1);
+  } finally {
+    await close();
+  }
+});
