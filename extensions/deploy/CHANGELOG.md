@@ -2,6 +2,25 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.12
+
+**A site on an external database can also reach one server on the internal
+network.** Until now a project held one opening at a time: switching its data to
+a database was refused while an internal network access was set, and the access
+was refused once the project was on a database. They are two decisions, where
+the rows live and which other service the site talks to, and a project can now
+hold both. The storage switch leaves the access as it is, both ways.
+
+The site's process then reaches two addresses and nothing else: each is still
+one TCP port of one machine, approved on the server on its own, and closed at
+the next start when it is taken off the approved list. Two targets on the same
+machine open two ports of it. The limits have not moved: one database, one
+internal service, the live site only, never set from the repository.
+
+The firewall rules that confine an opened address now carry that address in
+their name. Rules written by an earlier version are replaced at the first start
+of each site; nothing has to be done on the server.
+
 ## 0.2.11
 
 **Opening a server on the internal network no longer sends anyone to the Aegis

@@ -220,7 +220,7 @@ test('when the list cannot be written, the command is the way left', async () =>
     assert.strictEqual(w.project().egress, undefined);
 });
 
-test('the refusals: a bad field, a preview, a project on a database', async () => {
+test('the refusals: a bad field, a preview', async () => {
     approve('192.0.2.98:1433\n');
     const w = world();
     const bad = await w.router.call('post', BASE, w.req({ host: 'srv-db', port: 1433 }));
@@ -229,14 +229,50 @@ test('the refusals: a bad field, a preview, a project on a database', async () =
     const preview = world({ parentId: 'site-parent' });
     const pv = await preview.router.call('post', BASE, preview.req({ host: '192.0.2.98', port: 1433 }));
     assert.deepStrictEqual([pv.statusCode, pv.body.error], [400, 'preview_egress']);
+});
 
+test('a project on a database opens its internal service too, and the process reaches both', async () => {
+    approve('192.0.2.98:1433\n192.0.2.10:5432\n');
     const onDb = world();
     const p = onDb.project();
-    p.storage = projectStorage.withTarget(p, projectStorage.normalise({ host: '10.0.0.10', port: 5432, database: 'app', user: 'app' }), 'pw');
+    p.storage = projectStorage.withTarget(p, projectStorage.normalise({ host: '192.0.2.10', port: 5432, database: 'app', user: 'app' }), 'pw');
     p.storage = projectStorage.withMode(p, 'postgres', 'admin@acme.test');
     projectStore.saveProject(onDb.tenantPaths, p, { storage: true });
-    const pg = await onDb.router.call('post', BASE, onDb.req({ host: '192.0.2.98', port: 1433 }));
-    assert.deepStrictEqual([pg.statusCode, pg.body.error], [409, 'egress_with_postgres']);
+
+    const opened = await onDb.router.call('post', BASE, onDb.req({ host: '192.0.2.98', port: 1433 }));
+    assert.deepStrictEqual([opened.statusCode, opened.body.success], [200, true]);
+    assert.strictEqual(projectStorage.mode(onDb.project()), 'postgres', 'opening a service moved the data');
+
+    const before = process.env.AEGIS_DEPLOY_FIREWALL;
+    process.env.AEGIS_DEPLOY_FIREWALL = '1';
+    const scripts = [];
+    const deny = { name: 'AegisBuild-run-a-DenyDomain-192_0_2_0_24', enabled: 'True', remote: ['192.0.2.0/24'] };
+    storageNetwork._setRunner((script) => {
+        scripts.push(script);
+        return { ok: true, out: script.includes('ConvertTo-Json') ? JSON.stringify({ deny: [deny], data: null }) : '' };
+    });
+    try {
+        const extras = deployService.runtimeExtras(onDb.project());
+        assert.match(extras.env.DATABASE_URL, /@192\.0\.2\.10:5432\/app$/);
+        const live = await extras.prepare('run-a');
+        assert.deepStrictEqual([live.changed, live.inside], [true, true]);
+        const written = scripts[scripts.length - 1];
+        assert.ok(written.includes('-RemoteAddress 192.0.2.10 -Owner $sid -Protocol TCP -RemotePort 1-5431,5433-65535'), written);
+        assert.ok(written.includes('-RemoteAddress 192.0.2.98 -Owner $sid -Protocol TCP -RemotePort 1-1432,1434-65535'), written);
+        assert.ok(written.includes('-RemoteAddress 192.0.2.0-192.0.2.9,192.0.2.11-192.0.2.97,192.0.2.99-192.0.2.255'), written);
+
+        // The service taken off the approved list closes alone: the database stays.
+        approve('192.0.2.10:5432\n');
+        scripts.length = 0;
+        await deployService.runtimeExtras(onDb.project()).prepare('run-a');
+        const after = scripts[scripts.length - 1];
+        assert.ok(!after.includes('192.0.2.98'), 'an address nobody approves any more was opened');
+        assert.ok(after.includes('-RemoteAddress 192.0.2.0-192.0.2.9,192.0.2.11-192.0.2.255'), after);
+    } finally {
+        storageNetwork._setRunner(null);
+        if (before === undefined) delete process.env.AEGIS_DEPLOY_FIREWALL;
+        else process.env.AEGIS_DEPLOY_FIREWALL = before;
+    }
 });
 
 test('open then close: the record follows, and a running site restarts both times', async () => {

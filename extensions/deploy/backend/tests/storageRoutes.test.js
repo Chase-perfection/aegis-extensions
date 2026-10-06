@@ -338,19 +338,15 @@ test('switch: there and back, with the summary in between', async () => {
         const replaced = await w.router.call('post', `${BASE}/preview`, w.req({ replace: true }));
         assert.deepStrictEqual([replaced.body.ok, replaced.body.tables[0].state, replaced.body.tables[0].replaced], [true, 'ok', 1]);
 
-        // An internal network access set on the Settings tab holds the one
-        // opening the account gets: refused before the password is asked.
-        projectStore.saveProject(w.tenantPaths, Object.assign({}, w.project(), { egress: { host: '192.0.2.98', port: 1433 } }), { egress: true });
-        const asked = w.asked.length;
-        const held = await w.router.call('post', `${BASE}/switch`, w.req({ to: 'postgres', password: 'admin-password', replace: true }));
-        assert.deepStrictEqual([held.statusCode, held.body.error, w.asked.length], [409, 'egress_set', asked]);
-        const cleared = Object.assign({}, w.project());
-        delete cleared.egress;
-        projectStore.saveProject(w.tenantPaths, cleared, { egress: true });
+        // An internal network access set on the Settings tab is another
+        // decision: it neither stops the switch nor is undone by it.
+        const egress = { host: '192.0.2.98', port: 1433 };
+        projectStore.saveProject(w.tenantPaths, Object.assign({}, w.project(), { egress }), { egress: true });
 
         const again = await w.router.call('post', `${BASE}/switch`, w.req({ to: 'postgres', password: 'admin-password', replace: true }));
         assert.strictEqual(again.body.ok, true, JSON.stringify(again.body.steps));
         assert.deepStrictEqual(w.db.tables.sites.rows, [{ id: 1, name: 'Plant A' }], 'the rows were doubled or lost');
+        assert.deepStrictEqual(w.project().egress, egress, 'the switch took the network access off the record');
     });
 });
 

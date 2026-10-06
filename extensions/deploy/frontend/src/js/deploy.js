@@ -4514,10 +4514,8 @@
     // --- Internal network access -------------------------------------------
 
     var EGRESS_ERRORS = {
-        bad_egress_host: ['deploy_egress_err_host', 'Type an IPv4 address such as 192.168.1.98, with no name and no port.'],
+        bad_egress_host: ['deploy_egress_err_host', 'Type an IPv4 address such as 10.0.0.25, with no name and no port.'],
         bad_egress_port: ['deploy_egress_err_port', 'The port is a number from 1 to 65535.'],
-        egress_with_postgres: ['deploy_egress_err_postgres',
-            'This project runs on an external database, and a project holds one opening at a time. Switch its data back to local files first.'],
         preview_egress: ['deploy_egress_err_preview', 'A preview never reaches the internal network.'],
         no_egress: ['deploy_egress_err_none', 'Nothing is open for this project. Reload the page.'],
         settings_write_failed: ['deploy_egress_err_write',
@@ -4548,7 +4546,7 @@
         var block = el('div', 'dep-egress');
         block.appendChild(el('h2', 'dep-subtitle', tr('deploy_egress_title', 'Internal network access')));
         block.appendChild(el('p', 'dep-hint', tr('deploy_egress_body',
-            'The site runs under an account that cannot reach the internal network. Open one server here, by address and port, when the site needs it: a business database, an internal API. Only that port of that machine opens, for the live site only. An address opened for the first time asks you to confirm.')));
+            'The site runs under an account that cannot reach the internal network. Open one server here, by address and port, when the site needs it: a business database, an internal API. Only that port of that machine opens, for the live site only. It is separate from where the site keeps its data: a site on an external database can hold one too. An address opened for the first time asks you to confirm.')));
 
         var current = el('p', 'dep-listrow-sub', '');
         block.appendChild(current);
@@ -4558,7 +4556,7 @@
         hostIn.type = 'text';
         hostIn.autocomplete = 'off';
         hostIn.spellcheck = false;
-        hostIn.placeholder = tr('deploy_egress_host', 'Address, e.g. 192.168.1.98');
+        hostIn.placeholder = tr('deploy_egress_host', 'Address, e.g. 10.0.0.25');
         hostIn.setAttribute('aria-label', tr('deploy_egress_host_label', 'Server address'));
         hostIn.disabled = !isAdmin;
 

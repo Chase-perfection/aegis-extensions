@@ -1638,9 +1638,15 @@ database only.
 per denied subnet. Windows applies a block over any allow, so the block is
 narrowed instead: for the account a process is about to run as, each rule blocks
 its subnet minus the database's address, and three more rules block that address
-again on every TCP port but the database's, on UDP and on ICMPv4. A project on
-local files gets its account's rules put back whole. This runs at every process
+again on every TCP port but the database's, on UDP and on ICMPv4. A project that
+also holds an internal network access (below) gets the same for that address:
+the subnet loses both, and each has its own three rules. A project with nothing
+to reach gets its account's rules put back whole. This runs at every process
 start, and only where `AEGIS_DEPLOY_FIREWALL=1`.
+
+The per-address rules are named after the address they confine. Rules written
+by an earlier version, which carried no address in their name, are replaced at
+the first start.
 
 Nothing probes the path as the account before the switch. The proof is the
 application booting on the database.
@@ -1666,7 +1672,7 @@ All under `/api/deploy/projects/:id/storage`, all for a tenant administrator.
 Refusals: `bad_kind`, `bad_host`, `bad_port`, `bad_database`, `bad_user`,
 `bad_console_url`, `switch_back_first`, `not_approved`, `no_target`,
 `never_deployed`, `core_too_old`, `password`, `deploy_in_progress`,
-`not_on_postgres`, `already_on_postgres`, `already_local`, `egress_set`.
+`not_on_postgres`, `already_on_postgres`, `already_local`.
 
 ### Not built
 
@@ -1712,9 +1718,11 @@ A running site is restarted at once when the access is opened or closed, the way
 a deployment restarts it: the new process starts, the proxy moves once it
 answers. Nothing running means it applies at the next start.
 
-A preview never gets it. A project holds one opening at a time: a project on an
-external database is refused (`egress_with_postgres`), and the storage switch
-to Postgres is refused while an access is set (`egress_set`).
+A preview never gets it. It is independent of where the project keeps its data:
+a project on an external database can hold one too, and switching the storage
+either way leaves it as it is. The process then reaches two addresses, its
+database and this server, each on its one port, each approved on its own. Two
+targets on the same machine open two ports of it.
 
 The password for that server goes in Variables with the target **Live site only,
 never the build** (`runtime`), so the install and the build never see it.
@@ -1728,7 +1736,7 @@ The project record in `GET /api/deploy/projects` carries `egress`:
 `{ host, port, approved, setAt, setBy }` or `null`.
 
 Refusals: `bad_egress_host`, `bad_egress_port`, `preview_egress`,
-`egress_with_postgres`, `egress_not_approved` (with `approveCommand`),
+`egress_not_approved` (with `approveCommand`),
 `no_egress`, `settings_write_failed`.
 
 Proof on the host, as the runtime account (`aegis-run-01`), after opening
