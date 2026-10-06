@@ -3106,6 +3106,8 @@
             });
         }
 
+        if (!project.parentId) wrap.appendChild(egressSection(project));
+
         wrap.appendChild(el('h2', 'dep-subtitle', tr('deploy_settings_build', 'Build and deployment')));
 
         // What this project is, rather than what it runs: none of it is typed,
@@ -4288,7 +4290,11 @@
     var ENV_TARGETS = [
         ['all', 'deploy_env_target_all', 'Every deployment'],
         ['production', 'deploy_env_target_prod', 'Production'],
-        ['preview', 'deploy_env_target_preview', 'Previews']
+        ['preview', 'deploy_env_target_preview', 'Previews'],
+        // For a credential to a system outside the sandbox: the install and
+        // the build run code the branch chose, the live process is the only
+        // reader that needs it.
+        ['runtime', 'deploy_env_target_runtime', 'Live site only, never the build']
     ];
 
     var ENV_ERRORS = {
@@ -4323,6 +4329,10 @@
         block.appendChild(el('h2', 'dep-subtitle', tr('deploy_env_title', 'Environment variables')));
         block.appendChild(el('p', 'dep-hint', tr('deploy_env_body',
             'Read by the install and build commands, never by the site. Aegis keeps each value encrypted and no page reads one back, so a value nobody remembers is replaced rather than shown.')));
+        // Where the two questions that follow a secret are answered: who reads
+        // it, and how the site reaches the server it unlocks.
+        block.appendChild(el('p', 'dep-hint', tr('deploy_env_runtime_hint',
+            'A password or a key for another server: choose "Live site only, never the build". The site\'s process reads it, the install and the build never do, and neither does a preview. To let the site reach a server on the internal network, open it in Settings, Internal network access.')));
 
         var rows = el('div', 'dep-rows');
         block.appendChild(rows);
@@ -4498,6 +4508,174 @@
         });
 
         load();
+        return block;
+    }
+
+    // --- Internal network access -------------------------------------------
+
+    var EGRESS_ERRORS = {
+        bad_egress_host: ['deploy_egress_err_host', 'Type an IPv4 address such as 192.168.1.98, with no name and no port.'],
+        bad_egress_port: ['deploy_egress_err_port', 'The port is a number from 1 to 65535.'],
+        egress_with_postgres: ['deploy_egress_err_postgres',
+            'This project runs on an external database, and a project holds one opening at a time. Switch its data back to local files first.'],
+        preview_egress: ['deploy_egress_err_preview', 'A preview never reaches the internal network.'],
+        no_egress: ['deploy_egress_err_none', 'Nothing is open for this project. Reload the page.'],
+        settings_write_failed: ['deploy_egress_err_write',
+            'Aegis could not write the project record. The backend log has the detail.']
+    };
+
+    var EGRESS_APPLIED = {
+        restarted: ['deploy_egress_restarted', 'Done. The site restarted with the new access.'],
+        next_start: ['deploy_egress_next', 'Saved. It applies at the next deployment or start of the site.'],
+        restart_failed: ['deploy_egress_restart_failed',
+            'Saved, but the site did not restart: the previous version is still serving. Redeploy to apply it.']
+    };
+
+    /**
+     * The one server on the internal network the site's process may reach.
+     *
+     * On the Settings tab, under the branch, because it is a property of the
+     * site like its branch is, and that is where an administrator looks for
+     * what the site is allowed to do. The Variables tab points here, since the
+     * password for that server is typed there.
+     *
+     * An address the host has not approved is refused by the backend with the
+     * one line to run on the server, and this panel shows that line as is: the
+     * approval is a decision taken on the machine, never from this page.
+     */
+    function egressSection(project) {
+        var block = el('div', 'dep-egress');
+        block.appendChild(el('h2', 'dep-subtitle', tr('deploy_egress_title', 'Internal network access')));
+        block.appendChild(el('p', 'dep-hint', tr('deploy_egress_body',
+            'The site runs under an account that cannot reach the internal network. Open one server here, by address and port, when the site needs it: a business database, an internal API. Only that port of that machine opens, for the live site only. The address has to be approved on the Aegis server first.')));
+
+        var current = el('p', 'dep-listrow-sub', '');
+        block.appendChild(current);
+
+        var form = el('div', 'dep-branch-form');
+        var hostIn = el('input', 'dep-input dep-egress-host');
+        hostIn.type = 'text';
+        hostIn.autocomplete = 'off';
+        hostIn.spellcheck = false;
+        hostIn.placeholder = tr('deploy_egress_host', 'Address, e.g. 192.168.1.98');
+        hostIn.setAttribute('aria-label', tr('deploy_egress_host_label', 'Server address'));
+        hostIn.disabled = !isAdmin;
+
+        var portIn = el('input', 'dep-input dep-egress-port');
+        portIn.type = 'number';
+        portIn.min = '1';
+        portIn.max = '65535';
+        portIn.placeholder = tr('deploy_egress_port', 'Port');
+        portIn.setAttribute('aria-label', tr('deploy_egress_port', 'Port'));
+        portIn.disabled = !isAdmin;
+
+        var open = el('button', 'dep-btn dep-btn-small', tr('deploy_egress_open', 'Open'));
+        open.type = 'button';
+        open.disabled = !isAdmin;
+
+        var close = el('button', 'dep-btn dep-btn-ghost dep-btn-small dep-btn-danger', tr('deploy_egress_close', 'Close'));
+        close.type = 'button';
+        close.disabled = !isAdmin;
+
+        form.appendChild(hostIn);
+        form.appendChild(portIn);
+        form.appendChild(open);
+        form.appendChild(close);
+        block.appendChild(form);
+
+        var note = el('p', 'dep-note', '');
+        note.hidden = true;
+        block.appendChild(note);
+        var command = el('code', 'dep-code', '');
+        command.hidden = true;
+        block.appendChild(command);
+
+        function say(text) {
+            note.hidden = !text;
+            note.textContent = text || '';
+        }
+
+        function paint(egress) {
+            close.hidden = !egress;
+            if (!egress) {
+                current.textContent = tr('deploy_egress_none', 'Nothing open. The site reaches the internet only.');
+                return;
+            }
+            hostIn.value = egress.host;
+            portIn.value = String(egress.port);
+            var parts = [tr('deploy_egress_current', 'Open: $1').replace('$1', egress.host + ':' + egress.port)];
+            if (!egress.approved) {
+                parts.push(tr('deploy_egress_unapproved', 'no longer approved on the server, so closed'));
+            }
+            if (egress.setBy) parts.push(egress.setBy);
+            if (egress.setAt) parts.push(ago(egress.setAt));
+            current.textContent = parts.join(' · ');
+        }
+
+        function errorText(code) {
+            var known = EGRESS_ERRORS[code];
+            return known ? tr(known[0], known[1])
+                : tr('deploy_env_failed', 'Aegis refused that. The backend log has the detail.');
+        }
+
+        function appliedText(code) {
+            var known = EGRESS_APPLIED[code] || EGRESS_APPLIED.next_start;
+            return tr(known[0], known[1]);
+        }
+
+        function send(method, body, btn) {
+            btn.disabled = true;
+            command.hidden = true;
+            say(tr('deploy_auth_working', 'Saving.'));
+            var init = { method: method };
+            if (body) {
+                init.headers = { 'Content-Type': 'application/json' };
+                init.body = JSON.stringify(body);
+            }
+            window.api('/api/deploy/projects/' + encodeURIComponent(project.id) + '/egress', init)
+                .then(function (r) { return readJson(r, 'egress'); })
+                .then(function (data) {
+                    btn.disabled = !isAdmin;
+                    if (data && data.success) {
+                        project.egress = data.egress;
+                        paint(data.egress);
+                        say(appliedText(data.applied));
+                        return;
+                    }
+                    if (data && data.error === 'egress_not_approved') {
+                        say(tr('deploy_egress_err_unapproved',
+                            'The Aegis server has not approved this address. An administrator of that machine runs the line below in PowerShell, then clicks Open again.'));
+                        command.textContent = data.approveCommand || '';
+                        command.hidden = !data.approveCommand;
+                        return;
+                    }
+                    say(errorText(data && data.error));
+                })
+                .catch(function (e) {
+                    btn.disabled = !isAdmin;
+                    say(tr('deploy_auth_unreachable',
+                        'Aegis did not answer. Check the backend is running, then reload this page.'));
+                    console.error('[Deploy] egress ' + method + ' failed:', e);
+                });
+        }
+
+        open.addEventListener('click', function () {
+            send('POST', { host: hostIn.value.trim(), port: Number(portIn.value) }, open);
+        });
+        close.addEventListener('click', function () {
+            var question = tr('deploy_egress_close_confirm',
+                'Close the access to $1? The site restarts without it.')
+                .replace('$1', project.egress ? project.egress.host + ':' + project.egress.port : '');
+            if (!window.confirm(question)) return;
+            send('DELETE', null, close);
+        });
+        [hostIn, portIn].forEach(function (field) {
+            field.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' && isAdmin) open.click();
+            });
+        });
+
+        paint(project.egress || null);
         return block;
     }
 

@@ -15,9 +15,15 @@
  * whose whole job is handing back secrets, and replacing a value someone forgot
  * costs one paste.
  *
- * `target` is `all`, `production` or `preview`. Previews do not exist yet
- * (tranche 3 of docs/plans/0002-deploy-vercel-parity.md); the field is here now
- * so they arrive without a migration of every stored record.
+ * `target` is `all`, `production`, `preview` or `runtime`.
+ *
+ * `runtime` is a value only the live site's process reads: never the install,
+ * never the build, never a preview. The install and the build run code the
+ * branch chose, `pip install` included, so a package compromised upstream
+ * reads every variable they are handed. A credential to a system outside the
+ * sandbox (an internal database, an API key) belongs to the process that serves, and
+ * this target is the one place it is given. `forBuild` leaves it out because
+ * its scope is neither `all` nor the build's target; `forProcess` adds it.
  */
 
 'use strict';
@@ -42,7 +48,7 @@ const RESERVED = new Set(['PATH', 'COMSPEC', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TM
 
 const RESERVED_PREFIX = 'AEGIS_';
 
-const TARGETS = new Set(['all', 'production', 'preview']);
+const TARGETS = new Set(['all', 'production', 'preview', 'runtime']);
 
 /**
  * Caps. The whole set is passed to a child process as one environment block,
@@ -70,7 +76,7 @@ function assertKey(key) {
 
 function normaliseTarget(target) {
     const value = String(target || 'all').toLowerCase();
-    if (!TARGETS.has(value)) throw refuse('bad_env_target', `${target} is not one of all, production, preview`);
+    if (!TARGETS.has(value)) throw refuse('bad_env_target', `${target} is not one of all, production, preview, runtime`);
     return value;
 }
 
@@ -161,4 +167,30 @@ function forBuild(project, { target = 'production', sha = '', branch = '' } = {}
     return out;
 }
 
-module.exports = { setMany, remove, list, forBuild, MAX_KEYS, MAX_VALUE_LENGTH, KEY_RE };
+/**
+ * The variables the site's process gets: the build's, plus the `runtime` ones
+ * when this is the live site.
+ *
+ * A preview's process gets the build's set and nothing more: a branch nobody
+ * reviewed is not handed the credentials the live site runs on. A `runtime`
+ * value wins over an `all` or `production` one of the same name, which cannot
+ * happen today because a key is stored once, and costs nothing to make sure of.
+ */
+function forProcess(project, options) {
+    const opts = options || {};
+    const out = forBuild(project, opts);
+    if ((opts.target || 'production') !== 'production') return out;
+
+    for (const entry of currentEnv(project)) {
+        if (entry.target !== 'runtime') continue;
+        const value = machineStore.decrypt(entry.valueEnc);
+        if (value === null) {
+            console.warn(`[Deploy] ${entry.key} could not be decrypted and was left out of the process`);
+            continue;
+        }
+        out[entry.key] = value;
+    }
+    return out;
+}
+
+module.exports = { setMany, remove, list, forBuild, forProcess, MAX_KEYS, MAX_VALUE_LENGTH, KEY_RE };

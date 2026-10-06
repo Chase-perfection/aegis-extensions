@@ -27,6 +27,7 @@ const migrations = require('./migrations');
 const pgMigrations = require('./pgMigrations');
 const projectStorage = require('./projectStorage');
 const storageNetwork = require('./storageNetwork');
+const projectEgress = require('./projectEgress');
 
 /** `<tenant>/<project>` while a deployment is in flight. */
 const inFlight = new Set();
@@ -73,7 +74,16 @@ function runtimeExtras(project) {
     const saved = onPostgres ? projectStorage.targetOf(project) : null;
     // Read again at every start. An administrator who takes an address off
     // the approved list means the path closed, and the next start closes it.
-    const target = saved && projectStorage.isApproved(saved.host, saved.port) ? saved : null;
+    const database = saved && projectStorage.isApproved(saved.host, saved.port) ? saved : null;
+    // The one internal address an administrator opened for this project
+    // (`projectEgress.js`), approved on the host like the database is. One
+    // target per account: a record holding both keeps the database, which the
+    // process cannot boot without, and says so.
+    const egress = projectEgress.targetFor(project);
+    if (database && egress) {
+        console.warn(`[Deploy] ${project.id}: network access to ${egress.host}:${egress.port} is not applied, the project is on a database`);
+    }
+    const target = database || egress;
     return {
         env: projectStorage.runtimeEnv(project),
         prepare: (account) => storageNetwork.ensureFor(account, target)
@@ -521,7 +531,7 @@ async function deployNow({ app, slug, tenantPaths, project, trigger, actor, run,
                     // The storage address last, so a variable of the same name
                     // typed in the Variables tab cannot point a switched
                     // project at another database than the one that was checked.
-                    env: Object.assign(projectEnv.forBuild(
+                    env: Object.assign(projectEnv.forProcess(
                         project.parentId
                             ? (projectStore.getProject(tenantPaths, project.parentId) || project)
                             : project,
@@ -683,7 +693,7 @@ async function promoteNow({ slug, tenantPaths, project, sha, actor }) {
                 dir: found.dir,
                 dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
                 startCmd: project.startCmd || '',
-                env: Object.assign(projectEnv.forBuild(project, {
+                env: Object.assign(projectEnv.forProcess(project, {
                     target: 'production', sha: found.sha, branch: project.branch
                 }), extras.env),
                 prepare: extras.prepare
@@ -778,7 +788,7 @@ function startCurrent({ slug, tenantPaths, project }) {
         dir: cloner.resolveCurrent(projectStore.currentDir(tenantPaths, project.id)),
         dataDir: projectStore.ensureDataDir(tenantPaths, project.id),
         startCmd: project.startCmd || '',
-        env: Object.assign(projectEnv.forBuild(project, {
+        env: Object.assign(projectEnv.forProcess(project, {
             target: 'production', sha: project.lastSha, branch: project.branch
         }), extras.env),
         prepare: extras.prepare

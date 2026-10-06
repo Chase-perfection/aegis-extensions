@@ -161,19 +161,26 @@ function getProject(tenantPaths, id) {
  *
  * So the row on disk keeps its `storage` unless the caller says it owns it,
  * with `{ storage: true }`. Only the storage routes and the switch do.
+ *
+ * `egress`, the one internal address the process may reach
+ * (`projectEgress.js`), is held the same way and for a stronger reason: a
+ * record built from a request or a manifest must not open the network. Only
+ * the egress routes pass `{ egress: true }`. A new record never carries one.
  */
+const OWNED_FIELDS = ['storage', 'egress'];
+
 function saveProject(tenantPaths, project, options) {
     if (!PROJECT_ID_RE.test(project.id || '')) throw new Error(`invalid project id: ${project.id}`);
     const all = readAll(tenantPaths);
+    const before = all.find((p) => p.id === project.id);
     let row = project;
-    if (!(options && options.storage)) {
-        const before = all.find((p) => p.id === project.id);
-        const kept = before ? before.storage : project.storage;
-        if (kept !== project.storage) {
-            row = Object.assign({}, project);
-            if (kept === undefined) delete row.storage;
-            else row.storage = kept;
-        }
+    for (const field of OWNED_FIELDS) {
+        if (options && options[field]) continue;
+        const kept = before ? before[field] : (field === 'egress' ? undefined : project[field]);
+        if (kept === row[field]) continue;
+        if (row === project) row = Object.assign({}, project);
+        if (kept === undefined) delete row[field];
+        else row[field] = kept;
     }
     const projects = all.filter((p) => p.id !== project.id);
     projects.push(row);
