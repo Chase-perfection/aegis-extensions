@@ -19,11 +19,14 @@
  * so a branch nobody reviewed cannot be handed the live rows by a forgotten
  * condition somewhere else.
  *
- * A database address is approved on the host, never from a browser. The list
- * is a text file beside `machine.key`, in a folder only administrators and the
- * service can write, and no route in this extension writes it. Reaching a
- * machine on the internal network is the one thing the sandbox accounts are
- * denied, so widening that is a decision somebody takes on the server.
+ * An address on the internal network is approved before anything reaches it.
+ * The list is a text file beside `machine.key`, in a folder only administrators
+ * and the service can write. A database address is still added there by hand,
+ * on the host. The one opening a project may hold besides its database
+ * (`projectEgress.js`) is approved by the tenant administrator who opens it,
+ * from the page, after a confirmation: `approve` writes the line and who asked
+ * for it. Asking that administrator to run a command on the server stopped
+ * people who had every right to decide and no session on the machine.
  */
 
 'use strict';
@@ -273,9 +276,32 @@ function approveCommand(host, port) {
     return `Add-Content -Path '${targetsFile()}' -Value '${host}:${port}'`;
 }
 
+/**
+ * Adds `host:port` to the approved list, with who asked and when.
+ *
+ * Appends, never rewrites: the lines an administrator typed on the host stay as
+ * they are. The comment is the audit trail that survives the log's rotation.
+ * `by` is reduced to what cannot break the line or start a second one.
+ * Throws when the file cannot be written; the caller then falls back to the
+ * command, which is the one thing still possible on such a host.
+ */
+function approve(host, port, by) {
+    if (isApproved(host, port)) return false;
+    const who = String(by || 'unknown').replace(/[^A-Za-z0-9@._/() -]/g, '').slice(0, 160) || 'unknown';
+    const file = targetsFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    let lead = '';
+    try {
+        const text = fs.readFileSync(file, 'utf8');
+        if (text && !/\n$/.test(text)) lead = '\n';
+    } catch (_) { lead = ''; }
+    fs.appendFileSync(file, `${lead}${host}:${port}  # approved from Aegis by ${who}, ${new Date().toISOString()}\n`);
+    return true;
+}
+
 module.exports = {
     normalise, mode, targetOf, passwordOf, publicView, withTarget, withMode,
     databaseUrl, runtimeEnv, filledKey, canReplace,
-    targetsFile, approvedTargets, isApproved, approveCommand,
+    targetsFile, approvedTargets, isApproved, approveCommand, approve,
     KINDS, HOST_RE, NAME_RE
 };

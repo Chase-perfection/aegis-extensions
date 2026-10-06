@@ -4539,15 +4539,16 @@
      * what the site is allowed to do. The Variables tab points here, since the
      * password for that server is typed there.
      *
-     * An address the host has not approved is refused by the backend with the
-     * one line to run on the server, and this panel shows that line as is: the
-     * approval is a decision taken on the machine, never from this page.
+     * An address this server has never opened is refused once by the backend.
+     * The panel then asks the administrator to confirm, and sends the request
+     * again with the approval: nobody is sent to run a command on the server.
+     * The command is shown only when Aegis could not record the approval.
      */
     function egressSection(project) {
         var block = el('div', 'dep-egress');
         block.appendChild(el('h2', 'dep-subtitle', tr('deploy_egress_title', 'Internal network access')));
         block.appendChild(el('p', 'dep-hint', tr('deploy_egress_body',
-            'The site runs under an account that cannot reach the internal network. Open one server here, by address and port, when the site needs it: a business database, an internal API. Only that port of that machine opens, for the live site only. The address has to be approved on the Aegis server first.')));
+            'The site runs under an account that cannot reach the internal network. Open one server here, by address and port, when the site needs it: a business database, an internal API. Only that port of that machine opens, for the live site only. An address opened for the first time asks you to confirm.')));
 
         var current = el('p', 'dep-listrow-sub', '');
         block.appendChild(current);
@@ -4642,9 +4643,20 @@
                         say(appliedText(data.applied));
                         return;
                     }
-                    if (data && data.error === 'egress_not_approved') {
-                        say(tr('deploy_egress_err_unapproved',
-                            'The Aegis server has not approved this address. An administrator of that machine runs the line below in PowerShell, then clicks Open again.'));
+                    if (data && data.error === 'egress_not_approved' && body && !body.approve) {
+                        var question = tr('deploy_egress_approve_confirm',
+                            'No site on this server has reached $1 before. Approve this address and open it for this site? Your name is recorded with the approval.')
+                            .replace('$1', body.host + ':' + body.port);
+                        if (!window.confirm(question)) {
+                            say(tr('deploy_egress_approve_declined', 'Nothing was opened.'));
+                            return;
+                        }
+                        send(method, { host: body.host, port: body.port, approve: true }, btn);
+                        return;
+                    }
+                    if (data && data.error === 'egress_approval_failed') {
+                        say(tr('deploy_egress_err_approval',
+                            'Aegis could not record the approval on this server. An administrator of that machine runs the line below in PowerShell, then clicks Open again.'));
                         command.textContent = data.approveCommand || '';
                         command.hidden = !data.approveCommand;
                         return;

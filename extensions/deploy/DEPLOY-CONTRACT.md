@@ -1546,7 +1546,9 @@ or a start command that needs no data.
 
 A deployed site is denied the networks the directory lives on. A database on one
 of them is reachable only at an address an administrator approved on the Aegis
-server itself. No page and no route can add one.
+server itself. No page and no route can add a database address. The one
+exception is the single server a project opens under "Internal network access"
+(below): the tenant administrator who opens it approves it from the page.
 
 The list is a text file beside the machine key, one `host:port` per line, `#`
 for a comment:
@@ -1689,11 +1691,19 @@ Three rules hold it:
 - **An IPv4 address and a port.** Not a host name, which resolves to whatever
   DNS says on the day; not a list. `0.0.0.0`, `255.255.255.255` and `127.x` are
   refused.
-- **Approved on the host first**, in the same `database-targets.txt` as a
-  database (see "Approving an address, on the host"). An address that is not on
-  the list is refused with the `Add-Content` line to run on the server. The list
-  is read again at every process start: take the line off and the next start
-  closes the path.
+- **Approved by the administrator who opens it**, in the same
+  `database-targets.txt` as a database. An address no site on the server has
+  reached before asks that administrator to confirm, then Aegis adds the line
+  itself, with who approved it, for which project, and when. Nobody has to run a
+  command on the server. The `Add-Content` line is shown only when Aegis cannot
+  write the file. The list is read again at every process start: take the line
+  off on the server and the next start closes the path.
+
+  This is a deliberate trade. Until 0.2.10 the approval took a second person, or
+  at least a session on the machine: a tenant administrator alone could not make
+  a site reach the internal network. Now one administrator account is enough.
+  What still holds the opening narrow is everything else on this page: one
+  address, one port, TCP only, the live site only, never the repository.
 - **Set by a tenant administrator, never by the repository.** `aegis.deploy.json`
   has no key for it, and every save of a project record other than these routes
   keeps the field as the disk has it.

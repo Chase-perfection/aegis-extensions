@@ -2,6 +2,20 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## Unreleased
+
+**Opening a server on the internal network no longer sends anyone to the Aegis
+server.** In Settings, section Internal network access, an address that no site
+on the server had reached before was refused with a PowerShell line for an
+administrator of the machine to run. The administrator setting up the site is
+now asked to confirm, and Aegis records the approval itself in
+`database-targets.txt`, with their name, the project and the date. The line to
+run is shown only if Aegis cannot write that file.
+
+One administrator account is now enough to let a site reach one port of one
+internal machine; before, it also took a session on the server. A database
+address (Storage) is still approved on the host.
+
 ## 0.2.10
 
 **A site can reach one server on the internal network.** A project's process

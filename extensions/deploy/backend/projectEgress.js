@@ -19,8 +19,10 @@
  *     `projectStore.saveProject` keeps the field as the disk has it unless the
  *     caller owns it, so no other write can set or clear it either.
  *   - Effective only while `host:port` is in the host's approved list
- *     (`projectStorage.isApproved`), which no route writes. Read again at every
- *     process start: an address taken off the list closes at the next start.
+ *     (`projectStorage.isApproved`). The administrator who opens an address
+ *     that is not on it approves it in the same gesture, after a confirmation,
+ *     and the list records who did. Read again at every process start: an
+ *     address taken off the list closes at the next start.
  *
  * A preview never gets it, for the reason `projectStorage.runtimeEnv` gives.
  *
