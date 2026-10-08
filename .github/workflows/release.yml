@@ -300,7 +300,8 @@ jobs:
           AT=$(gh release view "$TAG" --json publishedAt -q .publishedAt)
           node - "$ID" "$VERSION" "$RUNNER_TEMP/$ID-$VERSION.manifest.json" "$AT" <<'JS'
           const fs = require('fs');
-          const [id, version, manifestPath, at] = process.argv.slice(1);
+          // `node -` keeps the `-` as argv[1]: the arguments start at 2.
+          const [id, version, manifestPath, at] = process.argv.slice(2);
           const p = `extensions/${id}/store.json`;
           const store = JSON.parse(fs.readFileSync(p, 'utf8'));
           const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
