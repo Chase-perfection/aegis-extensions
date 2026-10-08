@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## 0.3.0
+## 0.2.13
 
 **A push no longer cuts the people using the site.** For a project served by a
 process, the version that was serving keeps the visitors already on it, and
