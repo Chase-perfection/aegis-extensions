@@ -1259,10 +1259,15 @@ async function waitRefused(port) {
     return last;
 }
 
-/** A tenant, a project record with a port, and one file under `current`. */
+/**
+ * A tenant, a project record with a port, and one file under `current`.
+ *
+ * The notices script is off: these tests compare the page byte for byte to
+ * say which listener answered, and deployNotices.test.js covers the script.
+ */
 function siteFixture(slug, projectId, extra, contents) {
     const tenantPaths = newTenant();
-    const project = Object.assign({ id: projectId, name: projectId }, extra);
+    const project = Object.assign({ id: projectId, name: projectId, notices: { inject: false } }, extra);
     projectStore.saveProject(tenantPaths, project);
     siteAuth.invalidate(slug, projectId);
 

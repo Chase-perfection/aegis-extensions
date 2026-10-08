@@ -37,6 +37,7 @@ const fs = require('fs');
 const path = require('path');
 
 const projectStore = require('./projectStore');
+const siteNotices = require('./siteNotices');
 
 const CONFIG_FILE = 'vercel.json';
 
@@ -244,17 +245,25 @@ function configFor(root) {
     return config;
 }
 
-/** The project's own switches, read from the record. Today: the fallback. */
+/**
+ * The project's own switches, read from the record: the fallback, the notices
+ * its visitors see, and the commit a static site is serving, which is the
+ * version its notices compare a page against.
+ */
 function settingsFor(slug, tenantPaths, projectId) {
     const k = `${slug}/${projectId}`;
     const hit = settingsCache.get(k);
     if (hit && (Date.now() - hit.at) < CACHE_MS) return hit.settings;
 
-    let settings = { spaFallback: false };
+    let settings = { spaFallback: false, notices: siteNotices.defaults(), lastSha: null };
     try {
         const project = projectStore.getProject(tenantPaths, projectId);
-        settings = { spaFallback: !!(project && project.spaFallback) };
-    } catch (_) { /* unreadable record: the default is off */ }
+        settings = {
+            spaFallback: !!(project && project.spaFallback),
+            notices: siteNotices.configOf(project),
+            lastSha: (project && project.lastSha) || null
+        };
+    } catch (_) { /* unreadable record: the defaults */ }
     settingsCache.set(k, { at: Date.now(), settings });
     return settings;
 }

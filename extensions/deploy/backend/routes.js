@@ -58,6 +58,7 @@ const ldap = require('./ldap');
 const siteAuth = require('./siteAuth');
 const firewall = require('./firewall');
 const siteConfig = require('./siteConfig');
+const siteNotices = require('./siteNotices');
 const accessPolicy = require('./accessPolicy');
 const previews = require('./previews');
 const runtime = require('./runtime');
@@ -1147,6 +1148,13 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         tls: tlsView(p),
         envCount: projectEnv.list(p).length,
         spaFallback: !!p.spaFallback,
+        // What the site says to its visitors. Always the full list, the two
+        // built-in notices included, so the Settings tab has something to
+        // show on a project that never saved one.
+        notices: siteNotices.configOf(p),
+        // The sentence an empty field falls back to, per language, so the tab
+        // can show it as the field's placeholder.
+        noticeDefaults: siteNotices.DEFAULT_TEXT,
         hostname: p.hostname || null,
         hostUrl: siteHostUrl(p),
         // So the page can say why a host name it saved is not a link yet.
@@ -1166,6 +1174,12 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // A process that is not running leaves the port answering 503, which is
         // a different state from a site that never deployed.
         running: p.runtime === 'node' ? runtime.isRunning(req.tenant.slug, p.id) : null,
+        // The version still serving the visitors who were on it when the last
+        // one was deployed, or null. While it is here a new commit waits as
+        // `pendingSha`, and the card says so.
+        draining: p.runtime === 'node' ? runtime.versions(req.tenant.slug, p.id).draining : null,
+        pendingSha: p.pendingSha || null,
+        pendingAt: p.pendingAt || null,
         // Set on a preview, null on a project. The page groups by it.
         parentId: p.parentId || null,
         // Whether a thumbnail has been captured for what is currently on the
@@ -1583,15 +1597,21 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 project,
                 trigger: 'manual',
                 actor: req.user.email,
-                run
+                run,
+                // "Deploy now": the version still serving its visitors is
+                // stopped and they move to this one. Without it a project
+                // with a draining version queues the deployment.
+                force: (req.body || {}).force === true
             });
             if (!result.deployed) {
-                // Already deploying. Not an error: the operator clicked twice, or
-                // the poller got there first. The run this request opened never
-                // ran anything, so it is dropped rather than left on the
-                // Deployments list as a deployment that did nothing.
-                runs.finish(run, 'failed', 'busy');
-                return res.status(409).json({ success: false, error: 'busy' });
+                // Already deploying, or waiting for the previous version to
+                // finish serving its visitors. Not an error either way: the run
+                // this request opened never ran anything, so it is dropped
+                // rather than left on the Deployments list as a deployment that
+                // did nothing.
+                const reason = result.reason || 'busy';
+                runs.finish(run, 'failed', reason);
+                return res.status(409).json({ success: false, error: reason });
             }
             const stored = projectStore.getProject(req.tenantPaths, req.params.id);
             startSiteFor({ slug: req.tenant.slug, tenantPaths: req.tenantPaths, project: stored });
@@ -1733,8 +1753,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 // The branch is saved either way: the poller will pick it up on
                 // its next tick, so the operator is not left with a record that
                 // says one thing and a port that serves another indefinitely.
-                runs.finish(run, 'failed', 'busy');
-                return res.status(409).json({ success: false, error: 'busy', branch });
+                runs.finish(run, 'failed', result.reason || 'busy');
+                return res.status(409).json({ success: false, error: result.reason || 'busy', branch });
             }
             const stored = projectStore.getProject(req.tenantPaths, moved.id);
             startSiteFor({ slug: req.tenant.slug, tenantPaths: req.tenantPaths, project: stored });
@@ -1960,7 +1980,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
     });
 
     /**
-     * The project's own serving switches. One so far: the single-page fallback.
+     * The project's own serving switches: the single-page fallback, the host
+     * name, and the notices its visitors see (siteNotices.js).
      *
      * A repository can ask for the same thing with a rewrite in `vercel.json`,
      * and a project that has one does not need this. It exists because the
@@ -1982,7 +2003,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         const body = req.body || {};
         const wantsFallback = body.spaFallback !== undefined;
         const wantsHostname = body.hostname !== undefined;
-        if (!wantsFallback && !wantsHostname) {
+        const wantsNotices = body.notices !== undefined;
+        if (!wantsFallback && !wantsHostname && !wantsNotices) {
             return res.status(400).json({ success: false, error: 'no_settings' });
         }
 
@@ -1990,6 +2012,17 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // expect must not quietly resolve to one of the two answers.
         if (wantsFallback && typeof body.spaFallback !== 'boolean') {
             return res.status(400).json({ success: false, error: 'bad_spa_fallback' });
+        }
+
+        // The whole list, checked before anything is written: a notice the
+        // route refuses must not leave the others half saved.
+        let notices;
+        if (wantsNotices) {
+            try {
+                notices = siteNotices.normalize(body.notices);
+            } catch (e) {
+                return res.status(400).json({ success: false, error: e.code || 'bad_notices', detail: e.message });
+            }
         }
 
         let hostname;
@@ -2017,6 +2050,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // know about.
         if (wantsFallback) project.spaFallback = body.spaFallback;
         if (wantsHostname) project.hostname = hostname || null;
+        if (wantsNotices) project.notices = notices;
 
         let stored;
         try {
@@ -2030,10 +2064,12 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // The router answers from a five-second index; a saved name should be
         // live by the time the operator has finished reading the note.
         invalidateHostIndex();
-        console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} settings saved (fallback ${stored.spaFallback ? 'on' : 'off'}, host ${stored.hostname || 'none'}) by ${req.user.email}`);
+        const savedNotices = siteNotices.configOf(stored);
+        console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} settings saved (fallback ${stored.spaFallback ? 'on' : 'off'}, host ${stored.hostname || 'none'}, notices ${savedNotices.items.filter((n) => n.enabled).length} on${savedNotices.inject ? '' : ', not added to pages'}) by ${req.user.email}`);
         return res.json({
             success: true,
             spaFallback: !!stored.spaFallback,
+            notices: savedNotices,
             hostname: stored.hostname || null,
             hostUrl: siteHostUrl(stored),
             routerPort: routerPort()

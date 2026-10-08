@@ -626,6 +626,90 @@ A project keeps the five versions it published before the one on the port, a
 folder per commit under `releases/`. `current/` is the site; a release is a
 version waiting to be put back.
 
+### Two versions side by side
+
+A push does not cut the people using a site served by a process. The version
+that was serving keeps the visitors already on it, and the new one gets everyone
+who arrives:
+
+- the proxy sets `aegis_release=<sha>` (`HttpOnly; SameSite=Lax`, session) on
+  each visitor, naming the commit that served them, and routes them back to it
+  while it runs;
+- the outgoing version stops after `AEGIS_DRAIN_IDLE_MS` (30 minutes) without a
+  request from its visitors, or `AEGIS_DRAIN_MAX_MS` (8 hours) after the push.
+  A request with `X-Aegis-Background: 1` does not count as activity;
+- every proxied response carries `X-Aegis-Release: <sha>`, set by the proxy and
+  never by the application;
+- `GET /__aegis/release` answers `{ "served": "<sha>", "latest": "<sha>" }`, and
+  `GET /__aegis/release/switch?next=/path` moves the visitor to the newest
+  version and redirects to `next` on the same site. Both require a signed-in
+  visitor on a protected site, and answer 404 for a static one;
+- two versions at most. A commit pushed while one drains waits (`pendingSha`
+  on the project, shown on the card), a newer one replaces it, and the head of
+  the branch deploys once the old version stops. `POST
+  /api/deploy/projects/:id/redeploy` with `{ "force": true }` stops the draining
+  version and deploys now; without it, it answers 409 `queued`. A rollback or a
+  promote never waits.
+
+Both versions read the same `AEGIS_DATA_DIR` for up to the idle and hard limits
+above, so an application that changes its schema must keep it readable by the
+version before: add tables and columns, never drop or rename one in the same
+release. And anything it runs on a timer runs in both, unless it elects one.
+
+### Notices to visitors
+
+A site tells its visitors about a new version without any code of its own. The
+proxy adds one tag to every HTML page a browser navigates to, static or served
+by a process:
+
+```html
+<script src="/__aegis/notices.js" data-release="<sha>" defer></script>
+```
+
+before `</head>` (else before `</body>`, else at the end). Only a `GET` with
+`Sec-Fetch-Dest: document` or `iframe`, or an `Accept` naming `text/html`, and
+only a `200` whose `Content-Type` is HTML and which is not an attachment. To
+read the page, the proxy asks the application for it uncompressed and without
+`If-None-Match` / `If-Modified-Since`, decodes `gzip`, `deflate` or `br` when
+the application compresses anyway, and drops `ETag` and `Last-Modified` from the
+answer. A page over 4 MB, or in another encoding, is passed on as it is. A page
+that already references `/__aegis/notices.js` is left alone, so a site may load
+the script itself and untick the injection.
+
+The script asks `GET /__aegis/notices` every two minutes while the tab is
+visible, with `X-Aegis-Background: 1`. The answer is never the application's
+and never counts as activity:
+
+```json
+{ "served": "<sha>", "latest": "<sha>",
+  "notices": [{ "id": "older-version", "trigger": "older-version", "tone": "warning",
+                "title": "...", "body": "...", "action": "..." }] }
+```
+
+`served` is the version this visitor reaches and `latest` the one new visitors
+get; a static site answers its last published commit for both. The script then
+shows, in a shadow root and with `textContent` only:
+
+| Trigger | When | Button |
+|---|---|---|
+| `older-version` | `served` differs from `latest`: the visitor is on an outgoing version | moves to `/__aegis/release/switch` |
+| `page-outdated` | the page's `data-release` differs from `served`: its version no longer answers | reloads |
+| `always` | always, until the visitor closes it | none |
+
+The list is the project's (`notices` on the record, Settings tab, `POST
+/api/deploy/projects/:id/settings` with `{ "notices": { "inject": true,
+"items": [...] } }`). The two built-in notices are always in it, on by default,
+and can be switched off or reworded, never removed. An empty title, text or
+button uses the built-in sentence in the visitor's `Accept-Language` (English
+or French). In a text, `{idle}` is `AEGIS_DRAIN_IDLE_MS` in minutes and
+`{remaining}` the minutes before the outgoing version stops if nobody uses it.
+At most 12 notices; 120 characters for a title, 600 for a text, 40 for a
+button. On a protected site `/__aegis/notices` needs a signed-in visitor; the
+script itself is public, it holds no text.
+
+A site whose `Content-Security-Policy` does not allow `script-src 'self'` will
+block the script, and its visitors see no notice.
+
 A project served by a process keeps every version under `releases/`, the one on
 the port included, and `current/` is a junction onto that one. Windows refuses
 to rename a folder a running process works in (`EBUSY`), and the old process is

@@ -27,6 +27,7 @@ const projectStore = require('./projectStore');
 const { deployNow, isDeploying } = require('./deployService');
 const runs = require('./runs');
 const previews = require('./previews');
+const runtime = require('./runtime');
 
 const DEFAULT_INTERVAL_MS = 20000;
 
@@ -77,7 +78,24 @@ function shouldPoll(project, slug, currentTick) {
  * nothing moved, the head matches what is already published, or there is a new
  * commit to deploy.
  */
-function decide(project, head) {
+function decide(project, head, opts) {
+    const draining = !!(opts && opts.draining);
+    const verdict = decideHead(project, head);
+    // Two versions at most: while the previous one still serves its visitors,
+    // a new commit waits instead of deploying. One place in the queue, always
+    // the newest commit, so a fourth push replaces a third that was waiting.
+    if (verdict.action === 'deploy' && draining) return { action: 'queue', sha: verdict.sha };
+    // The version that held the place has stopped, and a commit was waiting.
+    // GitHub has nothing new to say about it (the ETag already moved past it),
+    // so the record is what remembers it.
+    if (verdict.action === 'none' && !draining && project.pendingSha &&
+        verdict.reason !== 'sha_failed') {
+        return { action: 'deploy', sha: project.pendingSha };
+    }
+    return verdict;
+}
+
+function decideHead(project, head) {
     if (!head.moved) return { action: 'none', reason: 'not_modified' };
     if (!head.sha) return { action: 'none', reason: 'no_head' };
     // Against the last commit seen on the branch, not against the one on the
@@ -115,7 +133,9 @@ async function pollProject(app, slug, tenantPaths, project) {
         return;
     }
 
-    const verdict = decide(project, head);
+    const verdict = decide(project, head, {
+        draining: project.runtime === 'node' && runtime.isDraining(slug, project.id)
+    });
 
     // The ETag is worth storing even when nothing moved: it is what makes the
     // next tick free.
@@ -124,6 +144,15 @@ async function pollProject(app, slug, tenantPaths, project) {
         project = Object.assign({}, project, { pollEtag: head.etag });
     }
 
+    if (verdict.action === 'queue') {
+        if (verdict.sha !== project.pendingSha) {
+            projectStore.saveProject(tenantPaths, Object.assign({}, project, {
+                pendingSha: verdict.sha, pendingAt: Date.now()
+            }));
+            console.log(`[Deploy] ${slug}: ${project.id} ${verdict.sha.slice(0, 8)} waits, the previous version still serves its visitors`);
+        }
+        return;
+    }
     if (verdict.action !== 'deploy') return;
 
     console.log(`[Deploy] ${slug}: ${project.id} ${project.branch} moved to ${verdict.sha.slice(0, 8)}`);
