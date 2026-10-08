@@ -153,8 +153,18 @@ so a green release run says nothing about whether the extension's pages still
 render. Run those locally with `AEGIS_TREE` set before you tag. See
 [README.md](README.md), "The six that need Aegis on disk".
 
-`workflow_dispatch` takes the same tag as an input, for re-running a build whose
-workflow failed after the tag was pushed. It builds from the tag, not from `main`.
+`workflow_dispatch` takes the same tag as an input, with a `step`:
+
+- `build` re-runs a build whose workflow failed after the tag was pushed. It builds
+  from the tag, not from `main`;
+- `catalogue` points the catalogue at a release already published, after checking
+  its signature. Needed when publishing did not move the catalogue: GitHub runs the
+  `release` event with the workflow file of the tagged commit, so a tag on a commit
+  older than that trigger publishes without firing it.
+
+```bash
+gh workflow run release.yml -f tag=deploy-v1.0.0 -f step=catalogue
+```
 
 ## 3. What the workflow does with it
 
@@ -211,7 +221,8 @@ cannot disagree about who owns the file.
 | Refuse a tag the manifest does not agree with | The tag is on a commit whose `extension.json` says another version, usually a tag pushed before the pull request was merged. Delete the tag, tag the merge commit |
 | Cut a draft release | A release for that tag already exists. Delete it before re-running |
 | `publish-release.mjs` | It names what it refused: no `$AEGIS_AGENT_SIGNING_KEY`, a draft missing an asset, a manifest that does not match its zip, or a key that is not the trusted one. Nothing is uploaded on a refusal |
-| Refuse a release whose signature installs would reject | The published signature does not verify. Unpublish the release (back to draft) and run `publish-release.mjs` again |
+| Refuse a release whose signature installs would reject | The published signature does not verify, or the release is still a draft. Unpublish the release (back to draft) and run `publish-release.mjs` again |
+| No run after publishing | The tag is on a commit whose `release.yml` predates the `release` trigger. Run the `catalogue` step by hand, above |
 | Rebuild and validate the catalogue | The validator disagrees with the generated `index.json`. Its output names the field |
 | Commit the catalogue | Branch protection on `main` refuses a push from Actions. Either allow it, or apply the same three commands locally: `build-index.mjs`, `validate-catalog.mjs`, commit |
 
