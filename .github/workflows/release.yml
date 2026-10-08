@@ -30,21 +30,29 @@ on:
     tags:
       - '*-v*'
   # Published by scripts/publish-release.mjs, under the maintainer's own token.
-  # A release published with this workflow's token would not fire it.
+  # A release published with this workflow's token would not fire it. GitHub
+  # runs the workflow file of the TAGGED commit for this event, so a tag made
+  # before this trigger existed publishes without moving the catalogue: re-run
+  # with `step: catalogue` below.
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'The tag to publish, <id>-v<semver>'
+        description: 'The tag, <id>-v<semver>'
         required: true
+      step:
+        description: 'build: re-run the draft build. catalogue: point the catalogue at the published release'
+        type: choice
+        options: [build, catalogue]
+        default: build
 
 permissions:
   contents: write
 
 jobs:
   publish:
-    if: github.event_name != 'release'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.step != 'catalogue')
     runs-on: ubuntu-latest
     steps:
       # The tag itself, also when re-run by hand: a dispatch runs on main, and
@@ -228,7 +236,7 @@ jobs:
   # catalogue is a file on a branch, and a commit made from a detached tag
   # checkout would land nowhere.
   catalogue:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.step == 'catalogue')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -242,7 +250,7 @@ jobs:
       - name: Read the tag
         id: tag
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
           ID="${TAG%-v*}"
@@ -267,6 +275,12 @@ jobs:
           ID='${{ steps.tag.outputs.id }}'
           VERSION='${{ steps.tag.outputs.version }}'
           M="$RUNNER_TEMP/$ID-$VERSION.manifest.json"
+          # A dispatch can name a tag that is still a draft; the catalogue only
+          # ever points at what an install can download.
+          if [ "$(gh release view '${{ steps.tag.outputs.tag }}' --json isDraft -q .isDraft)" = 'true' ]; then
+            echo '${{ steps.tag.outputs.tag }} is still a draft. Publish it with scripts/publish-release.mjs first.'
+            exit 1
+          fi
           gh release download '${{ steps.tag.outputs.tag }}' \
             -p "$ID-$VERSION.manifest.json" -p "$ID-$VERSION.manifest.json.sig" -D "$RUNNER_TEMP"
           base64 -d "$M.sig" > "$RUNNER_TEMP/sig.bin"
