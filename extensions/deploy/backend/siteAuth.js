@@ -66,6 +66,7 @@ const authStore = require('./authStore');
 const authMethods = require('./authMethods');
 const accessPolicy = require('./accessPolicy');
 const siteIcon = require('./siteIcon');
+const siteNotices = require('./siteNotices');
 
 /** Everything under here belongs to the guard and never to the site. */
 const PREFIX = '/__aegis/';
@@ -83,7 +84,10 @@ const WHOAMI_PATH = '/__aegis/whoami';
 const ASSETS = {
     [CSS_PATH]: { file: 'login.css', type: 'text/css; charset=utf-8' },
     [MARK_PATH]: { file: 'aegis-mark.svg', type: 'image/svg+xml' },
-    '/__aegis/nevera.otf': { file: 'Nevera-Regular.otf', type: 'font/otf' }
+    '/__aegis/nevera.otf': { file: 'Nevera-Regular.otf', type: 'font/otf' },
+    // The script the proxy adds to a site's pages. Public on purpose: it holds
+    // no text of its own and asks `/__aegis/notices` what to say.
+    [siteNotices.SCRIPT_PATH]: { file: 'notices.js', type: 'text/javascript; charset=utf-8' }
 };
 
 /*
@@ -97,6 +101,14 @@ const RELEASE_SWITCH_PATH = '/__aegis/release/switch';
 
 function isReleasePath(pathOnly) {
     return pathOnly === RELEASE_PATH || pathOnly === RELEASE_SWITCH_PATH;
+}
+
+/**
+ * The routes siteServer.js answers under the reserved prefix: the release
+ * routes, and what the notices script asks for. Same rule for all of them.
+ */
+function isSitePath(pathOnly) {
+    return isReleasePath(pathOnly) || pathOnly === siteNotices.DATA_PATH;
 }
 
 const SESSION_COOKIE = 'aegis_site';
@@ -855,9 +867,13 @@ function gate(req, res, { slug, tenantPaths, project, root }) {
     const method = methodFor(slug, tenantPaths, projectId);
 
     if (method === authMethods.NONE) {
-        // The release routes are the site server's, and an open site hides
-        // nothing behind them that the site itself does not show.
-        if (isReleasePath(pathOnly)) return false;
+        // The release and notices routes are the site server's, and an open
+        // site hides nothing behind them that the site itself does not show.
+        if (isSitePath(pathOnly)) return false;
+        if (pathOnly === siteNotices.SCRIPT_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
+            serveAsset(req, res, ASSETS[pathOnly]);
+            return true;
+        }
         // The prefix is reserved even here, so that turning protection on later
         // cannot be shadowed by a file the repository already contains.
         if (reserved) { notFound(res); return true; }
@@ -963,10 +979,10 @@ function gate(req, res, { slug, tenantPaths, project, root }) {
         return true;
     }
 
-    // Past the door only: which commits a protected site runs is not for a
-    // visitor who has not signed in. Without a session it is a reserved path
-    // like any other, and answers 404.
-    if (session && isReleasePath(pathOnly)) return false;
+    // Past the door only: which commits a protected site runs, and what it
+    // says to its visitors, is not for somebody who has not signed in. Without
+    // a session it is a reserved path like any other, and answers 404.
+    if (session && isSitePath(pathOnly)) return false;
 
     if (reserved) { notFound(res); return true; }
 
@@ -1274,7 +1290,7 @@ function dropSessions(slug, projectId) {
 module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
     PREFIX, LOGIN_PATH, WHOAMI_PATH, SESSION_COOKIE, LOCK_THRESHOLD, LOCK_MS,
-    RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, safeNext, readCookie,
+    RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, isSitePath, safeNext, readCookie, pickLang,
     // Test seams. Not part of the contract's public surface; nothing outside
     // tests/siteAuth.test.js should reach for them.
     _setVerifier, _setLookup,

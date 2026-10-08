@@ -2353,3 +2353,42 @@ button.dep-listrow {
     letter-spacing: 0;
     color: var(--ag-ink, var(--text-main));
 }
+
+/* Notices to visitors (deploy-notices.js): one bordered block per notice, the
+   same surface and line as a list row, the fields in the settings grid. */
+.dep-notices {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin: var(--space-md) 0;
+    max-width: 60rem;
+}
+
+.dep-notice {
+    padding: var(--space-md);
+    background: var(--dep-surface);
+    border: 1px solid var(--dep-line);
+    border-radius: var(--radius-md);
+}
+
+.dep-notice-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-md);
+}
+
+.dep-notice-head .dep-check {
+    flex: 1 1 12rem;
+    margin-bottom: 0;
+    font-weight: 600;
+}
+
+.dep-notice-tone { width: auto; }
+
+.dep-notice-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+}

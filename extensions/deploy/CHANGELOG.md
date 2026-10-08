@@ -21,6 +21,17 @@ routes need a signed-in visitor. A request carrying `X-Aegis-Background: 1` is
 not counted as activity, so a page polling for a new version does not keep the
 old one alive.
 
+**Visitors are told, with no code in the site.** The proxy adds
+`/__aegis/notices.js` to every HTML page it serves, and the script shows a
+notice in a corner of the page. Two are built in and on for every project: one
+for a visitor still on the previous version, saying it stops after 30 minutes
+without activity, with a button to switch now; one for a page whose version no
+longer answers, with a button to reload. Both can be reworded or switched off
+on the Settings tab, section Notices to visitors, and an operator can add
+messages of their own, shown to every visitor until they close them. An empty
+field keeps the built-in sentence in the visitor's language. The injection can
+be turned off for a site that loads the script itself.
+
 **Two versions at most.** A commit pushed while a previous version still serves
 its visitors waits, shown on the card, and deploys once that version stops. One
 place in the queue: a newer commit replaces the one waiting. **Deploy now**

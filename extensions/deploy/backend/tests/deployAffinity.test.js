@@ -36,7 +36,7 @@ function fakeReq(method, url, headers) {
     req.method = method;
     req.url = url;
     req.headers = Object.assign({}, headers);
-    req.socket = { remoteAddress: '10.0.0.1' };
+    req.socket = { remoteAddress: '192.0.2.10' };
     return req;
 }
 
@@ -144,10 +144,10 @@ test('/__aegis/release says which version this visitor is on and which one is ne
         // Switching moves the cookie to the newest version and goes back to
         // the page, never to another site.
         const sw = await answer((r) => siteServer._serve(
-            fakeReq('GET', '/__aegis/release/switch?next=%2FKPI%2Fdashboard-v2.html',
+            fakeReq('GET', '/__aegis/release/switch?next=%2Freports%2Fdaily.html',
                 { cookie: 'aegis_release=aaaaaaa' }), r, CTX));
         assert.strictEqual(sw.statusCode, 302);
-        assert.strictEqual(sw.headers.Location, '/KPI/dashboard-v2.html');
+        assert.strictEqual(sw.headers.Location, '/reports/daily.html');
         assert.match(sw.headers['Set-Cookie'], /^aegis_release=bbbbbbb;/);
 
         const away = await answer((r) => siteServer._serve(

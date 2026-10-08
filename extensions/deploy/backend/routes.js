@@ -58,6 +58,7 @@ const ldap = require('./ldap');
 const siteAuth = require('./siteAuth');
 const firewall = require('./firewall');
 const siteConfig = require('./siteConfig');
+const siteNotices = require('./siteNotices');
 const accessPolicy = require('./accessPolicy');
 const previews = require('./previews');
 const runtime = require('./runtime');
@@ -1147,6 +1148,13 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         tls: tlsView(p),
         envCount: projectEnv.list(p).length,
         spaFallback: !!p.spaFallback,
+        // What the site says to its visitors. Always the full list, the two
+        // built-in notices included, so the Settings tab has something to
+        // show on a project that never saved one.
+        notices: siteNotices.configOf(p),
+        // The sentence an empty field falls back to, per language, so the tab
+        // can show it as the field's placeholder.
+        noticeDefaults: siteNotices.DEFAULT_TEXT,
         hostname: p.hostname || null,
         hostUrl: siteHostUrl(p),
         // So the page can say why a host name it saved is not a link yet.
@@ -1972,7 +1980,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
     });
 
     /**
-     * The project's own serving switches. One so far: the single-page fallback.
+     * The project's own serving switches: the single-page fallback, the host
+     * name, and the notices its visitors see (siteNotices.js).
      *
      * A repository can ask for the same thing with a rewrite in `vercel.json`,
      * and a project that has one does not need this. It exists because the
@@ -1994,7 +2003,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         const body = req.body || {};
         const wantsFallback = body.spaFallback !== undefined;
         const wantsHostname = body.hostname !== undefined;
-        if (!wantsFallback && !wantsHostname) {
+        const wantsNotices = body.notices !== undefined;
+        if (!wantsFallback && !wantsHostname && !wantsNotices) {
             return res.status(400).json({ success: false, error: 'no_settings' });
         }
 
@@ -2002,6 +2012,17 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // expect must not quietly resolve to one of the two answers.
         if (wantsFallback && typeof body.spaFallback !== 'boolean') {
             return res.status(400).json({ success: false, error: 'bad_spa_fallback' });
+        }
+
+        // The whole list, checked before anything is written: a notice the
+        // route refuses must not leave the others half saved.
+        let notices;
+        if (wantsNotices) {
+            try {
+                notices = siteNotices.normalize(body.notices);
+            } catch (e) {
+                return res.status(400).json({ success: false, error: e.code || 'bad_notices', detail: e.message });
+            }
         }
 
         let hostname;
@@ -2029,6 +2050,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // know about.
         if (wantsFallback) project.spaFallback = body.spaFallback;
         if (wantsHostname) project.hostname = hostname || null;
+        if (wantsNotices) project.notices = notices;
 
         let stored;
         try {
@@ -2042,10 +2064,12 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // The router answers from a five-second index; a saved name should be
         // live by the time the operator has finished reading the note.
         invalidateHostIndex();
-        console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} settings saved (fallback ${stored.spaFallback ? 'on' : 'off'}, host ${stored.hostname || 'none'}) by ${req.user.email}`);
+        const savedNotices = siteNotices.configOf(stored);
+        console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} settings saved (fallback ${stored.spaFallback ? 'on' : 'off'}, host ${stored.hostname || 'none'}, notices ${savedNotices.items.filter((n) => n.enabled).length} on${savedNotices.inject ? '' : ', not added to pages'}) by ${req.user.email}`);
         return res.json({
             success: true,
             spaFallback: !!stored.spaFallback,
+            notices: savedNotices,
             hostname: stored.hostname || null,
             hostUrl: siteHostUrl(stored),
             routerPort: routerPort()

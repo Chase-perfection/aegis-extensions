@@ -3095,6 +3095,9 @@
         wrap.appendChild(spaNote);
         box.addEventListener('change', function () { saveSpaFallback(project, box, spaNote); });
 
+        // What the site says to its visitors (deploy-notices.js).
+        if (window.DeployNotices) wrap.appendChild(window.DeployNotices.section(project));
+
         wrap.appendChild(el('h2', 'dep-subtitle', tr('deploy_branch_title', 'Tracked branch')));
         if (project.parentId) {
             // A preview is its branch: the id was derived from it and the

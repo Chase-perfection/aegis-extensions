@@ -40,10 +40,12 @@ const https = require('https');
 const tls = require('tls');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 
 const projectStore = require('./projectStore');
 const siteAuth = require('./siteAuth');
 const siteConfig = require('./siteConfig');
+const siteNotices = require('./siteNotices');
 const runtime = require('./runtime');
 const firewall = require('./firewall');
 
@@ -232,6 +234,17 @@ function proxyTo(req, res, target, ctx) {
     stripIdentity(headers);
     stripProxyKey(headers);
     if (proxyKey) headers[PROXY_KEY_HEADER] = proxyKey;
+
+    // A page the notices script may go into. Asked for uncompressed, so the
+    // common case needs no decoding, and without its validators: a page the
+    // browser kept from before carries the version that served it then, and a
+    // 304 would hand it back unchanged after a deployment.
+    const addNotices = !!(ctx.notices && ctx.notices.inject) && wantsPage(req);
+    if (addNotices) {
+        headers['accept-encoding'] = 'identity';
+        delete headers['if-none-match'];
+        delete headers['if-modified-since'];
+    }
     let identity = null;
     try {
         identity = siteAuth.identityFor(req, ctx);
@@ -276,6 +289,7 @@ function proxyTo(req, res, target, ctx) {
                     : [mine];
             }
         }
+        if (addNotices && withNotices(up, res, responseHeaders, release)) return;
         res.writeHead(up.statusCode || 502, responseHeaders);
         up.pipe(res);
     });
@@ -293,6 +307,127 @@ function proxyTo(req, res, target, ctx) {
 
 /** How long the application gets to start answering one request. */
 const PROXY_TIMEOUT_MS = 30000;
+
+/*
+ * The notices script, added to the pages a site serves (siteNotices.js).
+ *
+ * Only on a full page a browser navigates to: a GET asking for HTML. A fetch
+ * from the page's own code asks for JSON, an image asks for an image, and
+ * neither is touched. A page larger than PAGE_LIMIT is passed on as it is
+ * rather than held in memory, and so is a body in an encoding this proxy
+ * cannot read.
+ */
+const PAGE_LIMIT = 4 * 1024 * 1024;
+
+function wantsPage(req) {
+    if (req.method !== 'GET') return false;
+    const dest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+    if (dest) return dest === 'document' || dest === 'iframe';
+    return /text\/html/i.test(String(req.headers.accept || ''));
+}
+
+function decoderFor(encoding) {
+    const e = String(encoding || 'identity').trim().toLowerCase();
+    if (e === 'identity' || e === '') return null;
+    if (e === 'gzip' || e === 'x-gzip') return zlib.createGunzip();
+    if (e === 'deflate') return zlib.createInflate();
+    if (e === 'br') return zlib.createBrotliDecompress();
+    return undefined;
+}
+
+/**
+ * Sends an upstream page with the notices script in it. Returns false, having
+ * done nothing, when the response is not one to touch; the caller then pipes
+ * it as usual.
+ */
+function withNotices(up, res, responseHeaders, release) {
+    if (up.statusCode !== 200 || !siteNotices.isHtml(up.headers['content-type'])) return false;
+    if (/attachment/i.test(String(up.headers['content-disposition'] || ''))) return false;
+    const decoder = decoderFor(up.headers['content-encoding']);
+    if (decoder === undefined) return false;
+
+    const headers = Object.assign({}, responseHeaders);
+    for (const name of Object.keys(headers)) {
+        const lower = name.toLowerCase();
+        // The body changes, so nothing that describes the old one may stay.
+        if (['content-encoding', 'etag', 'last-modified', 'content-md5'].includes(lower)) delete headers[name];
+    }
+    const source = decoder ? up.pipe(decoder) : up;
+    const chunks = [];
+    let size = 0;
+    let passed = false;
+    source.on('data', (chunk) => {
+        if (passed) return;
+        size += chunk.length;
+        chunks.push(chunk);
+        if (size > PAGE_LIMIT) {
+            // Too large to hold: send what came so far and the rest as it
+            // arrives, without the script.
+            passed = true;
+            source.pause();
+            res.writeHead(200, headers);
+            chunks.forEach((c) => res.write(c));
+            source.removeAllListeners('data');
+            source.pipe(res);
+        }
+    });
+    source.on('end', () => {
+        if (passed) return;
+        const body = siteNotices.inject(Buffer.concat(chunks), release);
+        headers['Content-Length'] = body.length;
+        res.writeHead(200, headers);
+        res.end(body);
+    });
+    source.on('error', () => {
+        if (!res.headersSent) send(res, 502, 'The application sent a page that could not be read');
+        else res.destroy();
+    });
+    return true;
+}
+
+/**
+ * `/__aegis/notices`: the project's notices for this visitor, with the two
+ * versions the script compares its page against.
+ *
+ * `served` is the version this visitor reaches, `latest` the one new visitors
+ * get. They differ only while the visitor is on an outgoing version, which is
+ * when `{remaining}` means something: the minutes before that version stops if
+ * nobody uses it, bounded by the hard limit. A static site has one version,
+ * the commit it last published.
+ */
+function serveNotices(req, res, ctx) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
+    const settings = siteConfig.settingsFor(ctx.slug, ctx.tenantPaths, ctx.project.id);
+    let served = settings.lastSha;
+    let latest = settings.lastSha;
+    let remaining = null;
+    if (ctx.runtime === 'node') {
+        const v = runtime.versions(ctx.slug, ctx.project.id);
+        const mine = readReleaseCookie(req);
+        latest = v.active || null;
+        served = mine && v.draining && v.draining.sha === mine ? mine : latest;
+        if (served && served !== latest && v.draining) {
+            const stopsAt = Math.min(v.draining.lastSeen + runtime.DRAIN_IDLE_MS,
+                v.draining.since + runtime.DRAIN_MAX_MS);
+            remaining = Math.max(0, Math.ceil((stopsAt - Date.now()) / 60000));
+        }
+    }
+    const json = JSON.stringify({
+        served: served || null,
+        latest: latest || null,
+        notices: siteNotices.forVisitor(settings.notices, siteAuth.pickLang(req), {
+            idle: Math.round(runtime.DRAIN_IDLE_MS / 60000),
+            remaining
+        })
+    });
+    res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(json),
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff'
+    });
+    return res.end(req.method === 'HEAD' ? undefined : json);
+}
 
 /*
  * Version affinity for a project served by a process.
@@ -369,8 +504,13 @@ function serve(req, res, ctx) {
     // project that should have one and does not answers 503 and never falls
     // through to the files: `current/` for a server-rendered application is its
     // source, and publishing that is worse than being down.
+    const pathOnly = String(req.url || '/').split('?')[0];
+    // Asked by the notices script, which polls: answered here and never by
+    // the application, so a poll is not activity on the version it is on.
+    if (pathOnly === siteNotices.DATA_PATH) return serveNotices(req, res, ctx);
+    const settings = siteConfig.settingsFor(ctx.slug, ctx.tenantPaths, ctx.project.id);
+
     if (ctx.runtime === 'node') {
-        const pathOnly = String(req.url || '/').split('?')[0];
         if (siteAuth.isReleasePath(pathOnly)) return serveRelease(req, res, ctx, pathOnly);
         const target = runtime.targetForRequest(ctx.slug, ctx.project.id, {
             release: readReleaseCookie(req),
@@ -379,19 +519,19 @@ function serve(req, res, ctx) {
             background: req.headers['x-aegis-background'] === '1'
         });
         if (!target) return send(res, 503, 'This application is not running');
-        return proxyTo(req, res, target, ctx);
+        return proxyTo(req, res, target, Object.assign({}, ctx, { notices: settings.notices }));
     }
-    // A static site has one version at a time and nothing to say about it.
-    if (siteAuth.isReleasePath(String(req.url || '/').split('?')[0])) return send(res, 404, 'Not found');
+    // A static site has one version at a time and no other to switch to.
+    if (siteAuth.isReleasePath(pathOnly)) return send(res, 404, 'Not found');
 
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
     if (!fs.existsSync(root)) return send(res, 404, 'This site has not been deployed');
 
-    const pathname = (req.url || '/').split('?')[0] || '/';
+    const pathname = pathOnly || '/';
     const answer = siteConfig.resolveRequest({
         pathname,
         config: siteConfig.configFor(root),
-        spaFallback: siteConfig.settingsFor(ctx.slug, ctx.tenantPaths, ctx.project.id).spaFallback,
+        spaFallback: settings.spaFallback,
         // The one path from a URL or a config file to a file on disk, and the
         // one place containment is checked.
         resolve: (candidate) => resolveFile(root, String(candidate).split('?')[0].split('/').filter(Boolean))
@@ -406,8 +546,19 @@ function serve(req, res, ctx) {
     let stat;
     try { stat = fs.statSync(answer.file); } catch (_) { return send(res, 404, 'Not found'); }
 
+    const type = TYPES[path.extname(answer.file).toLowerCase()] || 'application/octet-stream';
+    // A page gets the notices script, read whole to put it in. Same limit as
+    // the proxy: a larger page is streamed as it is.
+    let body = null;
+    // HEAD too, so the length it announces is the one a GET sends.
+    if (settings.notices.inject && siteNotices.isHtml(type) && stat.size <= PAGE_LIMIT) {
+        try {
+            body = siteNotices.inject(fs.readFileSync(answer.file), settings.lastSha);
+        } catch (_) { return send(res, 404, 'Not found'); }
+    }
+
     res.writeHead(200, Object.assign({
-        'Content-Type': TYPES[path.extname(answer.file).toLowerCase()] || 'application/octet-stream',
+        'Content-Type': type,
         // A deployment replaces `current` wholesale, so a cached asset can point
         // at a file that is gone. Revalidation keeps that from showing, and a
         // config file that knows better about its own hashed assets overrides
@@ -417,10 +568,11 @@ function serve(req, res, ctx) {
         // Last, so nothing from a repository can move them. The length is the
         // file being sent and nosniff is why a mistyped extension in a
         // repository cannot become an executable response.
-        'Content-Length': stat.size,
+        'Content-Length': body ? body.length : stat.size,
         'X-Content-Type-Options': 'nosniff'
     }));
     if (req.method === 'HEAD') return res.end();
+    if (body) return res.end(body);
     fs.createReadStream(answer.file).on('error', () => res.destroy()).pipe(res);
 }
 
