@@ -3,10 +3,12 @@
 *.manifest.json
 *.manifest.json.sig
 
-# The signing key belongs on the maintainer machine or in CI, never here.
+# The signing key belongs on the maintainer machine, never here and never in CI.
 *.pem
 *.key
 *.pfx
+# Except the public half installs trust, which the release steps verify against.
+!/scripts/release-public-key.pem
 
 # The local half of the release pipeline. It reaches for the signing key and for
 # an Aegis checkout beside this one, so it is a maintainer-machine tool and not
