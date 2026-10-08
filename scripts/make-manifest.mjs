@@ -8,8 +8,8 @@
 // the signature (backend/src/lib/releaseKey.js verifies over the uploaded bytes).
 // So this script writes the final bytes and nothing edits them again.
 //
-// Signing happens outside this repository. The private key lives on the maintainer
-// machine or in CI, never here.
+// Signing happens outside this repository and outside CI: the private key lives on
+// the maintainer machine, and scripts/publish-release.mjs signs with it.
 
 import { readFileSync, writeFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';

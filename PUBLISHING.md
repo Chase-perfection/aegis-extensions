@@ -1,8 +1,16 @@
 # Publishing an extension release
 
-One tag. `.github/workflows/release.yml` builds the package from this repository's
-`extensions/<id>/`, signs the manifest with the key held as a repository secret,
-publishes the three assets, and rebuilds `index.json` on main.
+One tag and one command. The tag makes `.github/workflows/release.yml` build the
+package from this repository's `extensions/<id>/` and leave a draft release.
+`node scripts/publish-release.mjs <tag>`, on the machine that holds the release
+key, signs the manifest and publishes the draft; the workflow then rebuilds
+`index.json` on main.
+
+Why the signature is not made in CI: the signed manifest is the trust anchor of
+every install (**Trust model** in [CONTRACT.md](CONTRACT.md)), and anyone who can
+push here can already rewrite the catalogue. A key held as a repository secret would
+let them sign too. So the key stays off GitHub, the rule Aegis core keeps for its
+installer and agent releases, and publishing takes the repository and the key.
 
 So this document is about deciding what to release, not about assembling it. The
 steps below are what a human does; the sections marked **the workflow** say what
@@ -116,11 +124,28 @@ git tag deploy-v1.0.0
 git push origin deploy-v1.0.0
 ```
 
-That is the publish. `<id>-v<version>`, matching the `agent-v<version>` shape on
-`aegis-releases`. The tag is refused if the id names no folder, if the version is
-not semver, or if the suite fails: nothing is uploaded before `npm test` passes,
-because a release is three assets somebody has already downloaded by the time you
-read a red run.
+`<id>-v<version>`, matching the `agent-v<version>` shape on `aegis-releases`. Tag the
+commit on `main` that carries the version, after the pull request is merged: the
+workflow refuses a tag whose `extension.json` says another version. The tag is
+also refused if the id names no folder, if the version is not semver, or if the
+suite fails: nothing is uploaded before `npm test` passes.
+
+The run ends with a **draft** release holding the zip and the manifest, which
+neither the catalogue nor any install can see. Then, on the machine that holds the
+key:
+
+```bash
+node scripts/publish-release.mjs deploy-v1.0.0 --dry-run   # checks and signs, uploads nothing
+node scripts/publish-release.mjs deploy-v1.0.0
+```
+
+That is the publish. The script reads the private key from the path in
+`$AEGIS_AGENT_SIGNING_KEY`, the same variable core's release scripts use, so there
+is no second key to protect. It downloads the draft, checks that the manifest
+describes that zip and that tag, signs the manifest bytes, and refuses unless the
+signature verifies against `scripts/release-public-key.pem`, the public half that
+`backend/src/lib/releaseKey.js` carries in core. Then it uploads the signature and
+publishes the draft.
 
 That gate has a hole worth knowing before you lean on it. The browser tier under
 `extensions/<id>/frontend/tests/` skips on the runner, which has no Aegis checkout,
@@ -128,8 +153,8 @@ so a green release run says nothing about whether the extension's pages still
 render. Run those locally with `AEGIS_TREE` set before you tag. See
 [README.md](README.md), "The six that need Aegis on disk".
 
-`workflow_dispatch` takes the same tag as an input, for re-running a release whose
-workflow failed after the tag was pushed.
+`workflow_dispatch` takes the same tag as an input, for re-running a build whose
+workflow failed after the tag was pushed. It builds from the tag, not from `main`.
 
 ## 3. What the workflow does with it
 
@@ -152,20 +177,17 @@ a customer's audit server, so the build fails rather than trusting the pattern.
 the digest from the zip it just built. Those bytes are final: the signature covers
 them exactly as written, and reindenting the file afterwards invalidates it.
 
-**Signs it** with the Aegis release key, the one `backend/src/lib/releaseKey.js`
-already carries the public half of: detached RSA-SHA256, base64. The private half is
-the repository secret `RELEASE_SIGNING_KEY`, which a human sets once, in the
-repository settings, to the PEM including its BEGIN and END lines. Unset, the
-workflow refuses: an unsigned release is one every install rejects at step 2 of
-**Trust model** in [CONTRACT.md](CONTRACT.md), which is worse than no release. The
-signature is verified against the key's own public half before upload, which proves
-it is well formed over those bytes; only a real install proves the key is the one
-the field trusts, so check a first release against one before the catalogue points
-at it.
-
-**Cuts the release** with the three assets, named exactly as
+**Cuts a draft release** with the zip and the manifest, named exactly as
 `scripts/build-index.mjs` derives them, and marks it a prerelease when `store.json`
-says `channel: preview`.
+says `channel: preview`. Not signed: that is `publish-release.mjs`, above.
+
+When the draft is published, the workflow runs again on the `release` event (the
+script publishes under your own token; one published with the workflow's token
+would not fire it).
+
+**Checks the signature** against `scripts/release-public-key.pem` before anything
+else. A release somebody published without the key stops here, and the catalogue
+never offers it.
 
 **Rebuilds the catalogue** on `main`: it reads the size and digest back out of the
 published manifest, writes the `latest` block and the `releases` entry into
@@ -186,13 +208,15 @@ cannot disagree about who owns the file.
 | Read the tag | The id names no `extensions/<id>/` folder, or the version is not semver. Delete the tag and push a correct one |
 | Run the suite | The release is not ready. Nothing was uploaded |
 | Refuse a package carrying what must not ship | A `-x` pattern stopped matching, usually because a file moved. Fix the pattern, delete the tag, tag again |
-| Sign the manifest | `RELEASE_SIGNING_KEY` is unset or is not a usable private key. Set it, then re-run from `workflow_dispatch` |
-| Cut the release | A release for that tag already exists. Delete it before re-running |
+| Refuse a tag the manifest does not agree with | The tag is on a commit whose `extension.json` says another version, usually a tag pushed before the pull request was merged. Delete the tag, tag the merge commit |
+| Cut a draft release | A release for that tag already exists. Delete it before re-running |
+| `publish-release.mjs` | It names what it refused: no `$AEGIS_AGENT_SIGNING_KEY`, a draft missing an asset, a manifest that does not match its zip, or a key that is not the trusted one. Nothing is uploaded on a refusal |
+| Refuse a release whose signature installs would reject | The published signature does not verify. Unpublish the release (back to draft) and run `publish-release.mjs` again |
 | Rebuild and validate the catalogue | The validator disagrees with the generated `index.json`. Its output names the field |
 | Commit the catalogue | Branch protection on `main` refuses a push from Actions. Either allow it, or apply the same three commands locally: `build-index.mjs`, `validate-catalog.mjs`, commit |
 
 A tag is cheap to redo. Delete it on both sides (`git tag -d`, `git push --delete
-origin <tag>`), delete any release it created, and push it again.
+origin <tag>`), delete any release or draft it created, and push it again.
 
 Aegis picks the new version up on its next catalogue poll.
 

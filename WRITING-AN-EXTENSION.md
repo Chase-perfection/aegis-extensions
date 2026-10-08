@@ -189,16 +189,12 @@ registry through it.
 
 ## Shipping it
 
-Tag `<id>-v<semver>` and the workflow does the rest: builds the zip, checks
-nothing forbidden is in it, writes the manifest, signs it, cuts the release, and
-rewrites the catalogue on `main` from what it published.
-
-One thing is not automated. The repository secret `RELEASE_SIGNING_KEY` is not
-set, so the signing step refuses and `Cut the release` never runs. Until someone
-sets it, a release is built and signed on the maintainer machine and uploaded by
-hand with `gh release create`, then the catalogue block is written from the
-published manifest. The 0.0.0, 0.1.0 and 0.1.1 releases of Deploy were all made
-that way.
+Tag `<id>-v<semver>` and the workflow builds the zip, checks nothing forbidden is
+in it, writes the manifest and leaves a draft release. On the machine that holds
+the release key, `node scripts/publish-release.mjs <tag>` signs the manifest and
+publishes the draft, and the workflow rewrites the catalogue on `main` from what
+was published. The key never goes to GitHub: [PUBLISHING.md](PUBLISHING.md) says
+why, and what to do when a step refuses.
 
 ## What an operator sees when it works
 
