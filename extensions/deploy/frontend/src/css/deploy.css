@@ -1017,6 +1017,22 @@ select.dep-input option:disabled {
     line-height: 1.3;
     color: var(--ag-ink, var(--text-main));
     overflow-wrap: anywhere;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dep-card-name-text {
+    min-width: 0;
+}
+
+/* The site's own favicon. `contain`, never `cover`: an icon is drawn to its
+   edges and cropping it is defacing it. */
+.dep-card-icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
 }
 
 .dep-card-link,

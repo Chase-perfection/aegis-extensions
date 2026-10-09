@@ -420,6 +420,30 @@
         return art;
     }
 
+    /**
+     * The site's favicon, beside its name on the card.
+     *
+     * The icon the login page shows in its corner and the browser tab shows
+     * once in (`siteIcon.js`), or the first letter of the name when the site
+     * declares none. Only for a site that has published: before that there are
+     * no files to read it from. `deployedAt` stamps it for the same reason it
+     * stamps the thumbnail.
+     */
+    function iconFor(project) {
+        if (!project || !project.lastSha) return null;
+        var img = document.createElement('img');
+        img.className = 'dep-card-icon';
+        // Decorative: the name it sits beside says the same thing.
+        img.alt = '';
+        img.setAttribute('aria-hidden', 'true');
+        img.width = 16;
+        img.height = 16;
+        img.src = window.tenantPrefix() + '/api/deploy/projects/' +
+            encodeURIComponent(project.id) + '/icon?v=' + (project.deployedAt || 0);
+        img.addEventListener('error', function () { img.remove(); });
+        return img;
+    }
+
     // --- Readiness ---------------------------------------------------------
 
     /**
@@ -1785,7 +1809,11 @@
         card.appendChild(art);
 
         var body = el('div', 'dep-card-body');
-        body.appendChild(el('h3', 'dep-card-name', p.name));
+        var name = el('h3', 'dep-card-name');
+        var icon = iconFor(p);
+        if (icon) name.appendChild(icon);
+        name.appendChild(el('span', 'dep-card-name-text', p.name));
+        body.appendChild(name);
 
         if (p.lastSha) {
             var link = el('a', 'dep-card-link', p.url);
