@@ -619,3 +619,20 @@
    down, so it reads in the warning colour; every other mode is plain caption. */
 .ni-failover { display: block; margin-top: 2px; }
 .ni-failover.takeover { color: var(--ag-warning); font-weight: 500; }
+
+/* Scan account: one line under the title, and its dialog, which borrows the
+   diagnostic report's panel so both read as the same family. */
+.ni-account { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; font-size: 12.5px; color: var(--ni-secondary); }
+.ni-account[hidden] { display: none; }
+/* .ni-btn sets display, which would show a hidden gear to a non-admin. */
+.ni-gear { padding: 0 9px; }
+.ni-gear[hidden] { display: none; }
+.ni-account-name { font: 500 12px var(--ni-mono); color: var(--ni-mono-val); }
+.ni-account-note { font-size: 12px; color: var(--ni-muted); }
+.ni-account-current-row { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ni-secondary); }
+.ni-account-form { display: flex; flex-direction: column; gap: 10px; }
+.ni-account-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ni-label); }
+.ni-account-msg { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--ni-secondary); }
+.ni-account-msg.ok { color: var(--ag-sev-low); }
+.ni-account-msg.error { color: var(--ag-sev-critical); }
+#ni-account-results:empty { display: none; }

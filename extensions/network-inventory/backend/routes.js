@@ -25,6 +25,8 @@ const path = require('path');
 const { execFile } = require('child_process');
 
 const inventoryService = require('./inventoryService');
+const scanAccount = require('./scanAccount');
+const accountRoutes = require('./accountRoutes');
 
 /** The scan script, inside this package rather than in core's `shield/`. */
 const SCRIPT_PATH = path.join(__dirname, 'scan', 'network_scan.ps1');
@@ -60,9 +62,127 @@ function feedbackFrom(context) {
     return { log, event, activity };
 }
 
+/**
+ * Runs the scan script and resolves its stdout, streaming PROGRESS lines and
+ * log text as it goes.
+ *
+ * With `creds` it goes through scan/Start-NetOnly.ps1, so every network read is
+ * made as the tenant's scan account; without, straight to powershell.exe as the
+ * service, which is what the scan has always done. A launcher that Windows
+ * refused to start rejects with `err.netOnly = { win32, message }`.
+ */
+function runScript({ slug, domain, probeOnly, creds, log, event, stderrLines }) {
+    return new Promise((resolve, reject) => {
+        let file = 'powershell.exe';
+        let args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT_PATH];
+        let options = { maxBuffer: 10 * 1024 * 1024 };
+        if (creds) {
+            const l = scanAccount.launch(creds, { domain, probeOnly });
+            file = l.file;
+            args = l.args;
+            options = { ...options, env: l.env, windowsHide: true };
+        } else {
+            if (domain) args.push('-Domain', domain);
+            if (probeOnly) args.push('-ProbeOnly');
+        }
+
+        // powershell.exe, not pwsh. The scan targets Windows PowerShell
+        // 5.1 and shield/CLAUDE.md records why: the 5.1 parser, the
+        // ibm850 stdout encoding and the BOM this script needs are all
+        // part of the contract it was tested against.
+        const child = execFile(file, args, options, (err, stdout, stderr) => {
+            if (err) {
+                const refused = creds ? scanAccount.launcherError(stderr) : null;
+                if (refused) err.netOnly = refused;
+                return reject(err);
+            }
+            resolve(stdout);
+        });
+
+        child.stderr.on('data', (data) => {
+            const text = data.toString().trim();
+            if (text) {
+                if (stderrLines.length < STDERR_KEEP) stderrLines.push(text);
+                log(slug, text);
+            }
+        });
+        child.stdout.on('data', (data) => {
+            const lines = data.toString().split('\n');
+            lines.forEach(line => {
+                const trimmed = line.trim();
+                if (!trimmed) return;
+                const progressMatch = trimmed.match(/^PROGRESS:(\d+)$/);
+                if (progressMatch) {
+                    event(slug, { scan_progress: parseInt(progressMatch[1], 10) });
+                    return;
+                }
+                if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) {
+                    log(slug, trimmed);
+                }
+            });
+        });
+    });
+}
+
+/** The last line of the script's output that holds JSON, or ''. */
+function lastJsonLine(stdout) {
+    const lines = String(stdout || '').trim().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const l = lines[i].trim();
+        if (l.startsWith('[') || l.startsWith('{')) return l;
+    }
+    return '';
+}
+
+/**
+ * The tenant's scan account, ready to launch with, or a diagnostic saying why
+ * the scan must not run. `{ creds: null }` when none is set: the service runs it.
+ *
+ * A saved account whose password no longer decrypts refuses the scan instead of
+ * falling back to the service identity: the operator chose who reads the
+ * network, and a scan made by someone else would be both a surprise and a
+ * misleading report.
+ */
+function scanCredentials(slug) {
+    const creds = scanAccount.credentials(slug);
+    if (!creds) return { creds: null };
+    if (creds.password === null) {
+        return {
+            refused: {
+                source: 'Compte du scan',
+                status: 'failed',
+                message: `Le mot de passe enregistré pour ${creds.account} ne peut plus être déchiffré : le scan n'a pas été lancé.`,
+                hint: "La clé de chiffrement de cette machine a changé. Saisir de nouveau le mot de passe du compte du scan, ou revenir à l'identité du service.",
+                command: 'PUT /api/inventory/account'
+            }
+        };
+    }
+    return { creds };
+}
+
+/** A diagnostic for a launcher Windows refused to start, by Windows error code. */
+function launcherDiagnostic(account, refused) {
+    const hints = {
+        1314: "Le service Aegis n'a pas le privilège « Emprunter l'identité d'un client après authentification ». Le compte système et les comptes de service l'ont par défaut.",
+        1058: "Le service « Ouverture de session secondaire » (seclogon) est désactivé sur cette machine. Le repasser en démarrage manuel.",
+        1326: `Le mot de passe de ${account} a été refusé.`,
+        1331: `Le compte ${account} est désactivé.`
+    };
+    return {
+        source: 'Compte du scan',
+        status: 'failed',
+        message: `Windows a refusé de lancer le scan avec le compte ${account}.`,
+        hint: hints[refused.win32] || 'Vérifier le compte du scan, puis relancer.',
+        command: 'Start-NetOnly.ps1',
+        detail: `Erreur Windows ${refused.win32} : ${refused.message}`
+    };
+}
+
 function register(router, context) {
     const { requireRole } = context;
     const { log, event, activity } = feedbackFrom(context);
+
+    accountRoutes.register(router, context, { runScript, lastJsonLine, scanCredentials, launcherDiagnostic, log, event });
 
     router.get('/api/inventory/network', (req, res) => {
         try {
@@ -95,52 +215,21 @@ function register(router, context) {
         // ever get.
         const stderrLines = [];
 
+        const { creds, refused } = scanCredentials(slug);
+        if (refused) {
+            return res.status(409).json({ success: false, code: 'ESCANACCOUNT', error: refused.message, diagnostics: [refused] });
+        }
+        if (creds && domain && !scanAccount.SCAN_DOMAIN.test(String(domain))) {
+            return res.status(400).json({ success: false, code: 'EBADDOMAIN', error: 'Nom de domaine invalide.' });
+        }
+
         try {
-            log(slug, 'Starting standalone Network Inventory scan...');
+            log(slug, creds
+                ? `Starting standalone Network Inventory scan as ${creds.account}...`
+                : 'Starting standalone Network Inventory scan...');
 
-            const result = await new Promise((resolve, reject) => {
-                const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT_PATH];
-                if (domain) args.push('-Domain', domain);
-
-                // powershell.exe, not pwsh. The scan targets Windows PowerShell
-                // 5.1 and shield/CLAUDE.md records why: the 5.1 parser, the
-                // ibm850 stdout encoding and the BOM this script needs are all
-                // part of the contract it was tested against.
-                const child = execFile('powershell.exe', args, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
-                    if (err) return reject(err);
-                    resolve(stdout);
-                });
-
-                child.stderr.on('data', (data) => {
-                    const text = data.toString().trim();
-                    if (text) {
-                        if (stderrLines.length < STDERR_KEEP) stderrLines.push(text);
-                        log(slug, text);
-                    }
-                });
-                child.stdout.on('data', (data) => {
-                    const lines = data.toString().split('\n');
-                    lines.forEach(line => {
-                        const trimmed = line.trim();
-                        if (!trimmed) return;
-                        const progressMatch = trimmed.match(/^PROGRESS:(\d+)$/);
-                        if (progressMatch) {
-                            event(slug, { scan_progress: parseInt(progressMatch[1], 10) });
-                            return;
-                        }
-                        if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) {
-                            log(slug, trimmed);
-                        }
-                    });
-                });
-            });
-
-            const lines = result.trim().split('\n');
-            let jsonLine = '';
-            for (let i = lines.length - 1; i >= 0; i--) {
-                const l = lines[i].trim();
-                if (l.startsWith('[') || l.startsWith('{')) { jsonLine = l; break; }
-            }
+            const result = await runScript({ slug, domain, creds, log, event, stderrLines });
+            const jsonLine = lastJsonLine(result);
 
             activity(req, 'audit', 'scan', {
                 system: 'Shield', event: 'audit.scan', details: domain || null
@@ -176,6 +265,10 @@ function register(router, context) {
             }
         } catch (e) {
             console.error('[Inventory Scan Error]', e);
+            if (e && e.netOnly && creds) {
+                const d = launcherDiagnostic(creds.account, e.netOnly);
+                return res.status(500).json({ success: false, error: d.message, diagnostics: [d] });
+            }
             // The scan could not be launched, or died mid-run. Answer with a
             // report of the same shape as a successful scan's, so the dialog has
             // one code path.
@@ -195,4 +288,4 @@ function register(router, context) {
     });
 }
 
-module.exports = { register, SCRIPT_PATH };
+module.exports = { register, SCRIPT_PATH, lastJsonLine };

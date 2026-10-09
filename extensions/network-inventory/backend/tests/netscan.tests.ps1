@@ -283,6 +283,22 @@ if ($Ps51) {
         Assert-Equal 'Plage Réseau DHCP' @($o.subnets)[0].label
         Assert-True (@($o.diagnostics)[0].message -like 'Étendue*') 'accented diagnostic text must survive too'
     }
+
+    Test-Case '5.1: the scan names the account the launcher passed, not the local one' {
+        # Started by Start-NetOnly.ps1, the scan is the service locally and the
+        # scan account on the network. Its diagnostics must name the second.
+        $scan = (Resolve-Path "$PSScriptRoot/../scan/network_scan.ps1").Path
+        $env:AEGIS_SCAN_NET_ACCOUNT = 'CORP\svc-scan'
+        try { $r = Invoke-Ps51 @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scan, '-SelfTest') }
+        finally { Remove-Item Env:AEGIS_SCAN_NET_ACCOUNT -ErrorAction SilentlyContinue }
+        Assert-Equal 0 $r.Code
+        $line = @($r.Out -split "`r?`n" | Where-Object { $_.Trim().StartsWith('{') })[-1]
+        Assert-Equal 'CORP\svc-scan' ($line | ConvertFrom-Json).context.userName
+
+        $r = Invoke-Ps51 @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scan, '-SelfTest')
+        $line = @($r.Out -split "`r?`n" | Where-Object { $_.Trim().StartsWith('{') })[-1]
+        Assert-Equal "$env:USERDOMAIN\$env:USERNAME" ($line | ConvertFrom-Json).context.userName
+    }
 }
 else {
     Write-Host '  SKIP 5.1 cases: powershell.exe not found on this machine' -ForegroundColor Yellow

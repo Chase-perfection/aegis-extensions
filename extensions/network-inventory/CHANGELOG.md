@@ -2,6 +2,45 @@
 
 Hosts and services discovered on the network.
 
+## 0.1.0
+
+You choose the account the scan reads the network with.
+
+Until now the scan ran as the Aegis service. On a standard install that is the
+system account, which reaches other servers as the machine itself
+(`DOMAIN\HOST$`), and a DHCP server refuses that account: the report said
+"access denied" and the scopes stayed empty.
+
+The page now carries a gear beside **Relancer le scan**, and a line naming the
+account in use. The dialog asks for the account, its Windows password and your
+own Aegis password. From the next scan on, DHCP, the directory and DNS are read
+as that account.
+
+- **One account per organisation**, separate from the account the audit runs as.
+  It can be the same one, or a directory account made for this and holding only
+  read rights, for example membership of "DHCP Users" on the DHCP server.
+- **Nothing restarts.** The scan keeps the service's identity on the Aegis host
+  and presents the chosen account to remote servers only, the way
+  `runas /netonly` does.
+- **Tester les accès** runs the directory, DHCP and DNS reads without the ping
+  sweep and lists what each one answered, so a missing right shows in seconds.
+- **A refusal names the account to grant.** The diagnostic report used to name
+  the local identity; it now names the account the server actually saw.
+- **Revenir à l'identité du service** drops the account and restores the
+  previous behaviour.
+
+The password is checked with a network logon before it is saved, then stored
+encrypted under the Aegis data folder (`network-inventory\scan-accounts.json`),
+outside every organisation's own folder. It is never written to a command line
+or a log. Five refused Windows passwords lock the form for ten minutes.
+
+Changing the account needs an Aegis newer than 1.0.8. On an older one the
+dialog says so and the scan works as before. The texts of this dialog are in
+French only for now.
+
+The Secondary Logon service (`seclogon`) must not be disabled on the Aegis
+host: Windows starts the scan through it. The report says so when it is.
+
 ## 0.0.1
 
 The subnet explorer leaves Aegis core and becomes an extension you install.
