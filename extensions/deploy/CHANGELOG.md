@@ -2,6 +2,23 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.14
+
+**The sign-in page shows the site's own icon for a project served by a
+process.** The icon was looked for in an `index.html` at the root or in
+`public/`, `static/` or `assets/`. A server project whose pages live in a folder
+of their own declared its icon where nobody looked, and its sign-in page showed
+the first letter of its name instead. The site's HTML pages are now read
+wherever they sit, dependencies, version control and dot folders aside, and the
+icon most of them declare is the one shown, its href read against the page that
+declares it. `app/icon.*` and `app/favicon.ico`, which some frameworks use
+instead of a link tag, are recognised too. What may leave before sign-in has
+not changed: an image, inside the site, up to 512 KB.
+
+**The project card shows the site's icon beside its name**, the same one the
+sign-in page and the browser tab show, or the first letter of the name when the
+site declares none.
+
 ## 0.2.13
 
 **A push no longer cuts the people using the site.** For a project served by a

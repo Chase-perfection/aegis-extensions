@@ -50,6 +50,64 @@ test('findIcon: falls back to favicon.ico, then to the public folder of a server
     assert.strictEqual(hit.type, 'image/png');
 });
 
+test('findIcon: a server project whose pages sit in a folder of their own', () => {
+    // No index.html anywhere, the pages in `web/`, a relative href: what a
+    // process serving `web/` at its root looks like on disk.
+    const root = site({
+        'app.py': 'x',
+        'web/home.html': '<head><link rel="icon" type="image/png" href="mark.png"></head>',
+        'web/report.html': '<head><link rel="icon" type="image/png" href="mark.png"></head>',
+        'web/mark.png': PNG
+    });
+    const hit = siteIcon.findIcon(root);
+    assert.strictEqual(path.relative(fs.realpathSync(root), hit.file), path.join('web', 'mark.png'));
+});
+
+test('findIcon: an absolute href in a nested page is read against the folders above it', () => {
+    const root = site({
+        'server.js': 'x',
+        'client/pages/home.html': '<link rel="icon" href="/brand/mark.svg">',
+        'client/brand/mark.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>'
+    });
+    assert.strictEqual(path.basename(siteIcon.findIcon(root).file), 'mark.svg');
+});
+
+test('findIcon: the icon most pages agree on beats a stray page', () => {
+    const root = site({
+        'tool/about.html': '<link rel="icon" href="tool.png">',
+        'tool/tool.png': PNG,
+        'web/a.html': '<link rel="icon" href="site.png">',
+        'web/b.html': '<link rel="icon" href="site.png">',
+        'web/site.png': PNG
+    });
+    assert.strictEqual(path.basename(siteIcon.findIcon(root).file), 'site.png');
+});
+
+test('findIcon: pages under dependencies and dot folders are not the site', () => {
+    const root = site({
+        'node_modules/pkg/index.html': '<link rel="icon" href="pkg.png">',
+        'node_modules/pkg/pkg.png': PNG,
+        '.cache/page.html': '<link rel="icon" href="c.png">',
+        '.cache/c.png': PNG
+    });
+    assert.strictEqual(siteIcon.findIcon(root), null);
+});
+
+test('findIcon: the app/icon convention of a framework with no link tag', () => {
+    const hit = siteIcon.findIcon(site({ 'package.json': '{}', 'app/icon.png': PNG }));
+    assert.strictEqual(path.basename(hit.file), 'icon.png');
+});
+
+test('findIconCached: the same answer, and a fresh look once the folder is replaced', () => {
+    const root = site({ 'favicon.png': PNG });
+    assert.strictEqual(path.basename(siteIcon.findIconCached(root).file), 'favicon.png');
+    // What a deployment does: a new folder renamed over the old one.
+    const next = site({ 'favicon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>' });
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.renameSync(next, root);
+    assert.strictEqual(path.basename(siteIcon.findIconCached(root).file), 'favicon.svg');
+});
+
 test('findIcon: a link to another origin, a data URL or a non-image is ignored', () => {
     const root = site({
         'index.html': [

@@ -63,6 +63,7 @@ const accessPolicy = require('./accessPolicy');
 const previews = require('./previews');
 const runtime = require('./runtime');
 const shots = require('./shots');
+const siteIcon = require('./siteIcon');
 
 const deliveries = createDeliveryCache();
 
@@ -2287,6 +2288,23 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'no-cache');
         return res.sendFile(shots.shotPath(req.tenantPaths, project.id));
+    });
+
+    /**
+     * The site's own icon, for the project card.
+     *
+     * The same answer as the login page's corner (`siteIcon.serve`): the icon
+     * the site's pages declare, or the first letter of its name. Open to every
+     * member for the reason the thumbnail above is, and served with the same
+     * image-only, sandboxed headers.
+     */
+    router.get('/api/deploy/projects/:id/icon', requireOptIn, (req, res) => {
+        const project = projectOr404(req, res);
+        if (!project) return undefined;
+        return siteIcon.serve(req, res, {
+            root: projectStore.currentDir(req.tenantPaths, project.id),
+            siteName: project.name || project.id
+        });
     });
 
     router.get('/api/deploy/projects/:id/data', requireOptIn, requireRole('admin'), (req, res) => {
