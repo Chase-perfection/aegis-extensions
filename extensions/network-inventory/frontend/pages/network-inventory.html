@@ -63,8 +63,16 @@
         <main class="main-content">
             <section id="network-inventory-view" class="content-area active">
                 <!-- ── Sidebar : subnet explorer ── -->
-                <aside class="ni-sidebar">
+                <aside class="ni-sidebar" data-ni-pane="networks">
                     <div class="ni-sb-head">
+                        <!-- The page's two views. The same switch sits at the head of the
+                             DHCP tree below; network-inventory.js keeps both in step. -->
+                        <div class="ni-segment ni-viewswitch" role="tablist" aria-label="Vue">
+                            <button class="ni-seg active" type="button" role="tab" aria-selected="true"
+                                data-ni-view="networks">Réseaux</button>
+                            <button class="ni-seg" type="button" role="tab" aria-selected="false"
+                                data-ni-view="dhcp">DHCP</button>
+                        </div>
                         <span class="ni-sb-label" data-i18n="ni_networks">RÉSEAUX</span>
                         <input id="ni-sidebar-search" class="ni-input" type="text" data-i18n="ni_sidebar_search_ph"
                             placeholder="Filtrer : CIDR, VLAN, nom…">
@@ -77,7 +85,7 @@
                 </aside>
 
                 <!-- ── Main column ── -->
-                <div class="ni-main">
+                <div class="ni-main" data-ni-pane="networks">
                     <div class="ni-main-head">
                         <div class="ni-eyebrow" data-i18n="inventory_eyebrow">Gestion du Parc · Inventaire Réseau</div>
                         <div class="ni-title-row">
@@ -168,6 +176,89 @@
                         <div class="ni-table-foot">
                             <span id="ni-table-foot-count"></span>
                             <span id="ni-table-foot-note"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── DHCP view ──
+                     The servers the scan tried, as a tree, and what each one holds.
+                     Drawn by network-inventory-dhcp.js from the same scan as the
+                     subnet explorer. Every label is in the page, in French: core
+                     prints a data-i18n key it does not carry as the key itself. -->
+                <aside class="ni-sidebar" data-ni-pane="dhcp" hidden>
+                    <div class="ni-sb-head">
+                        <div class="ni-segment ni-viewswitch" role="tablist" aria-label="Vue">
+                            <button class="ni-seg" type="button" role="tab" aria-selected="false"
+                                data-ni-view="networks">Réseaux</button>
+                            <button class="ni-seg active" type="button" role="tab" aria-selected="true"
+                                data-ni-view="dhcp">DHCP</button>
+                        </div>
+                        <span class="ni-sb-label">SERVEURS DHCP</span>
+                    </div>
+                    <div id="ni-dhcp-tree" class="ni-net-list ni-dhcp-tree"></div>
+                    <div class="ni-sb-foot">
+                        <span id="ni-dhcp-foot" class="ni-foot-meta"></span>
+                        <button id="ni-dhcp-servers-open" class="ni-text-btn" type="button"
+                            data-ni-dhcp-servers>+ Déclarer</button>
+                    </div>
+                </aside>
+
+                <div class="ni-main" data-ni-pane="dhcp" hidden>
+                    <div class="ni-main-head">
+                        <div class="ni-eyebrow">Gestion du Parc · DHCP</div>
+                        <div class="ni-title-row">
+                            <h1 id="ni-dhcp-title" class="ni-title">…</h1>
+                            <span id="ni-dhcp-subtitle" class="ni-subtitle"></span>
+                        </div>
+                        <div id="ni-dhcp-summary" class="ni-cards"></div>
+                        <div class="ni-filter-row">
+                            <div id="ni-dhcp-tabs" class="ni-segment"></div>
+                            <input id="ni-dhcp-search" class="ni-input ni-table-search" type="text"
+                                aria-label="Filtrer" placeholder="IP, nom, MAC…">
+                        </div>
+                    </div>
+                    <div class="ni-table-card">
+                        <div id="ni-dhcp-thead" class="ni-thead"></div>
+                        <div id="ni-dhcp-tbody" class="ni-tbody"></div>
+                        <div class="ni-table-foot">
+                            <span id="ni-dhcp-count"></span>
+                            <span id="ni-dhcp-note"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Declared DHCP servers ──
+                     Servers the scan reads in addition to those the directory
+                     authorizes. One host name per line. -->
+                <div id="ni-dhcp-servers-modal" class="ni-diag-modal" hidden role="dialog" aria-modal="true"
+                    aria-labelledby="ni-dhcp-servers-title">
+                    <div id="ni-dhcp-servers-backdrop" class="ni-diag-backdrop"></div>
+                    <div class="ni-diag-panel">
+                        <div class="ni-diag-head">
+                            <h2 id="ni-dhcp-servers-title" class="ni-diag-title">Serveurs DHCP déclarés</h2>
+                            <button id="ni-dhcp-servers-close" class="ni-close" type="button" aria-label="Fermer">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                            </button>
+                        </div>
+                        <p class="ni-diag-lede">Le scan lit les serveurs DHCP que l'annuaire autorise. Un serveur
+                            DHCP Windows absent de cette liste, autonome ou jamais autorisé, peut être ajouté ici : il
+                            sera lu au prochain scan, avec le compte du scan. Un DHCP tenu par un pare-feu, un routeur
+                            ou une borne ne peut pas être lu de cette façon.</p>
+                        <label class="ni-account-field">
+                            <span>Un nom d'hôte par ligne</span>
+                            <textarea id="ni-dhcp-servers-input" class="ni-input ni-dhcp-servers-input" rows="5"
+                                spellcheck="false" placeholder="srv-dhcp-01.corp.local"></textarea>
+                        </label>
+                        <p id="ni-dhcp-servers-msg" class="ni-account-msg" hidden role="status"></p>
+                        <div class="ni-diag-foot">
+                            <button id="ni-dhcp-servers-cancel" class="ni-btn ni-btn-secondary"
+                                type="button">Fermer</button>
+                            <button id="ni-dhcp-servers-save" class="ni-btn ni-btn-primary"
+                                type="button">Enregistrer</button>
                         </div>
                     </div>
                 </div>
@@ -282,6 +373,7 @@
     <script defer src="../src/js/app.js"></script>
     <script defer src="../src/js/network-inventory.js"></script>
     <script defer src="../src/js/network-inventory-account.js"></script>
+    <script defer src="../src/js/network-inventory-dhcp.js"></script>
 </body>
 
 </html>

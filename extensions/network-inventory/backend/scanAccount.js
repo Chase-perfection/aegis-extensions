@@ -266,10 +266,11 @@ const START_FAILED_EXIT = 3;
  * argv and environment for a scan run as `creds`. The password travels in the
  * environment only; the launcher removes it before starting anything.
  */
-function launch(creds, { domain, probeOnly } = {}) {
+function launch(creds, { domain, probeOnly, dhcpServers } = {}) {
     const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', LAUNCHER_PATH];
     if (domain) args.push('-Domain', domain);
     if (probeOnly) args.push('-ProbeOnly');
+    if (dhcpServers && dhcpServers.length) args.push('-DhcpServer', dhcpServers.join(','));
     const env = powerShellEnv({ AEGIS_SCAN_NET_ACCOUNT: creds.account, AEGIS_SCAN_NET_SECRET: creds.password });
     return { file: 'powershell.exe', args, env };
 }

@@ -1,6 +1,7 @@
 ﻿. "$PSScriptRoot/../scan/netscan/Cidr.ps1"
 . "$PSScriptRoot/../scan/netscan/ScanDiagnostics.ps1"
 . "$PSScriptRoot/../scan/netscan/DhcpFailover.ps1"
+. "$PSScriptRoot/../scan/netscan/DhcpView.ps1"
 
 # Helpers of shield/network_scan.ps1. The scan itself cannot run here (it wants a
 # domain, DHCP servers and a LAN to sweep), so what is covered is everything it
@@ -121,14 +122,14 @@ Test-Case 'a stale authorization is told apart from a refusal, by where the name
     # landed there, and that server refused it with the same WIN32 5 as a real
     # rights problem. The report then asked for an account to be granted on a
     # host that no longer existed.
-    Assert-True (Test-DhcpAuthorizationStale -DeclaredIp '192.168.1.3' -ResolvedIps @('192.168.1.97')) `
+    Assert-True (Test-DhcpAuthorizationStale -DeclaredIp '10.0.0.3' -ResolvedIps @('10.0.0.97')) `
         'a name resolving elsewhere is a stale authorization'
-    Assert-True (Test-DhcpAuthorizationStale -DeclaredIp '192.168.1.3' -ResolvedIps @()) `
+    Assert-True (Test-DhcpAuthorizationStale -DeclaredIp '10.0.0.3' -ResolvedIps @()) `
         'a name resolving to nothing is a stale authorization'
 
     # A server that is really there, refusing for a real reason, must not be
     # explained away as decommissioned.
-    Assert-True (-not (Test-DhcpAuthorizationStale -DeclaredIp '192.168.1.97' -ResolvedIps @('192.168.1.97'))) `
+    Assert-True (-not (Test-DhcpAuthorizationStale -DeclaredIp '10.0.0.97' -ResolvedIps @('10.0.0.97'))) `
         'a name pointing where the directory says is not stale'
     Assert-True (-not (Test-DhcpAuthorizationStale -DeclaredIp '10.0.0.5' -ResolvedIps @('10.0.0.9', '10.0.0.5'))) `
         'one matching address among several is enough'
@@ -241,6 +242,84 @@ Test-Case 'the same scope on two servers with no relationship is a split scope' 
     Assert-Equal 'dhcp1 / dhcp2' $r.label
 }
 
+# ── The scan loads what it calls ────────────────────────────────────────────
+
+Test-Case 'every helper the scan calls comes from a file the scan loads' {
+    # The bug this pins: network_scan.ps1 called Resolve-DhcpScopeAuthority and
+    # ConvertTo-DhcpServerKey for months without dot-sourcing DhcpFailover.ps1.
+    # An unknown command does not stop a script running with
+    # ErrorActionPreference Continue, so the scan carried on, dropped every
+    # scope it had read and reported "1 étendue lue". This file dot-sourced the
+    # helper itself, which is why every test of it passed.
+    $scanPath = (Resolve-Path "$PSScriptRoot/../scan/network_scan.ps1").Path
+    $scanAst = [System.Management.Automation.Language.Parser]::ParseFile($scanPath, [ref]$null, [ref]$null)
+    $called = @($scanAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) |
+        ForEach-Object { $_.GetCommandName() } | Where-Object { $_ } | Sort-Object -Unique)
+    $scanText = Get-Content -LiteralPath $scanPath -Raw
+
+    $helpers = @(Get-ChildItem -Path "$PSScriptRoot/../scan/netscan" -Filter '*.ps1' -File)
+    Assert-True ($helpers.Count -ge 4) 'the netscan helpers were not found, this test would pass on nothing'
+    $checked = 0
+    foreach ($file in $helpers) {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$null)
+        $defined = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false) |
+            ForEach-Object { $_.Name })
+        $used = @($defined | Where-Object { $called -contains $_ })
+        if ($used.Count -eq 0) { continue }
+        $checked++
+        Assert-True ($scanText -match ("(?m)^\. \(Join-Path \`$PSScriptRoot 'netscan/" + [regex]::Escape($file.Name) + "'\)")) `
+            "the scan calls $($used -join ', ') but never loads netscan/$($file.Name)"
+    }
+    Assert-True ($checked -ge 4) "only $checked helper file(s) were found in use, the call scan is not seeing the scan"
+}
+
+# ── DHCP view: which servers are read, and how they are reported ────────────
+
+Test-Case 'declared servers join the directory list, each server once' {
+    $authorized = @(
+        [PSCustomObject]@{ DnsName = 'srv-dhcp-01.corp.local'; IPAddress = '10.0.0.5' },
+        [PSCustomObject]@{ DnsName = 'srv-dhcp-02.corp.local'; IPAddress = '10.0.0.6' }
+    )
+    $list = Merge-DhcpServerList -Authorized $authorized -Declared @('SRV-DHCP-02', 'srv-wifi.corp.local')
+    Assert-Equal 3 $list.Count
+    Assert-Equal @('directory', 'directory', 'declared') @($list | ForEach-Object { $_.Origin })
+    Assert-Equal 'srv-wifi.corp.local' $list[2].DnsName
+    # The directory entry wins the duplicate: it carries the recorded address.
+    Assert-Equal '10.0.0.6' $list[1].IPAddress
+    Assert-Equal '' $list[2].IPAddress
+}
+
+Test-Case 'one declared server and no directory still comes back as a list' {
+    $list = Merge-DhcpServerList -Authorized @() -Declared @('srv-dhcp-01')
+    Assert-True ($list -is [array]) 'the list must be an array'
+    Assert-Equal 1 $list.Count
+    Assert-Equal 0 (Merge-DhcpServerList -Authorized @() -Declared @()).Count
+}
+
+Test-Case 'the declared list is split, and what is not a host name is reported' {
+    $r = ConvertTo-DhcpServerNameList 'srv-dhcp-01, srv-wifi.corp.local;bad name,evil"quote'
+    Assert-Equal @('srv-dhcp-01', 'srv-wifi.corp.local') $r.names
+    Assert-Equal @('bad name', 'evil"quote') $r.rejected
+    Assert-Equal 0 (ConvertTo-DhcpServerNameList '').names.Count
+    Assert-True (-not (Test-DhcpServerName '-srv')) 'a leading dash would read as a parameter'
+    Assert-True (-not (Test-DhcpServerName 'srv dhcp'))
+}
+
+Test-Case 'a server view starts read and empty, and refuses an unknown status' {
+    $v = New-DhcpServerView -Name 'srv-dhcp-01' -Fqdn 'srv-dhcp-01.corp.local' -Origin 'declared'
+    Assert-Equal 'read' $v.status
+    Assert-Equal 0 $v.scopes.Count
+    Assert-Equal $null $v.filters
+    Assert-Throws { New-DhcpServerView -Name 'x' -Fqdn 'x' -Status 'gone' }
+}
+
+Test-Case 'a lease duration converts to seconds, and an unlimited one to $null' {
+    Assert-Equal 28800 (ConvertTo-LeaseDuration ([TimeSpan]::FromHours(8)))
+    Assert-Equal 691200 (ConvertTo-LeaseDuration ([TimeSpan]::FromDays(8)))
+    Assert-Equal $null (ConvertTo-LeaseDuration ([TimeSpan]::MaxValue))
+    Assert-Equal $null (ConvertTo-LeaseDuration $null)
+}
+
 # ── Windows PowerShell 5.1, the runtime the backend actually uses ───────────
 
 $Ps51 = Get-Command powershell.exe -ErrorAction SilentlyContinue
@@ -282,6 +361,37 @@ if ($Ps51) {
         $o = $line | ConvertFrom-Json
         Assert-Equal 'Plage Réseau DHCP' @($o.subnets)[0].label
         Assert-True (@($o.diagnostics)[0].message -like 'Étendue*') 'accented diagnostic text must survive too'
+    }
+
+    Test-Case '5.1: the DHCP view keeps its lists as lists and its deepest values as values' {
+        # One of everything. A list of one that 5.1 unwrapped, or a lease cut
+        # off by the JSON depth limit, would both arrive as something other
+        # than what the page reads.
+        $scan = (Resolve-Path "$PSScriptRoot/../scan/network_scan.ps1").Path
+        $r = Invoke-Ps51 @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scan, '-SelfTest')
+        Assert-Equal 0 $r.Code
+        $line = @($r.Out -split "`r?`n" | Where-Object { $_.Trim().StartsWith('{') })[-1]
+        Assert-True ($line -match '"servers":\[\{') 'servers must be a JSON array'
+        Assert-True ($line -match '"scopes":\[\{') 'scopes must be a JSON array'
+        Assert-True ($line -match '"leases":\[\{') 'leases must be a JSON array'
+        Assert-True ($line -match '"allow":\[\]') 'an empty filter list must be an empty array'
+        $srv = @(($line | ConvertFrom-Json).dhcp.servers)[0]
+        Assert-Equal 'declared' $srv.origin
+        Assert-Equal 'read' $srv.status
+        $scope = @($srv.scopes)[0]
+        Assert-Equal 'Plage Réseau DHCP' $scope.name
+        Assert-Equal 28800 $scope.leaseSeconds
+        Assert-Equal '02:00:00:AA:BB:01' @($scope.leases)[0].mac
+        Assert-Equal 'imprimante-étage' @($scope.reservations)[0].name
+        Assert-Equal '10.0.1.59' @($scope.exclusions)[0].end
+        Assert-Equal '02-00-00-AA-BB-CC' @($srv.filters.deny)[0].mac
+    }
+
+    Test-Case '5.1: the scan parses, and takes the declared server list' {
+        $scan = (Resolve-Path "$PSScriptRoot/../scan/network_scan.ps1").Path
+        $r = Invoke-Ps51 @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scan, '-SelfTest', '-DhcpServer', 'srv-dhcp-01,srv-dhcp-02')
+        Assert-Equal 0 $r.Code
+        Assert-Equal '' $r.Err.Trim()
     }
 
     Test-Case '5.1: the scan names the account the launcher passed, not the local one' {

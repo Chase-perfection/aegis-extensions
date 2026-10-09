@@ -121,7 +121,8 @@ function loadHistory(historyFile) {
             scannedAt: parsed.scannedAt || null,
             totalScans: Number(parsed.totalScans) || 0,
             diagnostics: Array.isArray(parsed.diagnostics) ? parsed.diagnostics : [],
-            context: parsed.context && typeof parsed.context === 'object' ? parsed.context : null
+            context: parsed.context && typeof parsed.context === 'object' ? parsed.context : null,
+            dhcp: parsed.dhcp && typeof parsed.dhcp === 'object' ? parsed.dhcp : null
         };
     } catch (e) {
         console.error('[InventoryService] Failed to load history:', e.message);
@@ -192,6 +193,75 @@ function summarizeDiagnostics(entries) {
         failedSources: [...new Set(failed.map(d => d.source))],
         degradedSources: [...new Set(degraded.map(d => d.source))]
     };
+}
+
+const DHCP_SERVER_STATUSES = ['read', 'refused', 'unreachable', 'stale'];
+
+function str(v) { return v == null ? '' : String(v); }
+
+/**
+ * Normalizes the scan's `dhcp` block: every server it tried, read or not, each
+ * with its scopes as that server holds them.
+ *
+ * Returns null when the scan sent none, which is not the same as an empty
+ * list. A history written before this block existed has no idea whether a
+ * server refused, and the page must not turn that ignorance into "every server
+ * answered": null keeps the two apart.
+ *
+ * A server with an unreadable status is kept as 'unreachable' rather than
+ * dropped, for the reason normalizeDiagnostic gives: losing it would let a
+ * card claim an absence nobody checked.
+ */
+function normalizeDhcp(raw) {
+    if (!raw || typeof raw !== 'object' || raw.servers === undefined) return null;
+    const servers = toArr(raw.servers).filter(s => s && typeof s === 'object').map(s => {
+        const status = str(s.status).toLowerCase();
+        const f = s.filters && typeof s.filters === 'object' ? s.filters : null;
+        const filterList = list => toArr(list).filter(Boolean)
+            .map(e => ({ mac: str(e.mac), description: str(e.description) }));
+        return {
+            name: str(s.name),
+            fqdn: str(s.fqdn),
+            origin: s.origin === 'declared' ? 'declared' : 'directory',
+            status: DHCP_SERVER_STATUSES.includes(status) ? status : 'unreachable',
+            filters: f ? {
+                allowEnabled: !!f.allowEnabled,
+                denyEnabled: !!f.denyEnabled,
+                allow: filterList(f.allow),
+                deny: filterList(f.deny)
+            } : null,
+            scopes: toArr(s.scopes).filter(x => x && typeof x === 'object').map(x => ({
+                scopeId: str(x.scopeId),
+                mask: str(x.mask),
+                cidr: str(x.cidr),
+                name: str(x.name),
+                state: str(x.state),
+                rangeStart: str(x.rangeStart),
+                rangeEnd: str(x.rangeEnd),
+                leaseSeconds: numOrNull(x.leaseSeconds === null ? undefined : x.leaseSeconds),
+                utilization: numOrNull(x.utilization === null ? undefined : x.utilization),
+                exclusions: toArr(x.exclusions).filter(Boolean)
+                    .map(e => ({ start: str(e.start), end: str(e.end) })),
+                leases: toArr(x.leases).filter(Boolean).map(l => ({
+                    ip: str(l.ip),
+                    mac: str(l.mac),
+                    hostName: str(l.hostName),
+                    state: str(l.state),
+                    expiresAt: l.expiresAt || null
+                })),
+                reservations: toArr(x.reservations).filter(Boolean)
+                    .map(r => ({ ip: str(r.ip), mac: str(r.mac), name: str(r.name) })),
+                failover: x.failover && typeof x.failover === 'object' ? {
+                    mode: str(x.failover.mode),
+                    role: str(x.failover.role),
+                    state: str(x.failover.state),
+                    partner: str(x.failover.partner),
+                    relationship: str(x.failover.relationship)
+                } : null
+            }))
+        };
+    });
+    return { servers };
 }
 
 /**
@@ -355,7 +425,8 @@ function buildResponse(store) {
         totalScans: Number(store.totalScans) || 0,
         diagnostics,
         diagnosticsSummary: summarizeDiagnostics(diagnostics),
-        context: store.context || null
+        context: store.context || null,
+        dhcp: normalizeDhcp(store.dhcp)
     };
 }
 
@@ -371,9 +442,11 @@ function updateInventory(scanData, historyFile) {
     let subnets = [];
     let diagnostics = [];
     let context = null;
+    let dhcp = null;
     if (Array.isArray(scanData)) {
         ips = scanData;
     } else if (scanData && typeof scanData === 'object') {
+        dhcp = normalizeDhcp(scanData.dhcp);
         ips = toArr(scanData.ips);
         subnets = toArr(scanData.subnets);
         diagnostics = toArr(scanData.diagnostics);
@@ -401,7 +474,8 @@ function updateInventory(scanData, historyFile) {
 
     // Diagnostics are replaced, never accumulated: they describe this scan, and a
     // stale "DHCP unreachable" kept from last week would be worse than none.
-    const store = { ips, subnets, scannedAt: now, totalScans, diagnostics, context };
+    // The DHCP view follows the same rule, for the same reason.
+    const store = { ips, subnets, scannedAt: now, totalScans, diagnostics, context, dhcp };
     saveHistory(store, historyFile);
     return buildResponse(store);
 }
@@ -428,5 +502,6 @@ module.exports = {
     subnetIndex,
     networkForIp,
     normalizeDiagnostic,
-    summarizeDiagnostics
+    summarizeDiagnostics,
+    normalizeDhcp
 };

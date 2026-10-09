@@ -1,7 +1,8 @@
 param(
     [string]$Domain,
     [switch]$ProbeOnly,
-    [switch]$SelfTest
+    [switch]$SelfTest,
+    [string]$DhcpServer
 )
 
 # Runs network_scan.ps1 with the scan account as its network identity, the way
@@ -43,6 +44,11 @@ if ($Domain -and $Domain -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$') {
     Exit-Launcher 0 'the domain name holds characters a domain name cannot carry'
 }
 
+# Same reason, same characters, for each declared DHCP server of the list.
+if ($DhcpServer -and $DhcpServer -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]{0,252}(,[A-Za-z0-9][A-Za-z0-9.-]{0,252}){0,31}$') {
+    Exit-Launcher 0 'the DHCP server list holds characters a host name cannot carry'
+}
+
 if ($account -match '^([^\\]+)\\(.+)$') { $logonDomain = $Matches[1]; $logonUser = $Matches[2] }
 else { $logonDomain = $null; $logonUser = $account }
 
@@ -55,6 +61,7 @@ $commandLine = '"' + $exe + '" -NoProfile -NonInteractive -ExecutionPolicy Bypas
 if ($Domain) { $commandLine += ' -Domain ' + $Domain }
 if ($ProbeOnly) { $commandLine += ' -ProbeOnly' }
 if ($SelfTest) { $commandLine += ' -SelfTest' }
+if ($DhcpServer) { $commandLine += ' -DhcpServer ' + $DhcpServer }
 
 # The scan inherits this environment, the secret already gone from it. The
 # account stays: network_scan.ps1 names it in its diagnostics.

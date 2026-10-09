@@ -31,7 +31,12 @@
         // context. Feed the banner and the copyable report; empty on a clean scan.
         diagnostics: [],
         diagSummary: null,
-        scanContext: null
+        scanContext: null,
+        // Every DHCP server the scan tried, read or not, with its scopes. Null
+        // for an inventory written before the scan sent it.
+        dhcp: null,
+        // 'networks' (the subnet explorer) or 'dhcp' (network-inventory-dhcp.js).
+        view: 'networks'
     };
 
     // ── inline icons (stroke-based, Lucide-compatible) ──
@@ -110,6 +115,53 @@
         return `<span class="ni-ctx-caption ni-failover${cls}"${title}>${esc(text)}</span>`;
     }
 
+    /**
+     * What the DHCP card says for a network that carries no scope.
+     *
+     * It used to say "no scope for this network", whatever had happened. That
+     * is a statement about the network, and the scan can only make it when
+     * every DHCP server it knows of answered. With one server refused or
+     * silent, the honest sentence is that the scope was not read; with none
+     * known at all, that there was nobody to ask.
+     *
+     * `dhcp` is the scan's server list, or null for an inventory written before
+     * the scan sent one. Null is ignorance, and reads as such.
+     */
+    function dhcpAbsence(dhcp) {
+        if (!dhcp || !Array.isArray(dhcp.servers)) {
+            return {
+                kind: 'unknown', action: '',
+                text: T('ni_dhcp_absence_unknown', 'Aucune étendue lue pour ce réseau'),
+                caption: T('ni_dhcp_absence_unknown_hint', 'Relancer le scan pour savoir quels serveurs DHCP ont répondu.')
+            };
+        }
+        const names = list => list.map(s => String(s.name || s.fqdn || '?').toUpperCase()).join(', ');
+        const unread = dhcp.servers.filter(s => s.status !== 'read');
+        const read = dhcp.servers.filter(s => s.status === 'read');
+        if (unread.length) {
+            return {
+                kind: 'unread', action: 'report',
+                text: T('ni_dhcp_absence_unread', 'Étendue non lue : {n} serveur(s) DHCP sur {t} sans réponse exploitable')
+                    .replace('{n}', unread.length).replace('{t}', dhcp.servers.length),
+                caption: T('ni_dhcp_absence_unread_hint', 'Non lu : {s}. Une étendue de ce réseau peut s\'y trouver.')
+                    .replace('{s}', names(unread))
+            };
+        }
+        if (!read.length) {
+            return {
+                kind: 'noserver', action: 'declare',
+                text: T('ni_dhcp_absence_noserver', 'Aucun serveur DHCP connu'),
+                caption: T('ni_dhcp_absence_noserver_hint', 'L\'annuaire n\'en autorise aucun. Un serveur DHCP Windows peut être déclaré à la main.')
+            };
+        }
+        return {
+            kind: 'none', action: 'declare',
+            text: T('ni_dhcp_absence_none', 'Aucune étendue pour ce réseau sur les serveurs lus'),
+            caption: T('ni_dhcp_absence_none_hint', 'Lus : {s}. Si un autre serveur distribue ces adresses, le déclarer.')
+                .replace('{s}', names(read))
+        };
+    }
+
     function selectedSubnet() {
         return state.subnets.find(s => s.cidr === state.selectedCidr) || null;
     }
@@ -185,6 +237,7 @@
             state.ips = Array.isArray(data.ips) ? data.ips : [];
             state.scannedAt = data.scannedAt || null;
             state.totalScans = Number(data.totalScans) || 0;
+            state.dhcp = data.dhcp || null;
             absorbDiagnostics(data);
             state.loading = false;
             if (!state.selectedCidr || !state.subnets.some(s => s.cidr === state.selectedCidr)) {
@@ -267,7 +320,7 @@
             <div class="ni-ctx-card">
                 <div class="ni-ctx-head">
                     <span class="ni-ctx-title">${esc(T('ni_card_dhcp', 'ÉTENDUE DHCP'))} · ${esc((d.server || '').toUpperCase())}</span>
-                    <button class="ni-ctx-link" disabled title="${esc(soon())}">${esc(T('ni_manage', 'Gérer →'))}</button>
+                    <button class="ni-ctx-link" type="button" data-ni-manage="${esc(s.cidr)}">${esc(T('ni_manage', 'Gérer →'))}</button>
                 </div>
                 <div class="ni-dhcp-row">
                     <span class="ni-range">${esc(scopeRangeLabel(d))}</span>
@@ -281,10 +334,20 @@
                 ${failoverLine(d)}
             </div>`;
         } else {
+            const a = dhcpAbsence(state.dhcp);
+            const action = a.action === 'report'
+                ? `<button class="ni-ctx-link" type="button" data-ni-diag>${esc(T('ni_dhcp_see_report', 'Voir le rapport →'))}</button>`
+                : (a.action === 'declare'
+                    ? `<button class="ni-ctx-link" type="button" data-ni-dhcp-servers>${esc(T('ni_dhcp_declare', 'Déclarer un serveur →'))}</button>`
+                    : '');
             dhcpCard = `
-            <div class="ni-ctx-card">
-                <div class="ni-ctx-head"><span class="ni-ctx-title">${esc(T('ni_card_dhcp', 'ÉTENDUE DHCP'))}</span></div>
-                <span class="ni-ctx-empty">${esc(T('ni_dhcp_empty', 'Aucune étendue DHCP pour ce réseau'))}</span>
+            <div class="ni-ctx-card${a.kind === 'unread' ? ' warn' : ''}" data-dhcp-absence="${esc(a.kind)}">
+                <div class="ni-ctx-head">
+                    <span class="ni-ctx-title">${esc(T('ni_card_dhcp', 'ÉTENDUE DHCP'))}</span>
+                    ${action}
+                </div>
+                <span class="ni-ctx-empty">${esc(a.text)}</span>
+                ${a.caption ? `<span class="ni-ctx-caption">${esc(a.caption)}</span>` : ''}
             </div>`;
         }
 
@@ -889,6 +952,7 @@
                 state.ips = Array.isArray(data.ips) ? data.ips : [];
                 state.scannedAt = data.scannedAt || new Date().toISOString();
                 state.totalScans = Number(data.totalScans) || state.totalScans;
+                state.dhcp = data.dhcp || null;
                 if (!state.selectedCidr || !state.subnets.some(s => s.cidr === state.selectedCidr)) {
                     state.selectedCidr = state.subnets.length ? state.subnets[0].cidr : null;
                 }
@@ -936,6 +1000,38 @@
         renderTable();
         renderDiagBanner();
         if (state.drawerIp) renderDrawer();
+        applyView();
+        announce();
+    }
+
+    // The DHCP view is its own module and holds no copy of the inventory: it
+    // redraws from whatever this page last loaded or scanned. It also asks once
+    // when it starts (`ni:inventory-request`), in case the answer to the first
+    // load arrived before it was listening.
+    function announce() {
+        document.dispatchEvent(new CustomEvent('ni:inventory', {
+            detail: { dhcp: state.dhcp, diagnostics: state.diagnostics, scannedAt: state.scannedAt, loading: state.loading }
+        }));
+    }
+
+    // ── view switch: subnet explorer | DHCP ──
+    function applyView() {
+        const root = byId('network-inventory-view');
+        if (!root) return;
+        const dhcp = state.view === 'dhcp';
+        root.querySelectorAll('[data-ni-pane]').forEach(el => {
+            el.hidden = (el.dataset.niPane === 'dhcp') !== dhcp;
+        });
+        root.querySelectorAll('[data-ni-view]').forEach(b => {
+            const on = b.dataset.niView === state.view;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+    }
+    function setView(view) {
+        state.view = view === 'dhcp' ? 'dhcp' : 'networks';
+        if (state.view === 'dhcp' && state.drawerIp) closeDrawer();
+        applyView();
     }
 
     // ── events (delegated) ──
@@ -944,6 +1040,15 @@
         if (!view) return;
 
         view.addEventListener('click', (e) => {
+            const tab = e.target.closest('[data-ni-view]');
+            if (tab) { setView(tab.dataset.niView); return; }
+            const manage = e.target.closest('[data-ni-manage]');
+            if (manage) {
+                setView('dhcp');
+                document.dispatchEvent(new CustomEvent('ni:dhcp-select', { detail: { cidr: manage.dataset.niManage } }));
+                return;
+            }
+            if (e.target.closest('[data-ni-diag]')) { openDiag(); return; }
             const net = e.target.closest('.ni-net');
             if (net && net.dataset.cidr) {
                 state.selectedCidr = net.dataset.cidr;
@@ -1011,6 +1116,8 @@
             if (modal && !modal.hidden) { closeDiag(); return; }
             if (state.drawerIp) closeDrawer();
         });
+
+        document.addEventListener('ni:inventory-request', announce);
 
         // re-render dynamic content on language switch (chain any existing handler)
         const prev = window.onLanguageChange;

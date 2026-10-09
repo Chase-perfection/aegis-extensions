@@ -9,7 +9,11 @@
     # Runs the directory, DHCP and DNS reads only, skips the ping sweep, and
     # emits { account, diagnostics, context }: what the scan account can read,
     # in seconds rather than a full scan. Behind the page's "test access" button.
-    [switch]$ProbeOnly
+    [switch]$ProbeOnly,
+    # DHCP servers the operator declared, comma separated, read in addition to
+    # those the directory authorizes. A standalone server, or one whose
+    # authorization was never recorded, is in no directory list.
+    [string]$DhcpServer
 )
 
 # Aegis Network Inventory Scanner v4 - C# Engine
@@ -82,6 +86,14 @@ $SweepMaxHosts = 1022
 # everything there into Shield-Audit.ps1, and none of this is audit engine.
 . (Join-Path $PSScriptRoot 'netscan/Cidr.ps1')
 . (Join-Path $PSScriptRoot 'netscan/ScanDiagnostics.ps1')
+# These two were missing for as long as the DHCP half has existed. The scan
+# called Resolve-DhcpScopeAuthority and ConvertTo-DhcpServerKey without ever
+# loading the file that defines them: each call failed as an unknown command,
+# the decision stayed $null, and every scope the servers returned was dropped
+# while the report said "1 étendue lue". tests/netscan.tests.ps1 now checks that
+# every helper the scan calls comes from a file it loads.
+. (Join-Path $PSScriptRoot 'netscan/DhcpFailover.ps1')
+. (Join-Path $PSScriptRoot 'netscan/DhcpView.ps1')
 
 # The scan never dies on a missing source: it records why and carries on. Each
 # entry travels to the dashboard, which renders the lot as one copyable report
@@ -121,7 +133,27 @@ if ($SelfTest) {
         diagnostics = @($Diag)
         context     = [ordered]@{ selfTest = $true; computerName = "$env:COMPUTERNAME"; userName = $ScanAccount }
     }
-    $probe | ConvertTo-Json -Depth 8 -Compress
+    # One server, one scope, one lease, one of everything: the case where 5.1
+    # is most tempted to hand a list back as a bare object, and the deepest
+    # path of the payload, built with the helpers the real scan uses.
+    $stView = New-DhcpServerView -Name 'srv-dhcp-01' -Fqdn 'srv-dhcp-01.corp.local' -Origin 'declared'
+    $stView.filters = [ordered]@{
+        allowEnabled = $false; denyEnabled = $true
+        allow = (New-Object System.Collections.ArrayList)
+        deny = @([ordered]@{ mac = '02-00-00-AA-BB-CC'; description = 'Appareil refusé' })
+    }
+    [void]$stView.scopes.Add([ordered]@{
+            scopeId = '10.0.0.0'; mask = (ConvertTo-SubnetMask 22); cidr = '10.0.0.0/22'
+            name = 'Plage Réseau DHCP'; state = 'Active'
+            rangeStart = '10.0.1.50'; rangeEnd = '10.0.3.200'
+            leaseSeconds = (ConvertTo-LeaseDuration ([TimeSpan]::FromHours(8))); utilization = 40
+            exclusions = @([ordered]@{ start = '10.0.1.50'; end = '10.0.1.59' })
+            leases = @([ordered]@{ ip = '10.0.1.60'; mac = '02:00:00:AA:BB:01'; hostName = 'poste-a'; state = 'Active'; expiresAt = $ScanTime })
+            reservations = @([ordered]@{ ip = '10.0.1.70'; mac = '00:11:22:33:44:55'; name = 'imprimante-étage' })
+            failover = $null
+        })
+    $probe.dhcp = [ordered]@{ servers = @($stView) }
+    $probe | ConvertTo-Json -Depth 10 -Compress
     exit 0
 }
 
@@ -534,6 +566,10 @@ function ConvertTo-Mac {
 # etendue however many servers answered for it. Declared here, above the module
 # check, so the report can count them whether or not the DHCP half ran at all.
 $ScopeReads = @{}            # cidr -> ArrayList of per-server reads
+# One entry per server the scan tried, read or not, each with its scopes as that
+# server holds them. The page's DHCP view is this list; the subnet cards above
+# are the same reads merged by network. Declared here for the same reason.
+$DhcpView = New-Object System.Collections.ArrayList
 $DhcpModuleOk = $false
 try { $DhcpModuleOk = Install-RSATModule "DhcpServer" } catch { $DhcpModuleOk = $false }
 
@@ -558,10 +594,21 @@ else {
             -Command 'Get-DhcpServerInDC' -ErrorRecord $_
     }
 
+    # Servers the operator declared join the list whatever the directory said,
+    # including when it could not be read: they are the way to reach a server
+    # the directory does not know.
+    $declared = ConvertTo-DhcpServerNameList $DhcpServer
+    foreach ($bad in $declared.rejected) {
+        Add-ScanDiagnostic -Log $Diag -Source 'DHCP' -Status 'degraded' `
+            -Message "Le serveur DHCP déclaré « $bad » n'est pas un nom d'hôte valide et n'a pas été lu." `
+            -Hint "Corriger ce nom dans la liste des serveurs DHCP de la page : lettres, chiffres, points et tirets uniquement."
+    }
+    $DhcpServers = Merge-DhcpServerList -Authorized $DhcpServers -Declared $declared.names
+
     if (-not $DhcpEnumFailed -and $DhcpServers.Count -eq 0) {
         Add-ScanDiagnostic -Log $Diag -Source 'DHCP' -Status 'degraded' `
             -Message "Aucun serveur DHCP n'est autorisé dans l'Active Directory : l'inventaire se limitera aux adresses vues par ping, ARP et DNS." `
-            -Hint "Si un serveur DHCP existe mais n'est pas autorisé dans l'annuaire, l'autoriser depuis la console DHCP (Action, Autoriser) ou avec Add-DhcpServerInDC. Un serveur DHCP tiers, sur un pare-feu ou un routeur par exemple, n'apparaît jamais ici : ses baux resteront invisibles." `
+            -Hint "Si un serveur DHCP Windows existe sans être autorisé dans l'annuaire, le déclarer dans la vue DHCP de la page, ou l'autoriser avec Add-DhcpServerInDC. Un serveur DHCP tiers, sur un pare-feu ou un routeur par exemple, n'apparaît jamais ici : ses baux resteront invisibles." `
             -Command 'Get-DhcpServerInDC'
     }
 
@@ -574,6 +621,8 @@ else {
         $srvShort = $srvName.Split('.')[0]
         $srvKey = ConvertTo-DhcpServerKey $srvName
         $srvSource = "DHCP - $srvShort"
+        $srvView = New-DhcpServerView -Name $srvKey -Fqdn $srvName -Origin "$($Srv.Origin)"
+        [void]$DhcpView.Add($srvView)
 
         $Scopes = @()
         try {
@@ -604,24 +653,55 @@ else {
 
             if (Test-DhcpAuthorizationStale -DeclaredIp $declaredIp -ResolvedIps $resolved) {
                 $where = if ($resolved.Count) { "répond aujourd'hui sur $($resolved -join ', ')" } else { "ne résout plus" }
+                $srvView.status = 'stale'
+                # Two situations give this exact picture and the scan cannot
+                # tell them apart from here: the server was retired, or it was
+                # given a new address and still serves. The hint used to assert
+                # the first, and sent the operator to delete the authorization
+                # of a server that may be the one handing out the addresses.
                 Add-ScanDiagnostic -Log $Diag -Source $srvSource -Status 'failed' `
-                    -Message "L'annuaire autorise encore un serveur DHCP $srvName sur $declaredIp, mais ce nom $where : l'autorisation est obsolète." `
-                    -Hint "Ce serveur a été décommissionné sans que son autorisation soit retirée, et la lecture tombe sur une autre machine qui la refuse. L'entrée ne vit pas sur un serveur DHCP mais dans l'annuaire, comme une valeur de l'attribut dhcpServers de l'objet CN=DhcpRoot,CN=NetServices,CN=Services,CN=Configuration,<domaine> : la retirer avec Remove-DhcpServerInDC -DnsName $srvName -IPAddress $declaredIp, depuis un compte Enterprise Admins, ou à défaut en supprimant cette valeur dans ADSI Edit sur la partition de configuration. Supprimer aussi l'enregistrement A résiduel du nom. Aucun droit n'est à accorder." `
+                    -Message "L'annuaire autorise un serveur DHCP $srvName sur $declaredIp, mais ce nom $where : l'autorisation ne correspond plus au serveur, et sa lecture a échoué." `
+                    -Hint "Deux cas possibles. Si $srvName sert toujours le DHCP à sa nouvelle adresse : réenregistrer son autorisation (Remove-DhcpServerInDC -DnsName $srvName -IPAddress $declaredIp, puis Add-DhcpServerInDC avec l'adresse actuelle, depuis un compte Enterprise Admins) et vérifier que $ScanAccount est membre de DHCP Users sur ce serveur. Si $srvName a été retiré : supprimer l'autorisation avec la même commande Remove-DhcpServerInDC, ainsi que l'enregistrement A résiduel du nom ; aucun droit n'est alors à accorder. Pour trancher : la ligne « Serveur DHCP » de ipconfig /all sur un poste du réseau concerné." `
                     -Command "Get-DhcpServerv4Scope -ComputerName $srvName" -ErrorRecord $_
             }
             elseif (Test-DhcpAccessDenied $_) {
+                $srvView.status = 'refused'
                 Add-ScanDiagnostic -Log $Diag -Source $srvSource -Status 'failed' `
                     -Message "Le serveur DHCP $srvName a refusé la lecture de ses étendues au compte $ScanAccount : accès refusé." `
                     -Hint "Ajouter $ScanAccount au groupe local DHCP Users de $srvName (lecture seule) ou DHCP Administrators, puis relancer le scan. Le même refus apparaît quand le rôle DHCP n'est plus installé sur ce serveur alors qu'il reste autorisé dans l'annuaire : dans ce cas le retirer avec Remove-DhcpServerInDC." `
                     -Command "Get-DhcpServerv4Scope -ComputerName $srvName" -ErrorRecord $_
             }
             else {
+                $srvView.status = 'unreachable'
                 Add-ScanDiagnostic -Log $Diag -Source $srvSource -Status 'failed' `
                     -Message "Le serveur DHCP $srvName n'a pas répondu : ses étendues et ses baux sont absents de l'inventaire." `
                     -Hint "Vérifier que le service DHCP tourne sur $srvName, que le port RPC 135 et les ports dynamiques sont ouverts depuis cette machine, et que le compte du scan est membre de DHCP Users ou DHCP Administrators sur ce serveur. S'il appartient à une paire de basculement, son partenaire continue normalement de servir les clients." `
                     -Command "Get-DhcpServerv4Scope -ComputerName $srvName" -ErrorRecord $_
             }
             continue
+        }
+
+        # MAC filters are a property of the server, not of a scope: one Allow
+        # list and one Deny list, each switched on or off as a whole.
+        try {
+            $fl = Get-DhcpServerv4FilterList -ComputerName $srvName -ErrorAction Stop
+            $allow = New-Object System.Collections.ArrayList
+            $deny = New-Object System.Collections.ArrayList
+            foreach ($f in @(Get-DhcpServerv4Filter -ComputerName $srvName -ErrorAction Stop)) {
+                if (-not $f) { continue }
+                $entry = [ordered]@{ mac = "$($f.MacAddress)".ToUpper(); description = "$($f.Description)" }
+                if ("$($f.List)" -eq 'Allow') { [void]$allow.Add($entry) } else { [void]$deny.Add($entry) }
+            }
+            $srvView.filters = [ordered]@{
+                allowEnabled = [bool]$fl.Allow; denyEnabled = [bool]$fl.Deny
+                allow = $allow; deny = $deny
+            }
+        }
+        catch {
+            Add-ScanDiagnostic -Log $Diag -Source $srvSource -Status 'degraded' `
+                -Message "Les filtres d'adresses MAC de $srvName n'ont pas pu être lus : les listes Autoriser et Refuser sont absentes de la vue DHCP." `
+                -Hint "Sans conséquence sur l'inventaire des adresses. Vérifier que $ScanAccount est membre de DHCP Users sur $srvName." `
+                -Command "Get-DhcpServerv4Filter -ComputerName $srvName" -ErrorRecord $_
         }
 
         if ($Scopes.Count -eq 0) {
@@ -689,6 +769,7 @@ else {
                             ip = "$($Lease.IPAddress.IPAddressToString)"; name = "$($Lease.HostName)"
                             mac = (ConvertTo-Mac $Lease.ClientId); expiresAt = $expIso; detail = $detail
                             active = ("$($Lease.AddressState)" -like "*Active*")
+                            state = "$($Lease.AddressState)"
                         })
                 }
             }
@@ -721,8 +802,13 @@ else {
             # with none makes this cmdlet error on some builds, so it stays silent.
             $exclusions = 0
             $excludedAddresses = 0
+            $exclusionRanges = New-Object System.Collections.ArrayList
             try {
                 foreach ($x in @(Get-DhcpServerv4ExclusionRange -ComputerName $srvName -ScopeId $Scope.ScopeId -ErrorAction Stop)) {
+                    if (-not $x) { continue }
+                    [void]$exclusionRanges.Add([ordered]@{
+                            start = "$($x.StartRange.IPAddressToString)"; end = "$($x.EndRange.IPAddressToString)"
+                        })
                     $a = ConvertTo-IpNumber "$($x.StartRange.IPAddressToString)"
                     $b = ConvertTo-IpNumber "$($x.EndRange.IPAddressToString)"
                     if ($null -ne $a -and $null -ne $b -and $b -ge $a) {
@@ -763,6 +849,39 @@ else {
             }
             if (-not $ScopeReads.ContainsKey($cidr)) { $ScopeReads[$cidr] = New-Object System.Collections.ArrayList }
             [void]$ScopeReads[$cidr].Add($read)
+
+            # The same read, as this server holds it, for the DHCP view. Nothing
+            # is merged here: a scope shared by two servers appears under each.
+            $viewLeases = New-Object System.Collections.ArrayList
+            foreach ($l in $leases) {
+                [void]$viewLeases.Add([ordered]@{
+                        ip = $l.ip; mac = $l.mac; hostName = $l.name; state = $l.state; expiresAt = $l.expiresAt
+                    })
+            }
+            $viewReservations = New-Object System.Collections.ArrayList
+            foreach ($x in $resList) {
+                [void]$viewReservations.Add([ordered]@{ ip = $x.ip; mac = $x.mac; name = $x.name })
+            }
+            [void]$srvView.scopes.Add([ordered]@{
+                    scopeId      = $scopeId
+                    mask         = $maskStr
+                    cidr         = $cidr
+                    name         = $scopeName
+                    state        = "$($Scope.State)"
+                    rangeStart   = $read.StartRange
+                    rangeEnd     = $read.EndRange
+                    leaseSeconds = (ConvertTo-LeaseDuration $Scope.LeaseDuration)
+                    utilization  = $util
+                    exclusions   = $exclusionRanges
+                    leases       = $viewLeases
+                    reservations = $viewReservations
+                    failover     = if ($rel) {
+                        [ordered]@{
+                            mode = "$($rel.Mode)"; role = "$($rel.ServerRole)"; state = "$($rel.State)"
+                            partner = "$($rel.PartnerServer)"; relationship = "$($rel.Name)"
+                        }
+                    } else { $null }
+                })
         }
     }
 
@@ -770,7 +889,14 @@ else {
     foreach ($cidr in @($ScopeReads.Keys)) {
         $reads = @($ScopeReads[$cidr])
         $decision = Resolve-DhcpScopeAuthority -Candidates $reads -UnreachableServers @($UnreachableDhcp)
-        if (-not $decision) { continue }
+        if (-not $decision) {
+            # Never silent again: this branch is where every scope vanished for
+            # as long as the helper above was not loaded.
+            Add-ScanDiagnostic -Log $Diag -Source 'DHCP' -Status 'failed' `
+                -Message "L'étendue $cidr a été lue mais n'a pas pu être rattachée à un serveur : elle est absente de la carte de son réseau." `
+                -Hint "Défaut du scan, pas du serveur DHCP. Joindre ce rapport à un signalement."
+            continue
+        }
 
         # A failover read that failed only matters when the scope is shared, or
         # when its partner may be the server the scan could not reach at all.
@@ -1335,5 +1461,8 @@ $result = [ordered]@{
     scannedAt   = $ScanTime
     diagnostics = @($Diag)
     context     = $Context
+    dhcp        = [ordered]@{ servers = @($DhcpView) }
 }
-$result | ConvertTo-Json -Depth 8 -Compress
+# Depth 10: dhcp.servers[].scopes[].leases[] sits seven levels down, and a value
+# cut off by the depth limit is serialized as its type name, not as an error.
+$result | ConvertTo-Json -Depth 10 -Compress
