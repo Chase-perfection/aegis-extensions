@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-09T09:45:51Z",
+  "generatedAt": "2026-10-09T09:58:14Z",
   "repo": "Chase-perfection/aegis-extensions",
   "extensions": [
     {
@@ -73,7 +73,7 @@
     {
       "id": "network-inventory",
       "name": "Network Inventory",
-      "version": "0.0.2",
+      "version": "0.0.3",
       "manifestVersion": 1,
       "minAppVersion": "1.0.7",
       "labelKey": "nav_network_inventory",
@@ -85,13 +85,13 @@
         "/api/inventory"
       ],
       "requiresHostOptIn": false,
-      "file": "network-inventory-0.0.2.zip",
-      "size": 82459,
-      "sha256": "59d2f422c5f77245ed1390730a48da841c982780c880aee23347316809352653",
-      "download": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.2/network-inventory-0.0.2.zip",
-      "manifest": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.2/network-inventory-0.0.2.manifest.json",
-      "signature": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.2/network-inventory-0.0.2.manifest.json.sig",
-      "publishedAt": "2026-10-09T09:45:37Z",
+      "file": "network-inventory-0.0.3.zip",
+      "size": 82411,
+      "sha256": "5e8bf5cfa80e45881a56d8d7833fff90f21d3eb9798b19185a599ed5e8859ce4",
+      "download": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.3/network-inventory-0.0.3.zip",
+      "manifest": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.3/network-inventory-0.0.3.manifest.json",
+      "signature": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.3/network-inventory-0.0.3.manifest.json.sig",
+      "publishedAt": "2026-10-09T09:58:11Z",
       "channel": "stable",
       "image": "https://raw.githubusercontent.com/Chase-perfection/aegis-extensions/main/extensions/network-inventory/card.png",
       "imageSha256": "78e2d227e841f8c13b3e2ace31211c5dc73d3833baf2c1ba3bda3695e3cf6d2c"
