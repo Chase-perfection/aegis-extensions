@@ -5,7 +5,11 @@
     # shield/tests/netscan.tests.ps1 can prove an accented scope name survives
     # the trip to the backend — the bug that shipped and had to be spotted by eye
     # in the dashboard. The backend never passes it.
-    [switch]$SelfTest
+    [switch]$SelfTest,
+    # Runs the directory, DHCP and DNS reads only, skips the ping sweep, and
+    # emits { account, diagnostics, context }: what the scan account can read,
+    # in seconds rather than a full scan. Behind the page's "test access" button.
+    [switch]$ProbeOnly
 )
 
 # Aegis Network Inventory Scanner v4 - C# Engine
@@ -84,6 +88,16 @@ $SweepMaxHosts = 1022
 # an operator can hand to whoever administers the DHCP or DNS server.
 $Diag = New-ScanDiagnosticLog
 
+# Named in the diagnostics, not just in the report header: a refusal from a DHCP
+# server is fixed by granting THIS account, and the person who reads the report
+# is rarely the person who ran the scan.
+#
+# Started through Start-NetOnly.ps1, the scan keeps the service's local identity
+# and reads the network as the tenant's scan account. $env:USERNAME would then
+# name the service, which is the wrong account to grant, so the launcher passes
+# the network one along.
+$ScanAccount = if ($env:AEGIS_SCAN_NET_ACCOUNT) { "$env:AEGIS_SCAN_NET_ACCOUNT" } else { "$env:USERDOMAIN\$env:USERNAME" }
+
 # =============================================
 # Self-test
 # =============================================
@@ -105,7 +119,7 @@ if ($SelfTest) {
             })
         scannedAt   = $ScanTime
         diagnostics = @($Diag)
-        context     = [ordered]@{ selfTest = $true; computerName = "$env:COMPUTERNAME" }
+        context     = [ordered]@{ selfTest = $true; computerName = "$env:COMPUTERNAME"; userName = $ScanAccount }
     }
     $probe | ConvertTo-Json -Depth 8 -Compress
     exit 0
@@ -346,11 +360,6 @@ try {
     $IsElevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 catch { $IsElevated = $false }
-
-# Named in the diagnostics, not just in the report header: a refusal from a DHCP
-# server is fixed by granting THIS account, and the person who reads the report
-# is rarely the person who ran the scan.
-$ScanAccount = "$env:USERDOMAIN\$env:USERNAME"
 
 function Add-ToInventory {
     param([string]$Ip, [string]$Name, [string]$Type, [string]$Source, [string]$Mac = "-")
@@ -954,6 +963,30 @@ else {
     if ($DnsZones.Count -gt 0 -and $ZoneFailures -eq 0) {
         Add-ScanDiagnostic -Log $Diag -Source 'DNS' -Status 'ok' -Message "$($DnsZones.Count) zone(s) DNS lue(s) sur $Pdc."
     }
+}
+
+# =============================================
+# Probe: stop here
+# =============================================
+# Every read that needs the scan account has run: directory, DHCP, DNS. What
+# follows is the ping sweep and the assembly of the inventory, which only the
+# local machine takes part in, so the probe answers now with what it learned.
+if ($ProbeOnly) {
+    $probe = [ordered]@{
+        account     = $ScanAccount
+        diagnostics = @($Diag)
+        context     = [ordered]@{
+            scannedAt    = $ScanTime
+            computerName = "$env:COMPUTERNAME"
+            userName     = $ScanAccount
+            elevated     = $IsElevated
+            domain       = if ($Domain) { "$Domain" } else { "" }
+            pdc          = "$Pdc"
+            dhcpScopes   = $ScopeReads.Count
+        }
+    }
+    $probe | ConvertTo-Json -Depth 8 -Compress
+    exit 0
 }
 
 # =============================================
