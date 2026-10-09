@@ -2,6 +2,14 @@
 
 Hosts and services discovered on the network.
 
+## 0.0.3
+
+The scan account dialog shows its labels. In 0.0.2 the title, the fields and
+the buttons read `ni_account_title`, `ni_account_save` and so on: the page
+named translation keys that Aegis does not carry, and Aegis prints the key
+itself when it has no text for it. The dialog worked, and nobody could tell
+what it asked. The labels are now in the page, in French.
+
 ## 0.0.2
 
 You choose the account the scan reads the network with.

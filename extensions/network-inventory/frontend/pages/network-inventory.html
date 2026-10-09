@@ -112,11 +112,11 @@
                         <!-- Scan account: who the scan reads DHCP, AD and DNS as.
                              Shown to admins only, by network-inventory-account.js. -->
                         <div id="ni-account" class="ni-account" hidden>
-                            <span class="ni-account-label" data-i18n="ni_account_label">Compte du scan :</span>
+                            <span class="ni-account-label">Compte du scan :</span>
                             <code id="ni-account-name" class="ni-account-name"></code>
                             <span id="ni-account-note" class="ni-account-note"></span>
                             <button id="ni-account-change" class="ni-text-btn" type="button"
-                                data-i18n="ni_account_change">Changer</button>
+>Changer</button>
                         </div>
                         <div id="ni-cards" class="ni-cards"></div>
                         <div class="ni-filter-row">
@@ -222,7 +222,7 @@
                     <div id="ni-account-backdrop" class="ni-diag-backdrop"></div>
                     <div class="ni-diag-panel">
                         <div class="ni-diag-head">
-                            <h2 id="ni-account-title" class="ni-diag-title" data-i18n="ni_account_title">Compte du
+                            <h2 id="ni-account-title" class="ni-diag-title">Compte du
                                 scan</h2>
                             <button id="ni-account-close" class="ni-close" type="button" aria-label="Fermer">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -232,26 +232,26 @@
                                 </svg>
                             </button>
                         </div>
-                        <p class="ni-diag-lede" data-i18n="ni_account_lede">Le scan lit le DHCP, l'annuaire et le
+                        <p class="ni-diag-lede">Le scan lit le DHCP, l'annuaire et le
                             DNS avec ce compte. Il peut s'agir du même compte que l'audit ou d'un compte dédié qui n'a
                             que les droits de lecture nécessaires. Le changer ne redémarre pas Aegis.</p>
                         <p class="ni-account-current-row">
-                            <span data-i18n="ni_account_current">Compte actuel :</span>
+                            <span>Compte actuel :</span>
                             <code id="ni-account-current" class="ni-account-name"></code>
                         </p>
                         <form id="ni-account-form" class="ni-account-form" autocomplete="off">
                             <label class="ni-account-field">
-                                <span data-i18n="ni_account_field_account">Compte (DOMAINE\nom ou nom@domaine)</span>
+                                <span>Compte (DOMAINE\nom ou nom@domaine)</span>
                                 <input id="ni-account-input" class="ni-input" type="text" spellcheck="false"
                                     placeholder="CORP\svc-scan">
                             </label>
                             <label class="ni-account-field">
-                                <span data-i18n="ni_account_field_secret">Mot de passe Windows du compte</span>
+                                <span>Mot de passe Windows du compte</span>
                                 <input id="ni-account-secret" class="ni-input" type="password"
                                     autocomplete="new-password">
                             </label>
                             <label class="ni-account-field">
-                                <span data-i18n="ni_account_field_password">Votre mot de passe Aegis</span>
+                                <span>Votre mot de passe Aegis</span>
                                 <input id="ni-account-password" class="ni-input" type="password"
                                     autocomplete="current-password">
                             </label>
@@ -260,13 +260,13 @@
                         <div id="ni-account-results" class="ni-diag-list"></div>
                         <div class="ni-diag-foot">
                             <button id="ni-account-test" class="ni-btn ni-btn-secondary" type="button"
-                                data-i18n="ni_account_test">Tester les accès</button>
+>Tester les accès</button>
                             <button id="ni-account-reset" class="ni-btn ni-btn-secondary" type="button"
-                                data-i18n="ni_account_reset">Revenir à l'identité du service</button>
+>Revenir à l'identité du service</button>
                             <button id="ni-account-cancel" class="ni-btn ni-btn-secondary" type="button"
                                 data-i18n="ni_close">Fermer</button>
                             <button id="ni-account-save" class="ni-btn ni-btn-primary" type="button"
-                                data-i18n="ni_account_save">Vérifier et enregistrer</button>
+>Vérifier et enregistrer</button>
                         </div>
                     </div>
                 </div>
