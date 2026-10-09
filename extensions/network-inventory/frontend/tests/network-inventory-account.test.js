@@ -103,6 +103,28 @@ test('a refused account read (not an admin) keeps the bar hidden', async () => {
   assert.strictEqual(bar.gear, false, 'and no gear either');
 });
 
+test('no label of the bar or the dialog shows a raw translation key', async () => {
+  // Core's applyTranslations writes the key itself into a data-i18n element
+  // whose key it does not know. 0.0.2 shipped a dialog reading
+  // "ni_account_title", "ni_account_save"... for exactly that reason.
+  const { page, close } = await open(SAVED);
+  await page.click('#ni-account-gear');
+  await page.click('#ni-account-test');
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 400)));
+  const read = await page.evaluate(() => {
+    const roots = [document.getElementById('ni-account'), document.getElementById('ni-account-modal')];
+    if (roots.some(r => !r)) return null;
+    const texts = roots.flatMap(r => [...r.querySelectorAll('*')]
+      .filter(e => e.children.length === 0)
+      .map(e => e.textContent.trim()).filter(Boolean));
+    return { count: texts.length, raw: texts.filter(x => /^[a-z]+(_[a-z0-9]+)+$/.test(x)) };
+  });
+  await close();
+  assert.ok(read, 'the bar and the dialog must exist');
+  assert.ok(read.count >= 10, `expected the labels to be read, got ${read.count}`);
+  assert.deepStrictEqual(read.raw, []);
+});
+
 test('the gear opens the same dialog as the bar', async () => {
   const { page, close } = await open(SAVED);
   await page.click('#ni-account-gear');
