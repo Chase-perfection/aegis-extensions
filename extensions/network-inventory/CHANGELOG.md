@@ -2,7 +2,7 @@
 
 Hosts and services discovered on the network.
 
-## 0.1.0
+## 0.0.2
 
 You choose the account the scan reads the network with.
 
