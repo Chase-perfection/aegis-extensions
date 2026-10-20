@@ -15,14 +15,15 @@
   "channel": "stable",
   "minAppVersion": "1.0.7",
   "latest": {
-    "version": "0.0.3",
-    "publishedAt": "2026-10-09T09:58:11Z",
-    "size": 82411,
-    "sha256": "5e8bf5cfa80e45881a56d8d7833fff90f21d3eb9798b19185a599ed5e8859ce4"
+    "version": "0.0.4",
+    "publishedAt": "2026-10-20T14:58:07Z",
+    "size": 91413,
+    "sha256": "5d69a0151ef1a188f6564a98ae1a18588fdc38ea3c24c439825d617e58f15a79"
   },
   "releases": [
     "0.0.1",
     "0.0.2",
-    "0.0.3"
+    "0.0.3",
+    "0.0.4"
   ]
 }
