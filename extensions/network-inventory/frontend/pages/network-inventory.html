@@ -256,6 +256,18 @@
                                     autocomplete="current-password">
                             </label>
                         </form>
+                        <!-- Saved on its own, the moment it changes: it is not a
+                             secret and needs neither password above. -->
+                        <fieldset class="ni-scan-options">
+                            <legend>Options du scan</legend>
+                            <label class="ni-scan-option">
+                                <input id="ni-scan-tcp" type="checkbox">
+                                <span>Sonder les ports TCP 22, 80, 135, 443, 445, 3389 et 9100</span>
+                            </label>
+                            <p class="ni-scan-option-note">Trouve les hôtes qui ne répondent pas au ping et liste
+                                leurs services. Le scan ouvre alors une connexion vers chaque adresse balayée, ce
+                                qu'un système de détection d'intrusion peut signaler. Désactivé par défaut.</p>
+                        </fieldset>
                         <p id="ni-account-msg" class="ni-account-msg" hidden role="status"></p>
                         <div id="ni-account-results" class="ni-diag-list"></div>
                         <div class="ni-diag-foot">

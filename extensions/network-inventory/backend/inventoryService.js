@@ -231,18 +231,33 @@ function normalizeIp(raw) {
         scanCount: Number(raw.scanCount) || 0,
         anomalies,
         history: toArr(raw.history),
+        // Both from 0.0.4 scans; absent on older history, so null and [].
+        osHint: OS_HINTS.includes(raw.osHint) ? raw.osHint : null,
+        services: normalizePorts(raw.services),
         evidence: raw.evidence && typeof raw.evidence === 'object'
             ? {
                 pingAlive: !!raw.evidence.pingAlive,
                 rttMs: numOrNull(raw.evidence.rttMs),
+                // Not numOrNull alone: Number(null) is 0, a TTL no reply carries.
+                ttl: raw.evidence.ttl == null ? null : numOrNull(raw.evidence.ttl),
                 hasArp: !!raw.evidence.hasArp,
                 arpStale: !!raw.evidence.arpStale,
+                tcpAlive: !!raw.evidence.tcpAlive,
                 hasDnsA: !!raw.evidence.hasDnsA,
                 hasDnsPtr: !!raw.evidence.hasDnsPtr,
                 hasDhcpLease: !!raw.evidence.hasDhcpLease
               }
             : null
     };
+}
+
+/** What NetworkScanner.OsHintFromTtl can return. Anything else is dropped. */
+const OS_HINTS = ['unix', 'windows', 'network'];
+
+/** TCP ports, as unique integers 1-65535 in order. Windows PowerShell may hand one port over unwrapped. */
+function normalizePorts(value) {
+    const ports = toArr(value).map(Number).filter(p => Number.isInteger(p) && p >= 1 && p <= 65535);
+    return [...new Set(ports)].sort((a, b) => a - b);
 }
 
 /**
