@@ -1809,11 +1809,26 @@
         card.appendChild(art);
 
         var body = el('div', 'dep-card-body');
+        var head = el('div', 'dep-card-head');
         var name = el('h3', 'dep-card-name');
         var icon = iconFor(p);
         if (icon) name.appendChild(icon);
         name.appendChild(el('span', 'dep-card-name-text', p.name));
-        body.appendChild(name);
+        head.appendChild(name);
+
+        // A site behind a directory login looks exactly like an open one from
+        // this list, and the difference is the whole point of the setting.
+        // Beside the name rather than under the dates: it says what the site
+        // is, not what last happened to it.
+        if (p.protected) {
+            var lock = el('span', 'dep-card-lock', '');
+            lock.appendChild(lockIcon());
+            var lockText = el('span', '', tr('deploy_auth_locked', 'Protected'));
+            lockText.setAttribute('data-i18n', 'deploy_auth_locked');
+            lock.appendChild(lockText);
+            head.appendChild(lock);
+        }
+        body.appendChild(head);
 
         if (p.lastSha) {
             var link = el('a', 'dep-card-link', p.url);
@@ -1831,17 +1846,6 @@
             p.repoFullName + ' · ' + p.branch +
             (p.lastSha ? ' · ' + p.lastSha.slice(0, 8) : '')));
         body.appendChild(el('p', 'dep-card-when', deployedLabel(p)));
-
-        // A site behind a directory login looks exactly like an open one from
-        // this list, and the difference is the whole point of the setting.
-        if (p.protected) {
-            var lock = el('p', 'dep-card-lock', '');
-            lock.appendChild(lockIcon());
-            var lockText = el('span', '', tr('deploy_auth_locked', 'Protected'));
-            lockText.setAttribute('data-i18n', 'deploy_auth_locked');
-            lock.appendChild(lockText);
-            body.appendChild(lock);
-        }
 
         if (state === 'down') {
             body.appendChild(el('p', 'dep-card-error',

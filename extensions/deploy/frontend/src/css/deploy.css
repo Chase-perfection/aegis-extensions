@@ -265,7 +265,6 @@
    French title set in it loses them ("Sécurité" paints as "SECURITE"). Archivo
    is the fallback the handoff itself pre-authorises. */
 .dep-pane-title {
-    margin: 0;
     font-family: var(--ag-font-display, var(--font-heading));
     font-size: 30px;
     line-height: 36px;
@@ -273,6 +272,8 @@
     letter-spacing: -0.2px;
     color: var(--text-main);
 }
+
+#deploy-view .dep-pane-title { margin: 0; }
 
 .dep-pane-meta {
     display: flex;
@@ -308,11 +309,12 @@
 
 .dep-body {
     max-width: 46rem;
-    margin: var(--space-sm) 0 var(--space-lg);
     color: var(--zinc-400);
     font-size: var(--text-sm);
     line-height: 1.6;
 }
+
+#deploy-view .dep-body { margin: var(--space-sm) 0 var(--space-lg); }
 
 .dep-eyebrow {
     font-family: var(--font-mono);
@@ -323,10 +325,15 @@
 }
 
 .dep-subtitle {
-    margin: var(--space-lg) 0 var(--space-sm);
     font-size: var(--text-h3);
     color: var(--text-main);
 }
+
+/* Margins on a heading or a paragraph are scoped to the view id: the white
+   skin's `body.aegis-white h2, body.aegis-white p { margin: 0 }` is (0,1,2),
+   loads after this file, and wins against a bare class, so a margin written
+   as `.dep-x { margin: ... }` on one of those elements never applied. */
+#deploy-view .dep-subtitle { margin: var(--space-lg) 0 var(--space-sm); }
 
 .dep-mono {
     font-family: var(--font-mono);
@@ -345,19 +352,21 @@
 
 .dep-hero-title {
     max-width: 34rem;
-    margin: var(--space-sm) 0 var(--space-md);
     font-size: var(--text-display);
     line-height: 1.2;
     color: var(--text-main);
 }
 
+#deploy-view .dep-hero-title { margin: var(--space-sm) 0 var(--space-md); }
+
 .dep-hero-body {
     max-width: 34rem;
-    margin: 0 0 var(--space-xl);
     color: var(--zinc-400);
     font-size: var(--text-body);
     line-height: 1.65;
 }
+
+#deploy-view .dep-hero-body { margin: 0 0 var(--space-xl); }
 
 /* The hero is centred; this list is not. Numbered steps read down a left edge,
    and centring them puts every number in a different column. So the box is
@@ -601,11 +610,12 @@
 }
 
 .dep-note {
-    margin-top: var(--space-sm);
     color: var(--zinc-300);
     font-size: var(--text-sm);
     line-height: 1.5;
 }
+
+#deploy-view .dep-note { margin-top: var(--space-sm); }
 
 .dep-label {
     display: block;
@@ -783,7 +793,6 @@ select.dep-input option:disabled {
    the options rather than replacing them, so the branch already showing stays
    pickable while GitHub is being asked about the rest. */
 .dep-drop-note {
-    margin: 4px 0 0;
     padding: 6px 10px;
     border-top: 1px solid var(--ag-hairline, var(--dep-line));
     color: var(--ag-meta, var(--zinc-400));
@@ -791,6 +800,8 @@ select.dep-input option:disabled {
     line-height: 1.45;
     white-space: normal;
 }
+
+#deploy-view .dep-drop-note { margin: 4px 0 0; }
 
 /* Same shell as .dep-select: both are one field in the same form. */
 .dep-input {
@@ -855,7 +866,6 @@ select.dep-input option:disabled {
    Not an <h3>: the card already has its heading, and a second level here would
    put a rung in the outline for a label four words long. */
 .dep-steps-title {
-    margin: 0 0 var(--space-xs);
     color: var(--zinc-300);
     font-size: var(--text-xs);
     font-weight: 600;
@@ -863,8 +873,18 @@ select.dep-input option:disabled {
     text-transform: uppercase;
 }
 
+#deploy-view .dep-steps-title { margin: 0 0 var(--space-xs); }
+
+#deploy-view .dep-hint { margin: 0 0 var(--space-md); }
+
+/* Stacked pieces that carry no margin of their own met edge to edge: a button
+   under a list sat on its last row, and a hint under the field it explains
+   touched the field's border. */
+#deploy-view .dep-rows + .dep-btn { margin-top: var(--space-md); }
+#deploy-view :is(.dep-input, .dep-select) + .dep-hint { margin-top: var(--space-xs); }
+#deploy-view .dep-auth-people-list + .dep-hint { margin-top: var(--space-sm); }
+
 .dep-hint {
-    margin: 0 0 var(--space-md);
     max-width: 46rem;
     color: var(--zinc-500);
     font-size: var(--text-xs);
@@ -879,8 +899,9 @@ select.dep-input option:disabled {
 
 .dep-error {
     color: var(--risk-critical);
-    margin-bottom: var(--space-md);
 }
+
+#deploy-view .dep-error { margin-bottom: var(--space-md); }
 
 /* --- Two-column body: form beside its sidecar, stages beside metadata --- */
 
@@ -1009,8 +1030,16 @@ select.dep-input option:disabled {
     padding: 16px;
 }
 
+/* Name on the left, the Protected chip pinned to the right of the same line. */
+.dep-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
 .dep-card-name {
-    margin: 0;
+    min-width: 0;
     font-family: var(--ag-font-ui, inherit);
     font-size: 15px;
     font-weight: 600;
@@ -1021,6 +1050,8 @@ select.dep-input option:disabled {
     align-items: center;
     gap: 8px;
 }
+
+#deploy-view .dep-card-name { margin: 0; }
 
 .dep-card-name-text {
     min-width: 0;
@@ -1037,7 +1068,6 @@ select.dep-input option:disabled {
 
 .dep-card-link,
 .dep-card-repo {
-    margin: 0;
     font-family: var(--ag-font-mono, var(--font-mono));
     color: var(--ag-meta, var(--zinc-400));
     text-decoration: none;
@@ -1055,26 +1085,38 @@ select.dep-input option:disabled {
    wrapping it to three lines pushes every card in the row taller for a value
    nobody reads to the end. */
 .dep-card-repo {
-    margin-top: 8px;
     font-size: 11px;
+    line-height: 1.5;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+#deploy-view .dep-card-repo { margin: 10px 0 0; }
+
+#deploy-view .dep-card-when { margin: 6px 0 0; }
+
 .dep-card-when {
-    margin: 4px 0 0;
     font-family: var(--ag-font-mono, var(--font-mono));
     color: var(--ag-meta, var(--zinc-500));
     font-size: 11px;
+    line-height: 1.5;
 }
 
 .dep-card-error {
-    margin: 0;
     color: var(--risk-critical);
     font-size: var(--text-xs);
     line-height: 1.5;
 }
+
+#deploy-view .dep-card-error { margin: 0; }
+
+/* On a card the refusal follows the dates, and touching them it read as one
+   more line of metadata. Under the overview's panel it touched the panel and
+   the next heading. */
+#deploy-view .dep-card-body > .dep-card-error { margin-top: 12px; }
+#deploy-view .dep-card-body > .dep-card-error + .dep-card-error { margin-top: 4px; }
+#deploy-view .dep-block > .dep-card-error { margin-top: var(--space-sm); }
 
 /* The question a refusal for missing packages asks. Ink, not red: the red
    line above it is the refusal, this is the way out of it. */
@@ -1089,26 +1131,29 @@ select.dep-input option:disabled {
 }
 
 .dep-needs-question {
-    margin: 0;
     color: var(--text-main);
     font-size: var(--text-sm);
     font-weight: 600;
     line-height: 1.5;
 }
 
+#deploy-view .dep-needs-question { margin: 0; }
+
 .dep-needs-how {
-    margin: 0;
     color: var(--zinc-400);
     font-size: var(--text-xs);
     line-height: 1.5;
     overflow-wrap: anywhere;
 }
 
+#deploy-view .dep-needs-how { margin: 0; }
+
 /* Sits under the refusal it qualifies, and in ink rather than in red: the
    refusal above is the problem, this is only what Aegis has stopped doing
    about it. Two reds in a row would read as two separate failures. */
+#deploy-view .dep-card-note { margin: 4px 0 0; }
+
 .dep-card-note {
-    margin: 4px 0 0;
     color: var(--ag-meta, var(--zinc-500));
     font-size: var(--text-xs);
     line-height: 1.5;
@@ -1322,12 +1367,13 @@ button.dep-listrow {
 }
 
 .dep-stage-detail {
-    margin: var(--space-xs) 0 0 calc(12px + var(--space-sm));
     color: var(--zinc-400);
     font-family: var(--font-mono);
     font-size: var(--text-mono-sm);
     overflow-wrap: anywhere;
 }
+
+#deploy-view .dep-stage-detail { margin: var(--space-xs) 0 0 calc(12px + var(--space-sm)); }
 
 /* The stage's state as core's status glyph: a dashed ring while pending,
    the loader while running, a tick when done, an exclamation when refused.
@@ -1490,17 +1536,19 @@ button.dep-listrow {
 .dep-cert-pinned { border-left-color: var(--risk-low); }
 
 .dep-cert-title {
-    margin: 0 0 var(--space-xs);
     font-size: var(--text-sm);
     color: var(--text-main);
 }
 
+#deploy-view .dep-cert-title { margin: 0 0 var(--space-xs); }
+
 .dep-cert-body {
-    margin: 0 0 var(--space-md);
     color: var(--zinc-300);
     font-size: var(--text-xs);
     line-height: 1.6;
 }
+
+#deploy-view .dep-cert-body { margin: 0 0 var(--space-md); }
 
 /* The fingerprint is the field the whole decision rests on: it is what an
    operator compares against their own CA, and comparing a subject name would
@@ -1537,10 +1585,11 @@ button.dep-listrow {
 }
 
 .dep-auth-site-note {
-    margin: var(--space-xs) 0 0;
     color: var(--zinc-300);
     font-size: var(--text-xs);
 }
+
+#deploy-view .dep-auth-site-note { margin: var(--space-xs) 0 0; }
 
 /* The people named on one site.
 
@@ -1559,7 +1608,6 @@ button.dep-listrow {
 }
 
 .dep-net-warn {
-    margin: 0 0 var(--space-xs);
     padding: var(--space-sm);
     color: var(--ag-warning, #a35c00);
     background: var(--ag-warning-wash-alt, #fdf7ec);
@@ -1568,14 +1616,17 @@ button.dep-listrow {
     font-size: var(--text-sm);
 }
 
+#deploy-view .dep-net-warn { margin: 0 0 var(--space-xs); }
+
 /* Reachable is the normal state, so it is a sentence and not a badge. The
    network itself is the part being read, hence the tabular figures. */
 .dep-net-on {
-    margin: 0 0 var(--space-sm);
     color: var(--text-main);
     font-size: var(--text-sm);
     font-variant-numeric: tabular-nums;
 }
+
+#deploy-view .dep-net-on { margin: 0 0 var(--space-sm); }
 
 .dep-auth-site-people {
     margin-bottom: var(--space-md);
@@ -1680,15 +1731,12 @@ button.dep-listrow {
     font-size: var(--text-xs);
 }
 
-.dep-auth-suggest-status {
-    margin: var(--space-xs) 0 0;
-}
+#deploy-view .dep-auth-suggest-status { margin: var(--space-xs) 0 0; }
 
 /* The HTTPS half of a site row. A rule rather than a gap or a card inside a
    card: the two halves are one decision about one site, and boxing the second
    would read as a separate setting that happens to sit nearby. */
 .dep-auth-site-sub {
-    margin: var(--space-md) 0 var(--space-sm);
     padding-top: var(--space-sm);
     border-top: 1px solid var(--dep-line);
     font-size: var(--text-sm);
@@ -1697,22 +1745,25 @@ button.dep-listrow {
     color: var(--zinc-300);
 }
 
+#deploy-view .dep-auth-site-sub { margin: var(--space-md) 0 var(--space-sm); }
+
 /* Shown only while a site asks for a password over plain HTTP. */
 .dep-auth-site-warn {
-    margin: var(--space-xs) 0 0;
     padding: var(--space-sm) var(--space-md);
     border-left: 2px solid var(--risk-critical);
     color: var(--zinc-300);
     font-size: var(--text-xs);
 }
 
+#deploy-view .dep-auth-site-warn { margin: var(--space-xs) 0 0; }
+
 /* The badge on a protected project's card. Accent rather than a risk colour:
    a site asking for a login is the intended state, not a warning. */
 .dep-card-lock {
     display: inline-flex;
     align-items: center;
+    flex: none;
     gap: var(--space-xs);
-    align-self: flex-start;
     margin: 0;
     padding: var(--space-xs) var(--space-sm);
     color: var(--accent-bright);
@@ -1801,8 +1852,18 @@ button.dep-listrow {
     gap: var(--space-md);
 }
 
-.dep-prod-head .dep-subtitle {
+.dep-prod-head {
+    margin-bottom: var(--space-md);
+}
+
+#deploy-view .dep-prod-head .dep-subtitle {
     margin: 0;
+}
+
+/* The card's action row carries a top margin to clear the card body; here it
+   sits beside the heading, and that margin pushed it onto the panel's edge. */
+.dep-prod-head .dep-card-actions {
+    margin-top: 0;
 }
 
 .dep-prod {
@@ -1844,6 +1905,18 @@ button.dep-listrow {
 
 .dep-prod-fact > * {
     overflow-wrap: anywhere;
+}
+
+/* A fact is a label over its value. The meta-row rules right-align the value
+   for a label/value line, and in this column that threw every value to the far
+   edge of the panel, a line below and a screen away from its label. */
+.dep-prod-fact > .dep-meta-value {
+    text-align: left;
+}
+
+.dep-prod-fact > .dep-detail-url {
+    margin-left: 0;
+    align-self: flex-start;
 }
 
 @media (max-width: 60rem) {
@@ -1889,7 +1962,7 @@ button.dep-listrow {
     gap: var(--space-sm);
 }
 
-.dep-block-head .dep-subtitle {
+#deploy-view .dep-block-head .dep-subtitle {
     margin: 0;
     text-decoration: none;
 }
@@ -2097,7 +2170,6 @@ button.dep-listrow {
 }
 
 .dep-access-title {
-    margin: 0;
     font-family: var(--ag-font-display, inherit);
     font-size: 20px;
     line-height: 28px;
@@ -2106,6 +2178,8 @@ button.dep-listrow {
     color: var(--ag-ink, var(--text-main));
     white-space: nowrap;
 }
+
+#deploy-view .dep-access-title { margin: 0; }
 
 .dep-access-meta {
     font-size: 12px;
@@ -2123,12 +2197,13 @@ button.dep-listrow {
 }
 
 .dep-access-lead {
-    margin: 0 0 var(--ag-space-6, var(--space-md));
     max-width: 72ch;
     font-size: 14px;
     line-height: 22px;
     color: var(--ag-body, var(--zinc-300));
 }
+
+#deploy-view .dep-access-lead { margin: 0 0 var(--ag-space-6, var(--space-md)); }
 
 /* The matrix sits in a sunken well: it is a reading of the form, not a
    control, and the surface change says so without a second card border. */
@@ -2148,13 +2223,14 @@ button.dep-listrow {
 }
 
 .dep-access-subtitle {
-    margin: 0;
     font-family: var(--ag-font-display, inherit);
     font-size: 16px;
     line-height: 24px;
     font-weight: 600;
     color: var(--ag-ink, var(--text-main));
 }
+
+#deploy-view .dep-access-subtitle { margin: 0; }
 
 .dep-access-table-wrap {
     overflow-x: auto;
@@ -2223,11 +2299,12 @@ button.dep-listrow {
 }
 
 .dep-access-empty {
-    margin: var(--ag-space-3, var(--space-sm)) 0 0;
     font-size: 12px;
     line-height: 16px;
     color: var(--ag-muted, var(--zinc-400));
 }
+
+#deploy-view .dep-access-empty { margin: var(--ag-space-3, var(--space-sm)) 0 0; }
 
 /* StatusChip: a line glyph plus the word, white chip, hairline edge. Only the
    glyph is coloured. */
@@ -2281,13 +2358,14 @@ button.dep-listrow {
 }
 
 .dep-access-card-title {
-    margin: 0;
     font-family: var(--ag-font-display, inherit);
     font-size: 16px;
     line-height: 24px;
     font-weight: 600;
     color: var(--ag-ink, var(--text-main));
 }
+
+#deploy-view .dep-access-card-title { margin: 0; }
 
 .dep-access-card-status {
     display: inline-flex;
@@ -2315,19 +2393,21 @@ button.dep-listrow {
 }
 
 .dep-access-help {
-    margin: 0;
     font-size: 12px;
     line-height: 16px;
     color: var(--ag-meta, var(--zinc-400));
 }
+
+#deploy-view .dep-access-help { margin: 0; }
 
 .dep-access-admins {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--ag-space-2, var(--space-xs));
-    margin: 0;
 }
+
+#deploy-view .dep-access-admins { margin: 0; }
 
 /* The picker inside a card follows the card's rhythm rather than owning a
    column of its own. */
