@@ -126,6 +126,12 @@ test('launch puts the password in the environment only', () => {
     assert.ok(!Object.keys(l.env).some(k => k.toLowerCase() === 'psmodulepath'));
 });
 
+test('launch asks for TCP probes only when told to', () => {
+    const creds = { account: 'CORP\\svc', password: 'pw' };
+    assert.ok(!scanAccount.launch(creds, {}).args.includes('-TcpProbe'));
+    assert.ok(scanAccount.launch(creds, { tcpProbe: true }).args.includes('-TcpProbe'));
+});
+
 test('launcherError reads the launcher refusal line', () => {
     assert.deepStrictEqual(scanAccount.launcherError('noise\nNETONLY_ERROR:1314:A required privilege is not held\n'),
         { win32: 1314, message: 'A required privilege is not held' });

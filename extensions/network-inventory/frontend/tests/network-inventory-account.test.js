@@ -194,3 +194,34 @@ test('the access test lists what each source answered, failures flagged', async 
   assert.strictEqual(result.hint, true);
   assert.strictEqual(result.error, true, 'a refused source must read as a failure');
 });
+
+function readTcpOption() {
+  const box = document.getElementById('ni-scan-tcp');
+  const set = box ? box.closest('fieldset') : null;
+  if (!box || !set) return null;
+  return { shown: !set.hidden && getComputedStyle(set).display !== 'none', checked: box.checked };
+}
+
+test('the TCP probe option shows the tenant setting when the dialog opens', async () => {
+  const { page, close, pageErrors } = await open(SAVED, {
+    '/api/inventory/settings': { success: true, settings: { tcpProbe: true, updatedAt: null, updatedBy: null } }
+  });
+  await page.click('#ni-account-gear');
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)));
+  const option = await page.evaluate(readTcpOption);
+  await close();
+  assert.deepStrictEqual(pageErrors, []);
+  assert.ok(option, 'the option must exist in the dialog');
+  assert.deepStrictEqual(option, { shown: true, checked: true });
+});
+
+test('a backend without scan settings keeps the TCP probe option hidden', async () => {
+  // A 0.0.3 backend: no settings route, so nothing the box could save to.
+  const { page, close } = await open(SAVED, { '/api/inventory/settings': { success: false } });
+  await page.click('#ni-account-gear');
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)));
+  const option = await page.evaluate(readTcpOption);
+  await close();
+  assert.ok(option, 'the option must exist in the dialog');
+  assert.strictEqual(option.shown, false);
+});

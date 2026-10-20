@@ -123,7 +123,7 @@
     function isUnidentified(i) {
         const e = i.evidence;
         if (!e) return false;
-        const live = e.pingAlive || e.hasArp;
+        const live = e.pingAlive || e.hasArp || e.tcpAlive;
         const named = (i.hostname && i.hostname.length) ||
             (i.dns && i.dns.length) || e.hasDhcpLease;
         return !!live && !named;
@@ -412,6 +412,20 @@
                 : T('ni_ev_ping', 'Répond au ping'));
         }
         if (e.hasArp) rows.push(e.arpStale ? T('ni_ev_arp_stale', 'Entrée ARP périmée') : T('ni_ev_arp', 'Présente dans la table ARP'));
+        if (ip.services && ip.services.length) {
+            rows.push(T('ni_ev_tcp', 'Ports TCP ouverts : {ports}').replace('{ports}', ip.services.join(', ')));
+        }
+        if (ip.osHint) {
+            const os = {
+                windows: T('ni_os_windows', 'Windows'),
+                unix: T('ni_os_unix', 'Linux, macOS ou Unix'),
+                network: T('ni_os_network', 'équipement réseau ou imprimante')
+            }[ip.osHint];
+            if (os) {
+                rows.push(T('ni_ev_os_hint', 'Système probable : {os} (TTL {ttl})')
+                    .replace('{os}', os).replace('{ttl}', e.ttl != null ? e.ttl : '?'));
+            }
+        }
         if (e.hasDnsA) rows.push(T('ni_ev_dns_a', 'Enregistrement DNS (A)'));
         if (e.hasDnsPtr) rows.push(T('ni_ev_dns_ptr', 'Enregistrement inverse (PTR)'));
         if (e.hasDhcpLease) rows.push(T('ni_ev_dhcp', 'Bail DHCP actif'));
@@ -591,7 +605,7 @@
         // only via a lingering DNS/DHCP record, never answered ping or ARP. Needs
         // evidence (null on legacy scans → hint stays hidden).
         const e = ip.evidence;
-        const staleLine = (ip.status !== 'free' && e && !e.pingAlive && !e.hasArp)
+        const staleLine = (ip.status !== 'free' && e && !e.pingAlive && !e.hasArp && !e.tcpAlive)
             ? `<div class="ni-tl-meta stale">${esc(T('ni_stale_hint', 'Aucune réponse réseau — présente via un enregistrement seul'))}</div>`
             : '';
         const historyHtml = history.length

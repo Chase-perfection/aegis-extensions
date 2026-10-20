@@ -2,6 +2,36 @@
 
 Hosts and services discovered on the network.
 
+## 0.0.4
+
+The scan finds more, says when it could not look, and the access test is faster.
+
+- **A failed read is reported, not shown as an empty network.** A ping, PTR,
+  NetBIOS or TCP request that cannot leave this machine is counted, and the report
+  names the first error. Before, a host whose outgoing ICMP was blocked showed
+  "0 hosts" and nothing else.
+- **MAC addresses for every host on the local segments.** The neighbour table is
+  read again after the ping sweep, so a host that drops ping but answers ARP is
+  listed, with its MAC. Hosts behind a router get theirs from NetBIOS when nothing
+  else gave one.
+- **NetBIOS names the machine, not its workgroup.** The scan used to keep the first
+  name in the reply, which is often the workgroup.
+- **Gateways come from DHCP.** The router each scope hands its clients (option 3)
+  is the gateway. The ".1 or .254" guess is kept only for subnets whose scope
+  declares none.
+- **A likely operating system** (Windows, Linux or Unix, network device) from the
+  TTL of the ping reply, shown with the address's evidence. A hint, not an
+  identification.
+- **Optional TCP probes**, off by default, in the scan account dialog. Ports 22, 80,
+  135, 443, 445, 3389 and 9100 are tried on every swept address: hosts that drop
+  ping are found, and each host's open ports are listed. Connect only, nothing is
+  sent, but it is active scanning that an intrusion detection system may flag.
+- **Faster.** The ping sweep really runs 256 requests at a time, reverse DNS
+  stops waiting after 2 seconds per address, and the "test access" button no
+  longer compiles the engine it never uses.
+- **A scan stops after 15 minutes** (5 for the access test) and says so, instead
+  of holding the page forever on a server that does not answer.
+
 ## 0.0.3
 
 The scan account dialog shows its labels. In 0.0.2 the title, the fields and

@@ -1,7 +1,8 @@
 param(
     [string]$Domain,
     [switch]$ProbeOnly,
-    [switch]$SelfTest
+    [switch]$SelfTest,
+    [switch]$TcpProbe
 )
 
 # Runs network_scan.ps1 with the scan account as its network identity, the way
@@ -55,6 +56,7 @@ $commandLine = '"' + $exe + '" -NoProfile -NonInteractive -ExecutionPolicy Bypas
 if ($Domain) { $commandLine += ' -Domain ' + $Domain }
 if ($ProbeOnly) { $commandLine += ' -ProbeOnly' }
 if ($SelfTest) { $commandLine += ' -SelfTest' }
+if ($TcpProbe) { $commandLine += ' -TcpProbe' }
 
 # The scan inherits this environment, the secret already gone from it. The
 # account stays: network_scan.ps1 names it in its diagnostics.

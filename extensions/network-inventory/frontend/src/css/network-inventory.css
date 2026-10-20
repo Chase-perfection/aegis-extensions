@@ -636,3 +636,9 @@
 .ni-account-msg.ok { color: var(--ag-sev-low); }
 .ni-account-msg.error { color: var(--ag-sev-critical); }
 #ni-account-results:empty { display: none; }
+.ni-scan-options { margin: 0; padding: 10px 0 0; border: 0; border-top: 1px solid var(--ni-divider); display: flex; flex-direction: column; gap: 6px; }
+.ni-scan-options[hidden] { display: none; }
+.ni-scan-options legend { padding: 0; font-size: 12px; font-weight: 600; color: var(--ni-label); }
+.ni-scan-option { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ni-body); cursor: pointer; }
+.ni-scan-option input { margin: 0; accent-color: var(--ni-accent); }
+.ni-scan-option-note { margin: 0; font-size: 12px; line-height: 1.45; color: var(--ni-muted); }

@@ -174,3 +174,54 @@ test('the access test runs the probe as the scan account and returns its diagnos
     assert.ok(calls[0].args.includes('-ProbeOnly'));
     assert.ok(calls[0].args.includes(scanAccount.LAUNCHER_PATH));
 });
+
+// --- Scan options -------------------------------------------------------------
+
+test('TCP probes stay off until the tenant turns them on', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ni-t-'));
+    const handlers = mount();
+    assert.strictEqual((await call(handlers, 'GET /api/inventory/settings', { dataDir })).body.settings.tcpProbe, false);
+
+    await call(handlers, 'POST /api/inventory/scan', { body: {}, dataDir });
+    assert.ok(!calls[0].args.includes('-TcpProbe'), 'off by default: no probe flag');
+
+    const put = await call(handlers, 'PUT /api/inventory/settings', { body: { tcpProbe: true }, dataDir });
+    assert.strictEqual(put.body.settings.tcpProbe, true);
+    await call(handlers, 'POST /api/inventory/scan', { body: {}, dataDir });
+    assert.ok(calls[1].args.includes('-TcpProbe'), 'on: the service-identity scan gets the flag');
+});
+
+test('the scan account path forwards the TCP probe flag to the launcher', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ni-t-'));
+    const handlers = mount();
+    scanAccount.save('acme', 'CORP\\svc', 'pw', null);
+    await call(handlers, 'PUT /api/inventory/settings', { body: { tcpProbe: true }, dataDir });
+    await call(handlers, 'POST /api/inventory/scan', { body: {}, dataDir });
+    assert.ok(calls[0].args.includes(scanAccount.LAUNCHER_PATH));
+    assert.ok(calls[0].args.includes('-TcpProbe'));
+});
+
+test('a setting that is not a boolean is refused and changes nothing', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ni-t-'));
+    const handlers = mount();
+    const r = await call(handlers, 'PUT /api/inventory/settings', { body: { tcpProbe: 'true' }, dataDir });
+    assert.strictEqual(r.status, 400);
+    assert.strictEqual(r.body.code, 'EBADSETTING');
+    assert.strictEqual((await call(handlers, 'GET /api/inventory/settings', { dataDir })).body.settings.tcpProbe, false);
+});
+
+test('a scan has a time limit, and one that runs past it says so', async () => {
+    const handlers = mount();
+    nextRun = { stdout: '', stderr: '', err: Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' }) };
+    const r = await call(handlers, 'POST /api/inventory/scan', { body: {} });
+    assert.ok(calls[0].options.timeout > 0, 'execFile must be given a timeout');
+    assert.strictEqual(r.status, 504);
+    assert.match(r.body.diagnostics[0].message, /minutes/);
+});
+
+test('the access probe gets a shorter limit than a full scan', async () => {
+    await call(mount(), 'POST /api/inventory/account/check');
+    const probeLimit = calls[0].options.timeout;
+    await call(mount(), 'POST /api/inventory/scan', { body: {} });
+    assert.ok(probeLimit > 0 && probeLimit < calls[1].options.timeout);
+});
