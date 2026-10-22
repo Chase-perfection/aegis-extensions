@@ -335,6 +335,30 @@ Test-Case 'the probe returns before the engine is compiled, and the engine is a 
     Assert-True ($addTypes[0].Extent.StartOffset -gt $probeIf.Extent.EndOffset) 'the probe never sweeps, so it must not pay for the compile'
 }
 
+# ── The domain is named, never taken from whoever runs the scan ─────────────
+
+Test-Case 'every Get-ADDomain call names its domain, so SYSTEM never asks for NT AUTHORITY' {
+    # The bug this pins: a bare Get-ADDomain resolves the domain of the user
+    # running it. The scan account launcher keeps the backend's local identity,
+    # SYSTEM under a service, so the scan asked the directory for a domain
+    # named NT AUTHORITY, fell back to the local machine and lost AD and DNS on
+    # a machine joined to the domain. No test host runs as SYSTEM, so this reads
+    # the source instead of running it.
+    $path = (Resolve-Path "$PSScriptRoot/../scan/network_scan.ps1").Path
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$null)
+    $calls = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Get-ADDomain' }, $true))
+    Assert-True ($calls.Count -ge 2) 'the scan must look its domain up, by name and by local computer'
+    foreach ($c in $calls) {
+        $named = @($c.CommandElements | Where-Object {
+                $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -in @('Identity', 'Current')
+            })
+        Assert-True ($named.Count -eq 1) "Get-ADDomain must carry -Identity or -Current: $($c.Extent.Text)"
+    }
+    $current = @($calls | Where-Object { $_.Extent.Text -match '-Current\s+LocalComputer' })
+    Assert-Equal 1 $current.Count 'without a domain from the operator, the scan asks for the local computer''s domain'
+}
+
 # ── Windows PowerShell 5.1, the runtime the backend actually uses ───────────
 
 $Ps51 = Get-Command powershell.exe -ErrorAction SilentlyContinue
