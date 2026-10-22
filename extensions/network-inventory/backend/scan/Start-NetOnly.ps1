@@ -2,6 +2,7 @@ param(
     [string]$Domain,
     [switch]$ProbeOnly,
     [switch]$SelfTest,
+    [switch]$TcpProbe,
     [string]$DhcpServer
 )
 
@@ -61,6 +62,7 @@ $commandLine = '"' + $exe + '" -NoProfile -NonInteractive -ExecutionPolicy Bypas
 if ($Domain) { $commandLine += ' -Domain ' + $Domain }
 if ($ProbeOnly) { $commandLine += ' -ProbeOnly' }
 if ($SelfTest) { $commandLine += ' -SelfTest' }
+if ($TcpProbe) { $commandLine += ' -TcpProbe' }
 if ($DhcpServer) { $commandLine += ' -DhcpServer ' + $DhcpServer }
 
 # The scan inherits this environment, the secret already gone from it. The

@@ -320,6 +320,21 @@ Test-Case 'a lease duration converts to seconds, and an unlimited one to $null' 
     Assert-Equal $null (ConvertTo-LeaseDuration $null)
 }
 
+# ── The engine is loaded from its file, after the probe has returned ────────
+
+Test-Case 'the probe returns before the engine is compiled, and the engine is a file' {
+    $path = (Resolve-Path "$PSScriptRoot/../scan/network_scan.ps1").Path
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$null)
+    $probeIf = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and
+            "$($n.Clauses[0].Item1)" -eq '$ProbeOnly' }, $true)
+    Assert-True ($null -ne $probeIf) 'the -ProbeOnly exit must exist'
+    $addTypes = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Add-Type' }, $true))
+    Assert-Equal 1 $addTypes.Count 'one compile, of NetworkScanner.cs'
+    Assert-True ($addTypes[0].Extent.Text -like '*NetworkScanner.cs*') 'compiled from the file, not an inline here-string'
+    Assert-True ($addTypes[0].Extent.StartOffset -gt $probeIf.Extent.EndOffset) 'the probe never sweeps, so it must not pay for the compile'
+}
+
 # ── Windows PowerShell 5.1, the runtime the backend actually uses ───────────
 
 $Ps51 = Get-Command powershell.exe -ErrorAction SilentlyContinue
@@ -408,6 +423,40 @@ if ($Ps51) {
         $r = Invoke-Ps51 @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scan, '-SelfTest')
         $line = @($r.Out -split "`r?`n" | Where-Object { $_.Trim().StartsWith('{') })[-1]
         Assert-Equal "$env:USERDOMAIN\$env:USERNAME" ($line | ConvertFrom-Json).context.userName
+    }
+
+    # The engine, compiled by 5.1's C# 5 compiler with the scan's own reference
+    # list. Nothing here touches the network: the NetBIOS reply is built by hand.
+    Test-Case '5.1: the engine compiles, reads a node status reply and maps TTLs' {
+        $cs = (Resolve-Path "$PSScriptRoot/../scan/NetworkScanner.cs").Path
+        $probe = Join-Path ([System.IO.Path]::GetTempPath()) ("ni-engine-" + [guid]::NewGuid() + '.ps1')
+        Set-Content -Path $probe -Encoding UTF8 -Value @'
+param([string]$Cs)
+Add-Type -Path $Cs -ReferencedAssemblies "System.Net.Primitives", "System.Threading.Tasks", "System.Core"
+function Name([string]$n, [byte]$suffix, [byte]$flags) {
+    $b = [System.Text.Encoding]::ASCII.GetBytes($n.PadRight(15))
+    return $b + @($suffix, $flags, [byte]0)
+}
+$head = New-Object byte[] 56
+$reply = $head + @([byte]2) + (Name 'WORKGROUP' 0 0x84) + (Name 'WS-01' 0 0x04) + @([byte]0x00, 0x15, 0x5D, 0x01, 0x02, 0x03) + (New-Object byte[] 10)
+$r = [NetworkScanner]::ParseNodeStatus([byte[]]$reply)
+"name=$($r.Name)"
+"mac=$($r.Mac)"
+$zero = $head + @([byte]1) + (Name 'WS-02' 0 0x04) + (New-Object byte[] 6)
+"zero=$([NetworkScanner]::ParseNodeStatus([byte[]]$zero).Mac -eq $null)"
+"short=$($null -eq [NetworkScanner]::ParseNodeStatus([byte[]]($head + @([byte]3))))"
+"ttl=" + ((@(64, 113, 250, 0) | ForEach-Object { "$([NetworkScanner]::OsHintFromTtl($_))" }) -join ',')
+'@
+        try { $r = Invoke-Ps51 @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $probe, $cs) }
+        finally { Remove-Item $probe -ErrorAction SilentlyContinue }
+        Assert-Equal '' $r.Err.Trim()
+        $lines = @($r.Out.Trim() -split "`r?`n")
+        Assert-Equal 'name=WS-01' $lines[0] 'the unique <00> entry, not the workgroup listed first'
+        Assert-Equal 'mac=00:15:5D:01:02:03' $lines[1]
+        Assert-Equal 'zero=True' $lines[2] 'an all-zero unit ID is no address'
+        Assert-Equal 'short=True' $lines[3] 'a truncated reply is refused, not read past its end'
+        # 0 is "not reported", hence the empty last item.
+        Assert-Equal 'ttl=unix,windows,network,' $lines[4]
     }
 }
 else {

@@ -10,18 +10,25 @@
     # emits { account, diagnostics, context }: what the scan account can read,
     # in seconds rather than a full scan. Behind the page's "test access" button.
     [switch]$ProbeOnly,
+    # TCP connect probes on a short port list, after the ping sweep: finds the
+    # hosts that drop ICMP and names the services the others offer. Off unless
+    # the tenant turned it on, since it is active scanning an IDS may flag.
+    [switch]$TcpProbe,
     # DHCP servers the operator declared, comma separated, read in addition to
     # those the directory authorizes. A standalone server, or one whose
     # authorization was never recorded, is in no directory list.
     [string]$DhcpServer
 )
 
-# Aegis Network Inventory Scanner v4 - C# Engine
-# Uses inline C# for high-performance parallel ping sweep & DNS resolution
-# Sources: Local Interfaces, Gateway, ARP, C# Ping Sweep, AD, DNS, DHCP, C# Reverse DNS
+# Aegis Network Inventory Scanner v5
+# The network engine (ping sweep, reverse DNS, NetBIOS, TCP probes) is
+# NetworkScanner.cs beside this file, compiled once the probe has returned.
+# Sources: Local Interfaces, Gateway, ARP, AD, DHCP, DNS, Ping, ARP again,
+# Reverse DNS, NetBIOS, TCP (opt-in)
 # Outputs the subnet-explorer contract to stdout:
 #   { ips: [...], subnets: [...], scannedAt, diagnostics: [...], context: {...} }
 # ips[]     = { ip, network, status, hostname, mac, macCount, dns[], dnsRecords[],
+#               osHint, services[],
 #               dhcp{kind,detail,expiresAt}, anomalies[], lastSeen, source, type }
 # subnets[] = { cidr, network, prefix, mask, label, vlan, dhcp{...}|null, dns{...}|null }
 # diagnostics[] = { source, status, message, hint, command, detail, at }
@@ -68,6 +75,10 @@ $DhcpByIp = @{}        # IP -> @{ kind; detail; expiresAt }
 $ResByIp = @{}         # IP -> $true when a DHCP reservation exists
 $PingByIp = @{}        # IP -> roundtrip ms when the host answered a ping this scan
 $ArpByIp = @{}         # IP -> @{ stale = $true/$false } when present in the neighbour table
+$TtlByIp = @{}         # IP -> the TTL its ping reply arrived with
+$ServicesByIp = @{}    # IP -> int[] of TCP ports that accepted a connection (-TcpProbe)
+$RouterIps = @{}       # IP -> $true when a DHCP scope names it as router (option 3)
+$RouterCidrs = @{}     # cidr -> $true when its scope declared a router
 $SubnetMeta = @{}      # cidr -> @{ cidr; network; prefix; mask; label; vlan; dhcp; dns }
 $ScanTime = (Get-Date).ToString("o")
 
@@ -229,149 +240,6 @@ function Get-VlanFromName {
 }
 
 # =============================================
-# C# ENGINE: High-Performance Network Scanner
-# =============================================
-$NetworkScannerCode = @"
-using System;
-using System.Collections.Generic;
-using System.Collections.Concurrent;
-using System.Linq;
-using System.Net;
-using System.Net.NetworkInformation;
-using System.Threading.Tasks;
-using System.Net.Sockets;
-using System.Text;
-
-public class NetworkScanner {
-
-    public class PingResult {
-        public string IP { get; set; }
-        public bool Alive { get; set; }
-        public long RoundtripMs { get; set; }
-    }
-
-    public class DnsResult {
-        public string IP { get; set; }
-        public string Hostname { get; set; }
-    }
-
-    public class NetBiosResult {
-        public string IP { get; set; }
-        public string Name { get; set; }
-    }
-
-    public static List<PingResult> PingSweepSubnets(string[] subnetPrefixes, int timeoutMs = 800) {
-        var allIps = new List<string>();
-        foreach (var prefix in subnetPrefixes) {
-            for (int i = 1; i <= 254; i++) {
-                allIps.Add(prefix + "." + i);
-            }
-        }
-        return PingSweepIps(allIps.ToArray(), timeoutMs);
-    }
-
-    // Sweeps an explicit address list. The caller expands each CIDR, so a /22
-    // scope is one sweep and a /25 never spills into the rest of its /24.
-    public static List<PingResult> PingSweepIps(string[] allIps, int timeoutMs = 800) {
-        var results = new ConcurrentBag<PingResult>();
-
-        Parallel.ForEach(allIps, new ParallelOptions { MaxDegreeOfParallelism = 256 }, ip => {
-            try {
-                using (var ping = new Ping()) {
-                    var reply = ping.Send(ip, timeoutMs);
-                    if (reply.Status == IPStatus.Success) {
-                        results.Add(new PingResult {
-                            IP = ip,
-                            Alive = true,
-                            RoundtripMs = reply.RoundtripTime
-                        });
-                    }
-                }
-            } catch { }
-        });
-
-        return results.ToList();
-    }
-
-    public static List<DnsResult> BatchReverseDns(string[] ips) {
-        var results = new ConcurrentBag<DnsResult>();
-        Parallel.ForEach(ips, new ParallelOptions { MaxDegreeOfParallelism = 64 }, ip => {
-            try {
-                var entry = Dns.GetHostEntry(ip);
-                if (!string.IsNullOrEmpty(entry.HostName) && entry.HostName != ip) {
-                    results.Add(new DnsResult { IP = ip, Hostname = entry.HostName });
-                }
-            } catch { }
-        });
-        return results.ToList();
-    }
-
-    public static List<NetBiosResult> BatchNetBiosLookup(string[] ips) {
-        var results = new ConcurrentBag<NetBiosResult>();
-        Parallel.ForEach(ips, new ParallelOptions { MaxDegreeOfParallelism = 32 }, ip => {
-            string name = GetNetBiosName(ip);
-            if (!string.IsNullOrEmpty(name)) {
-                results.Add(new NetBiosResult { IP = ip, Name = name });
-            }
-        });
-        return results.ToList();
-    }
-
-    private static string GetNetBiosName(string ip) {
-        try {
-            byte[] query = new byte[] {
-                0x80, 0x94, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x20, 0x43, 0x4b, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
-                0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
-                0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x00, 0x00, 0x21,
-                0x00, 0x01
-            };
-
-            using (var client = new UdpClient()) {
-                client.Client.SendTimeout = 500;
-                client.Client.ReceiveTimeout = 500;
-                client.Send(query, query.Length, ip, 137);
-                IPEndPoint remote = new IPEndPoint(IPAddress.Any, 0);
-                byte[] response = client.Receive(ref remote);
-
-                if (response.Length > 56) {
-                    int nameCount = response[56];
-                    if (nameCount > 0) {
-                        byte[] nameBytes = new byte[15];
-                        Array.Copy(response, 57, nameBytes, 0, 15);
-                        return Encoding.ASCII.GetString(nameBytes).Trim();
-                    }
-                }
-            }
-        } catch { }
-        return null;
-    }
-}
-"@
-
-# Compile C# engine
-$EngineReady = $false
-try {
-    $ExistingType = [System.Management.Automation.PSTypeName]'NetworkScanner'
-    if ($null -ne $ExistingType.Type) {
-        $EngineReady = $true
-    }
-    else {
-        Write-Host "Compiling C# Network Scanner Engine (Ultra-Fast Parallel Edition)..."
-        Add-Type -TypeDefinition $NetworkScannerCode -ReferencedAssemblies "System.Net.Primitives", "System.Threading.Tasks", "System.Core"
-        $EngineReady = $true
-        Write-Host "C# Engine compiled successfully."
-    }
-}
-catch {
-    Add-ScanDiagnostic -Log $Diag -Source 'Moteur C#' -Status 'degraded' `
-        -Message "La compilation du moteur C# a échoué, le scan bascule sur PowerShell (nettement plus lent)." `
-        -Hint "Vérifier que .NET est complet sur cette machine et qu'aucune stratégie n'interdit la compilation à la volée (répertoire TEMP non exécutable, AppLocker, antivirus)." `
-        -Command 'Add-Type -TypeDefinition $NetworkScannerCode' -ErrorRecord $_
-    Write-Host "Falling back to PowerShell methods."
-}
-
-# =============================================
 # Helper functions
 # =============================================
 function Install-RSATModule {
@@ -504,16 +372,34 @@ catch {
 # =============================================
 Write-Host "PROGRESS:15"
 Write-Host "Scanning ARP table..."
-try {
-    $Neighbors = Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-    Where-Object { $_.State -ne "Unreachable" -and $_.IPAddress -notlike "224.*" -and $_.IPAddress -notlike "239.*" -and $_.IPAddress -notlike "255.*" -and $_.IPAddress -ne "0.0.0.0" -and $_.IPAddress -notlike "169.254.*" }
+
+<#
+.SYNOPSIS
+    Files every neighbour-table entry that names a real link-layer address.
+.DESCRIPTION
+    Read twice: here, and again after the ping sweep, which fills the table for
+    every host on the segment, including those that drop ICMP but must still
+    answer ARP. Incomplete and Unreachable entries, and all-zero addresses, are
+    what the sweep leaves behind for an address nobody holds: filed, they would
+    turn every silent address into a device.
+#>
+function Read-NeighborTable {
+    $Neighbors = Get-NetNeighbor -AddressFamily IPv4 -ErrorAction Stop |
+    Where-Object {
+        $_.State -ne "Unreachable" -and $_.State -ne "Incomplete" -and
+        $_.LinkLayerAddress -and $_.LinkLayerAddress -notmatch '^(00[-:]?){5}00$' -and
+        $_.IPAddress -notlike "224.*" -and $_.IPAddress -notlike "239.*" -and $_.IPAddress -notlike "255.*" -and
+        $_.IPAddress -ne "0.0.0.0" -and $_.IPAddress -notlike "169.254.*"
+    }
     foreach ($n in $Neighbors) {
         $nType = if ($n.State -eq "Reachable" -or $n.State -eq "Permanent") { "Equipement (Online)" } else { "Equipement" }
-        $macAddr = if ($n.LinkLayerAddress) { ($n.LinkLayerAddress -replace '-', ':').ToUpper() } else { "-" }
+        $macAddr = ($n.LinkLayerAddress -replace '-', ':').ToUpper()
         $ArpByIp[$n.IPAddress] = @{ stale = ($n.State -ne "Reachable" -and $n.State -ne "Permanent") }
         Add-ToInventory -Ip $n.IPAddress -Name "-" -Type $nType -Source "ARP" -Mac $macAddr
     }
 }
+
+try { Read-NeighborTable }
 catch {
     Add-ScanDiagnostic -Log $Diag -Source 'Table ARP' -Status 'degraded' `
         -Message "La table de voisinage ARP n'a pas pu être lue : les adresses MAC des équipements du même segment manqueront." `
@@ -712,6 +598,14 @@ else {
             continue
         }
 
+        # Router (option 3) set at server level, which a scope without its own
+        # inherits. Absent on most servers, and the cmdlet errors when it is, so
+        # the failure is the normal case and stays silent: it gates nothing, the
+        # gateway falls back to the .1/.254 guess.
+        $serverRouters = @()
+        try { $serverRouters = @((Get-DhcpServerv4OptionValue -ComputerName $srvName -OptionId 3 -ErrorAction Stop).Value) }
+        catch { $serverRouters = @() }
+
         # Failover relationships, indexed by scope. A server with none returns
         # nothing on most builds and an error on some, which is why the error is
         # parked here and only reported when a shared scope actually needs it.
@@ -750,6 +644,15 @@ else {
                     -Message "L'étendue $cidr ($scopeName) est inactive sur $srvName : elle ne distribue aucun bail." `
                     -Hint "Activer l'étendue depuis la console DHCP si elle doit servir, ou la supprimer si elle est obsolète." `
                     -Command "Get-DhcpServerv4Scope -ComputerName $srvName -ScopeId $scopeId"
+            }
+
+            # --- router (option 3): the gateway the scope hands its clients ---
+            $routers = @()
+            try { $routers = @((Get-DhcpServerv4OptionValue -ComputerName $srvName -ScopeId $Scope.ScopeId -OptionId 3 -ErrorAction Stop).Value) }
+            catch { $routers = @() }
+            if ($routers.Count -eq 0) { $routers = $serverRouters }
+            foreach ($r in $routers) {
+                if ("$r") { $RouterIps["$r"] = $true; $RouterCidrs[$cidr] = $true }
             }
 
             # --- leases ---
@@ -1116,6 +1019,44 @@ if ($ProbeOnly) {
 }
 
 # =============================================
+# C# engine (NetworkScanner.cs)
+# =============================================
+# Compiled here, after the probe has returned: the probe never sweeps, and the
+# compile (csc.exe in TEMP) was its slowest step.
+$EngineReady = $false
+try {
+    if ($null -eq ([System.Management.Automation.PSTypeName]'NetworkScanner').Type) {
+        Write-Host "Compiling the C# network engine..."
+        Add-Type -Path (Join-Path $PSScriptRoot 'NetworkScanner.cs') -ReferencedAssemblies "System.Net.Primitives", "System.Threading.Tasks", "System.Core"
+    }
+    $EngineReady = $true
+}
+catch {
+    Add-ScanDiagnostic -Log $Diag -Source 'Moteur C#' -Status 'degraded' `
+        -Message "La compilation du moteur C# a échoué, le scan bascule sur PowerShell (nettement plus lent)." `
+        -Hint "Vérifier que .NET est complet sur cette machine et qu'aucune stratégie n'interdit la compilation à la volée (répertoire TEMP non exécutable, AppLocker, antivirus)." `
+        -Command 'Add-Type -Path NetworkScanner.cs' -ErrorRecord $_
+    Write-Host "Falling back to PowerShell methods."
+}
+
+<#
+.SYNOPSIS
+    Reports an engine batch whose requests could not all be sent (ADR 0015).
+.DESCRIPTION
+    A host that does not answer is not counted: only a request this machine
+    could not make. All of them failing means the source is blind, not that
+    the network is empty, and the report says so instead of showing zero hosts.
+#>
+function Add-EngineBatchDiagnostic {
+    param($Report, [string]$Source, [string]$What, [string]$Hint, [string]$Command)
+    if ($null -eq $Report -or $Report.Failed -eq 0) { return }
+    $status = if ($Report.Failed -ge $Report.Sent) { 'failed' } else { 'degraded' }
+    Add-ScanDiagnostic -Log $Diag -Source $Source -Status $status `
+        -Message "$($Report.Failed) requête(s) $What sur $($Report.Sent) n'ont pas pu partir de cette machine. Première erreur : $($Report.FirstError)" `
+        -Hint $Hint -Command $Command
+}
+
+# =============================================
 # SOURCE 7: Ping sweep across every declared subnet
 # =============================================
 # Last of the discovery sources, and deliberately so: it sweeps what the local
@@ -1147,18 +1088,22 @@ if ($SweepIps.Count -eq 0) {
 elseif ($EngineReady) {
     Write-Host "C# Engine: Parallel ping sweep over $($SweepIps.Count) address(es) in $($SweptCidrs.Count) subnet(s)..."
     try {
-        $alive = [NetworkScanner]::PingSweepIps(@($SweepIps), 800)
-        Write-Host "  Found $($alive.Count) alive hosts across all subnets."
-        foreach ($aliveHost in $alive) {
+        $sweep = [NetworkScanner]::PingSweep([string[]]@($SweepIps), 800, 256)
+        Write-Host "  Found $($sweep.Results.Count) alive hosts across all subnets."
+        foreach ($aliveHost in $sweep.Results) {
             $PingByIp[$aliveHost.IP] = [int64]$aliveHost.RoundtripMs
+            if ($aliveHost.Ttl -gt 0) { $TtlByIp[$aliveHost.IP] = [int]$aliveHost.Ttl }
             Add-ToInventory -Ip $aliveHost.IP -Name "-" -Type "Equipement (Online)" -Source "Ping (C#)"
         }
+        Add-EngineBatchDiagnostic -Report $sweep -Source 'Balayage ping' -What 'ICMP' `
+            -Hint "Vérifier qu'aucune stratégie de pare-feu local ne bloque l'ICMP sortant depuis cette machine. Les adresses connues du DHCP, du DNS ou de la table ARP restent à l'inventaire." `
+            -Command '[NetworkScanner]::PingSweep(...)'
     }
     catch {
         Add-ScanDiagnostic -Log $Diag -Source 'Balayage ping' -Status 'failed' `
             -Message "Le balayage ping a échoué : seules les adresses connues du DHCP, du DNS ou de la table ARP figurent à l'inventaire." `
             -Hint "Vérifier qu'aucune stratégie de pare-feu local ne bloque l'ICMP sortant depuis cette machine." `
-            -Command '[NetworkScanner]::PingSweepIps(...)' -ErrorRecord $_
+            -Command '[NetworkScanner]::PingSweep(...)' -ErrorRecord $_
     }
 }
 else {
@@ -1205,6 +1150,58 @@ else {
 }
 
 # =============================================
+# SOURCE 8: ARP table, again
+# =============================================
+# The sweep made this machine resolve every swept address on its own segments,
+# so the table now names the MAC of each local host that answered ARP, ping or
+# no ping. Read before the sweep, it only held what had talked to us recently.
+Write-Host "PROGRESS:68"
+try { Read-NeighborTable }
+catch {
+    Add-ScanDiagnostic -Log $Diag -Source 'Table ARP' -Status 'degraded' `
+        -Message "La table de voisinage n'a pas pu être relue après le balayage : les adresses MAC des hôtes du segment qui ne répondent pas au ping manqueront." `
+        -Hint "Vérifier Get-NetNeighbor." `
+        -Command 'Get-NetNeighbor -AddressFamily IPv4' -ErrorRecord $_
+}
+
+# =============================================
+# SOURCE 9: TCP connect probes (opt-in)
+# =============================================
+# Connect, close, nothing sent. Every swept address, so a host that drops ICMP
+# and sits behind a router (where ARP cannot see it) is still found, and each
+# live host's open ports are named. Off unless the tenant turned it on.
+$TcpPorts = @(22, 80, 135, 443, 445, 3389, 9100)
+if ($TcpProbe -and $SweepIps.Count -gt 0) {
+    Write-Host "PROGRESS:70"
+    if (-not $EngineReady) {
+        Add-ScanDiagnostic -Log $Diag -Source 'Sondage TCP' -Status 'degraded' `
+            -Message "Le sondage TCP est activé mais demande le moteur C#, qui n'a pas compilé : il n'a pas eu lieu." `
+            -Hint "Corriger l'échec du moteur C# signalé plus haut dans ce rapport."
+    }
+    else {
+        Write-Host "C# Engine: TCP connect probes on $($TcpPorts -join ', ') over $($SweepIps.Count) address(es)..."
+        try {
+            $tcp = [NetworkScanner]::ProbeTcp([string[]]@($SweepIps), [int[]]$TcpPorts, 500, 256)
+            foreach ($hit in $tcp.Results) {
+                $ServicesByIp[$hit.IP] = @($hit.OpenPorts)
+                Add-ToInventory -Ip $hit.IP -Name "-" -Type "Equipement (Online)" -Source "TCP (C#)"
+            }
+            Add-ScanDiagnostic -Log $Diag -Source 'Sondage TCP' -Status 'ok' `
+                -Message "$($tcp.Results.Count) hôte(s) acceptent une connexion sur au moins un des ports $($TcpPorts -join ', ')."
+            Add-EngineBatchDiagnostic -Report $tcp -Source 'Sondage TCP' -What 'TCP' `
+                -Hint "Une connexion qui ne peut pas partir vient de cette machine : pare-feu local sortant, ou ports éphémères épuisés." `
+                -Command '[NetworkScanner]::ProbeTcp(...)'
+        }
+        catch {
+            Add-ScanDiagnostic -Log $Diag -Source 'Sondage TCP' -Status 'failed' `
+                -Message "Le sondage TCP a échoué : les hôtes qui ne répondent pas au ping et les ports ouverts manqueront." `
+                -Hint "Le détail ci-dessous vient de l'exception." `
+                -Command '[NetworkScanner]::ProbeTcp(...)' -ErrorRecord $_
+        }
+    }
+}
+
+# =============================================
 # ENRICHMENT: Batch Reverse DNS (C# or PS fallback)
 # =============================================
 Write-Host "PROGRESS:75"
@@ -1214,11 +1211,22 @@ $resolvedCount = 0
 if ($EngineReady -and $unknownIps.Count -gt 0) {
     Write-Host "C# Engine: Batch reverse DNS for $($unknownIps.Count) IPs..."
     try {
-        $dnsResults = [NetworkScanner]::BatchReverseDns($unknownIps)
-        foreach ($dr in $dnsResults) {
+        $dns = [NetworkScanner]::BatchReverseDns([string[]]$unknownIps, 2000, 64)
+        foreach ($dr in $dns.Results) {
             $IpInventory[$dr.IP].Name = $dr.Hostname
             $IpInventory[$dr.IP].Source += ", rDNS (C#)"
             $resolvedCount++
+        }
+        Add-EngineBatchDiagnostic -Report $dns -Source 'Resolution inverse' -What 'PTR' `
+            -Hint "Vérifier que le résolveur DNS configuré sur cette machine répond aux requêtes PTR." `
+            -Command '[NetworkScanner]::BatchReverseDns(...)'
+        # Silence on every request is a resolver that does not answer, not a
+        # network where nothing has a PTR record.
+        if ($dns.Sent -gt 0 -and $dns.TimedOut -eq $dns.Sent) {
+            Add-ScanDiagnostic -Log $Diag -Source 'Resolution inverse' -Status 'degraded' `
+                -Message "Aucune des $($dns.Sent) requêtes PTR n'a reçu de réponse en 2 s : des adresses actives resteront sans nom d'hôte." `
+                -Hint "Vérifier que le résolveur DNS configuré sur cette machine répond aux requêtes inverses." `
+                -Command '[NetworkScanner]::BatchReverseDns(...)'
         }
     }
     catch {
@@ -1251,12 +1259,18 @@ if ($stillUnknown.Count -gt 0) {
     if ($EngineReady) {
         Write-Host "C# Engine: Parallel NetBIOS resolution for $($stillUnknown.Count) IPs..."
         try {
-            $nbtResults = [NetworkScanner]::BatchNetBiosLookup($stillUnknown)
-            foreach ($nr in $nbtResults) {
-                $IpInventory[$nr.IP].Name = $nr.Name
-                $IpInventory[$nr.IP].Source += ", NetBIOS (C#)"
+            $nbt = [NetworkScanner]::BatchNetBiosLookup([string[]]$stillUnknown, 500, 32)
+            foreach ($nr in $nbt.Results) {
+                # The MAC only where nothing else gave one: a host behind a
+                # router is invisible to ARP, and a second source for an address
+                # ARP or DHCP already named could read as a conflict.
+                $mac = if ($nr.Mac -and -not $MacsByIp.ContainsKey($nr.IP)) { "$($nr.Mac)" } else { "-" }
+                Add-ToInventory -Ip $nr.IP -Name $nr.Name -Type "Equipement" -Source "NetBIOS (C#)" -Mac $mac
             }
-            Write-Host "Resolved $($nbtResults.Count) additional hostnames via NetBIOS (C#)."
+            Write-Host "Resolved $($nbt.Results.Count) additional hostnames via NetBIOS (C#)."
+            Add-EngineBatchDiagnostic -Report $nbt -Source 'Resolution NetBIOS' -What 'NetBIOS' `
+                -Hint "Une requête qui ne peut pas partir vient de cette machine (pare-feu local sortant sur UDP 137). Sans conséquence sur le reste de l'inventaire." `
+                -Command '[NetworkScanner]::BatchNetBiosLookup(...)'
         }
         catch {
             Add-ScanDiagnostic -Log $Diag -Source 'Resolution NetBIOS' -Status 'degraded' `
@@ -1295,7 +1309,13 @@ if ($stillUnknown.Count -gt 0) {
 Write-Host "PROGRESS:90"
 foreach ($Ip in @($IpInventory.Keys)) {
     $Entry = $IpInventory[$Ip]
-    if ($Ip -match "\.1$|\.254$") { $Entry.Type = "Passerelle" }
+    # The router a DHCP scope hands its clients (option 3) is the gateway. The
+    # .1/.254 guess applies only to a subnet whose scope declared none: where
+    # one did, a .1 that is not it is a host like any other.
+    if ($RouterIps.ContainsKey($Ip)) { $Entry.Type = "Passerelle"; continue }
+    if ($Ip -match "\.1$|\.254$" -and -not $RouterCidrs.ContainsKey((Resolve-CidrForIp -Ip $Ip -Index (Get-ScanCidrIndex)))) {
+        $Entry.Type = "Passerelle"
+    }
 }
 
 # =============================================
@@ -1389,7 +1409,14 @@ foreach ($Ip in $IpInventory.Keys) {
         hasDnsA      = $HasA.ContainsKey($Ip)
         hasDnsPtr    = $HasPtr.ContainsKey($Ip)
         hasDhcpLease = ($DhcpByIp.ContainsKey($Ip) -and "$($DhcpByIp[$Ip].kind)" -ne "none")
+        ttl          = if ($TtlByIp.ContainsKey($Ip)) { $TtlByIp[$Ip] } else { $null }
+        tcpAlive     = $ServicesByIp.ContainsKey($Ip)
     }
+    $osHint = if ($EngineReady -and $TtlByIp.ContainsKey($Ip)) { [NetworkScanner]::OsHintFromTtl($TtlByIp[$Ip]) } else { $null }
+    # Assigned, not taken from an if-expression: the pipeline would unroll a
+    # one-port array into a number and an empty one into $null.
+    $services = @()
+    if ($ServicesByIp.ContainsKey($Ip)) { $services = @($ServicesByIp[$Ip]) }
 
     [void]$IpsOut.Add([ordered]@{
         ip         = $Ip
@@ -1403,6 +1430,8 @@ foreach ($Ip in $IpInventory.Keys) {
         dhcp       = $dhcp
         anomalies  = $anom
         evidence   = $ev
+        osHint     = $osHint
+        services   = $services
         lastSeen   = if ($status -eq "free") { $null } else { $ScanTime }
         source     = "$($e.Source)"
         type       = "$($e.Type)"
@@ -1447,6 +1476,7 @@ $Context = [ordered]@{
     engine       = $engineLabel
     sweptSubnets = $SweptCidrs.Count
     sweptHosts   = $SweepIps.Count
+    tcpProbe     = [bool]$TcpProbe
     dhcpScopes   = $ScopeReads.Count
     subnets      = $SubnetsOut.Count
     activeIps    = $activeCount

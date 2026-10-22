@@ -9,9 +9,31 @@ test('normalizeIp carries the evidence object through with coerced booleans', ()
                 hasDnsA: true, hasDnsPtr: false, hasDhcpLease: 1 }
   });
   assert.deepStrictEqual(out.evidence, {
-    pingAlive: true, rttMs: 3, hasArp: true, arpStale: false,
+    pingAlive: true, rttMs: 3, ttl: null, hasArp: true, arpStale: false, tcpAlive: false,
     hasDnsA: true, hasDnsPtr: false, hasDhcpLease: true
   });
+});
+
+test('normalizeIp keeps the reply TTL, and an absent one stays null rather than 0', () => {
+  const ev = (e) => normalizeIp({ ip: '10.0.0.5', evidence: e }).evidence;
+  assert.strictEqual(ev({ pingAlive: true, ttl: 127 }).ttl, 127);
+  assert.strictEqual(ev({ pingAlive: true, ttl: null }).ttl, null);
+  assert.strictEqual(ev({ pingAlive: true }).ttl, null);
+  assert.strictEqual(ev({ tcpAlive: 1 }).tcpAlive, true);
+});
+
+test('normalizeIp keeps a known OS hint and drops anything else', () => {
+  assert.strictEqual(normalizeIp({ ip: '10.0.0.5', osHint: 'windows' }).osHint, 'windows');
+  assert.strictEqual(normalizeIp({ ip: '10.0.0.5', osHint: 'Windows 11' }).osHint, null);
+  assert.strictEqual(normalizeIp({ ip: '10.0.0.5' }).osHint, null, 'history written before 0.0.4');
+});
+
+test('normalizeIp turns services into unique ports in order, whatever PowerShell sent', () => {
+  assert.deepStrictEqual(normalizeIp({ ip: '10.0.0.5', services: [445, 22, 445, '3389'] }).services, [22, 445, 3389]);
+  // Windows PowerShell hands a one-element array over as a bare number.
+  assert.deepStrictEqual(normalizeIp({ ip: '10.0.0.5', services: 9100 }).services, [9100]);
+  assert.deepStrictEqual(normalizeIp({ ip: '10.0.0.5', services: [0, 70000, 'x', null] }).services, []);
+  assert.deepStrictEqual(normalizeIp({ ip: '10.0.0.5' }).services, []);
 });
 
 test('normalizeIp defaults evidence to null when the scan did not provide it', () => {
@@ -111,7 +133,7 @@ test('buildResponse groups a /22 DHCP scope as one subnet, not four /24s', () =>
     // Addresses spread across all four /24s of the scope, as a real scan returns.
     ips: [
       { ip: '10.0.0.5', status: 'used', network: '10.0.0.0/24' },
-      { ip: '10.0.1.60', status: 'used', network: '10.0.1.0/24' },
+      { ip: '10.0.1.60', status: 'used', network: '10.0.0.4/24' },
       { ip: '10.0.2.7', status: 'used', network: '10.0.2.0/24' },
       { ip: '10.0.3.199', status: 'free', network: '10.0.3.0/24' }
     ]

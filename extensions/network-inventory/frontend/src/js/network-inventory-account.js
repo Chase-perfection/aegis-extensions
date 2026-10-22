@@ -99,8 +99,51 @@
         byId('ni-account-reset').hidden = !state.account;
         setMessage(state.canChange ? '' : errorText({ code: 'ECOREOLD' }), state.canChange ? '' : 'error');
         setBusy(false);
+        loadSettings();
         modal.hidden = false;
         byId('ni-account-input').focus();
+    }
+
+    // The scan options, read each time the dialog opens. A backend older than
+    // 0.0.4 has no settings route: the option stays hidden rather than shown
+    // with a value nobody can save.
+    async function loadSettings() {
+        const box = byId('ni-scan-tcp');
+        const fieldset = box ? box.closest('fieldset') : null;
+        if (!box || !fieldset) return;
+        fieldset.hidden = true;
+        try {
+            const res = await window.api('/api/inventory/settings');
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data.success || !data.settings) return;
+            box.checked = data.settings.tcpProbe === true;
+            fieldset.hidden = false;
+        } catch (_) { /* older backend: no option */ }
+    }
+
+    async function saveTcpProbe(box) {
+        const wanted = box.checked;
+        box.disabled = true;
+        try {
+            const res = await window.api('/api/inventory/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tcpProbe: wanted })
+            });
+            let data = {};
+            try { data = await res.json(); } catch (_) { }
+            if (!res.ok || data.success !== true) throw new Error('refused');
+            box.checked = data.settings.tcpProbe === true;
+            setMessage(box.checked
+                ? T('ni_scan_tcp_on', 'Le prochain scan sondera les ports TCP.')
+                : T('ni_scan_tcp_off', 'Le prochain scan ne sondera plus les ports TCP.'), 'ok');
+        } catch (_) {
+            box.checked = !wanted;
+            setMessage(T('ni_account_err_generic', 'L\'opération a échoué.'), 'error');
+        } finally {
+            box.disabled = false;
+        }
     }
 
     function close() {
@@ -216,6 +259,9 @@
         if (e.target.closest('#ni-account-save')) { save(); return; }
         if (e.target.closest('#ni-account-reset')) { reset(); return; }
         if (e.target.closest('#ni-account-test')) { test(); }
+    });
+    document.addEventListener('change', (e) => {
+        if (e.target && e.target.id === 'ni-scan-tcp') saveTcpProbe(e.target);
     });
     document.addEventListener('keydown', (e) => {
         const modal = byId('ni-account-modal');

@@ -26,12 +26,22 @@ const { execFile } = require('child_process');
 
 const inventoryService = require('./inventoryService');
 const scanAccount = require('./scanAccount');
+const scanSettings = require('./scanSettings');
 const accountRoutes = require('./accountRoutes');
 const dhcpRoutes = require('./dhcpRoutes');
 const dhcpSettings = require('./dhcpSettings');
 
 /** The scan script, inside this package rather than in core's `shield/`. */
 const SCRIPT_PATH = path.join(__dirname, 'scan', 'network_scan.ps1');
+
+/**
+ * How long a scan may run before it is stopped. Without a limit a hung DHCP or
+ * DNS read held the request, and the page's spinner, forever. Killing the
+ * process is enough: under Start-NetOnly.ps1 the scan sits in a Job Object
+ * that dies with its launcher.
+ */
+const SCAN_TIMEOUT_MS = 15 * 60 * 1000;
+const PROBE_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
  * A stderr tail long enough to diagnose a failed scan and short enough to read.
@@ -71,23 +81,25 @@ function feedbackFrom(context) {
  * With `creds` it goes through scan/Start-NetOnly.ps1, so every network read is
  * made as the tenant's scan account; without, straight to powershell.exe as the
  * service, which is what the scan has always done. A launcher that Windows
- * refused to start rejects with `err.netOnly = { win32, message }`.
+ * refused to start rejects with `err.netOnly = { win32, message }`, and one
+ * stopped for running too long with `err.timedOut = true`.
  */
-function runScript({ slug, domain, probeOnly, dhcpServers, creds, log, event, stderrLines }) {
+function runScript({ slug, domain, probeOnly, tcpProbe, dhcpServers, creds, log, event, stderrLines }) {
     return new Promise((resolve, reject) => {
         let file = 'powershell.exe';
         let args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT_PATH];
         // 32 MB: the payload now carries every lease of every scope a second
         // time, under the server that holds it, for the DHCP view.
-        let options = { maxBuffer: 32 * 1024 * 1024 };
+        let options = { maxBuffer: 32 * 1024 * 1024, timeout: probeOnly ? PROBE_TIMEOUT_MS : SCAN_TIMEOUT_MS };
         if (creds) {
-            const l = scanAccount.launch(creds, { domain, probeOnly, dhcpServers });
+            const l = scanAccount.launch(creds, { domain, probeOnly, tcpProbe, dhcpServers });
             file = l.file;
             args = l.args;
             options = { ...options, env: l.env, windowsHide: true };
         } else {
             if (domain) args.push('-Domain', domain);
             if (probeOnly) args.push('-ProbeOnly');
+            if (tcpProbe) args.push('-TcpProbe');
             if (dhcpServers && dhcpServers.length) args.push('-DhcpServer', dhcpServers.join(','));
         }
 
@@ -99,6 +111,8 @@ function runScript({ slug, domain, probeOnly, dhcpServers, creds, log, event, st
             if (err) {
                 const refused = creds ? scanAccount.launcherError(stderr) : null;
                 if (refused) err.netOnly = refused;
+                // execFile's own timeout kills with a signal and sets `killed`.
+                if (err.killed) err.timedOut = true;
                 return reject(err);
             }
             resolve(stdout);
@@ -211,10 +225,30 @@ function register(router, context) {
         }
     });
 
+    // The scan's options. Admin only, like the scan itself: turning TCP probes
+    // on changes what the next scan sends onto the network.
+    router.get('/api/inventory/settings', requireRole('admin'), (req, res) => {
+        res.json({ success: true, settings: scanSettings.read(req.tenantPaths.data) });
+    });
+
+    router.put('/api/inventory/settings', requireRole('admin'), (req, res) => {
+        const body = req.body || {};
+        if (typeof body.tcpProbe !== 'boolean') {
+            return res.status(400).json({ success: false, code: 'EBADSETTING' });
+        }
+        const by = req.user ? (req.user.email || req.user.username || null) : null;
+        const settings = scanSettings.write(req.tenantPaths.data, { tcpProbe: body.tcpProbe }, by);
+        activity(req, 'audit', 'settings', {
+            system: 'Shield', event: 'inventory.settings', details: 'tcpProbe=' + settings.tcpProbe
+        });
+        res.json({ success: true, settings });
+    });
+
     router.post('/api/inventory/scan', requireRole('admin'), async (req, res) => {
         const { domain } = req.body;
         const slug = req.tenant.slug;
         const historyFile = path.join(req.tenantPaths.data, 'inventory_history.json');
+        const { tcpProbe } = scanSettings.read(req.tenantPaths.data);
 
         // Kept for the failure report: when the scan dies before emitting its
         // JSON, this is the only account of what went wrong the operator will
@@ -235,7 +269,7 @@ function register(router, context) {
                 : 'Starting standalone Network Inventory scan...');
 
             const dhcpServers = dhcpSettings.read(req.tenantPaths.data).dhcpServers;
-            const result = await runScript({ slug, domain, dhcpServers, creds, log, event, stderrLines });
+            const result = await runScript({ slug, domain, tcpProbe, dhcpServers, creds, log, event, stderrLines });
             const jsonLine = lastJsonLine(result);
 
             activity(req, 'audit', 'scan', {
@@ -275,6 +309,17 @@ function register(router, context) {
             if (e && e.netOnly && creds) {
                 const d = launcherDiagnostic(creds.account, e.netOnly);
                 return res.status(500).json({ success: false, error: d.message, diagnostics: [d] });
+            }
+            if (e && e.timedOut) {
+                const d = {
+                    source: 'Scan',
+                    status: 'failed',
+                    message: `Le scan a dépassé ${SCAN_TIMEOUT_MS / 60000} minutes et a été arrêté. L'affichage montre le résultat du scan précédent.`,
+                    hint: "Une lecture DHCP, annuaire ou DNS qui ne répond pas est la cause habituelle : le test des accès du compte du scan la désigne en quelques secondes.",
+                    command: 'POST /api/inventory/scan',
+                    detail: stderrLines.join(' | ')
+                };
+                return res.status(504).json({ success: false, error: d.message, diagnostics: [d] });
             }
             // The scan could not be launched, or died mid-run. Answer with a
             // report of the same shape as a successful scan's, so the dialog has
