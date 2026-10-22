@@ -2,6 +2,17 @@
 
 Hosts and services discovered on the network.
 
+## 0.0.6
+
+**A scan run with the scan account finds the domain again.** The scan asked
+Active Directory for the domain of the identity running it. With a scan account,
+that identity is the dashboard's own, SYSTEM when the dashboard runs as a
+service, and its domain is NT AUTHORITY. The report said the directory was
+unreachable on a machine joined to the domain. The scan then took the local
+machine as its domain controller, so the DNS zones were read from a machine that
+holds none. The scan now asks for the domain named for the scan, or else the
+domain this computer is joined to.
+
 ## 0.0.5
 
 DHCP scopes appear again, and the page has a DHCP view.

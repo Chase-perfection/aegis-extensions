@@ -291,17 +291,26 @@ function Add-ToInventory {
 }
 
 # --- Detect PDC ---
+# Get-ADDomain with no argument answers for the domain of the *user* running it.
+# Under the scan account launcher that user is the backend's local identity,
+# SYSTEM when the dashboard runs as a service, and SYSTEM's domain is NT
+# AUTHORITY: the lookup failed on a machine joined to the domain, and the scan
+# fell back to itself as controller and DNS server. The domain is the one the
+# operator named, else the one this computer is joined to, whoever runs the scan.
 $Pdc = $null
+$PdcCommand = if ($Domain) { "(Get-ADDomain -Identity $Domain).PDCEmulator" } else { '(Get-ADDomain -Current LocalComputer).PDCEmulator' }
 try {
     Import-Module ActiveDirectory -ErrorAction Stop
-    $Pdc = (Get-ADDomain).PDCEmulator
+    $adDomain = if ($Domain) { Get-ADDomain -Identity $Domain -ErrorAction Stop }
+    else { Get-ADDomain -Current LocalComputer -ErrorAction Stop }
+    $Pdc = $adDomain.PDCEmulator
     Write-Host "Domain controller: $Pdc"
 }
 catch {
     Add-ScanDiagnostic -Log $Diag -Source 'Active Directory' -Status 'failed' `
         -Message "L'annuaire Active Directory est injoignable, le scan retombe sur la machine locale. Les objets ordinateur, les zones DNS et les serveurs DHCP autorisés ne seront pas lus." `
         -Hint "Exécuter le scan depuis une machine jointe au domaine, avec le module ActiveDirectory installé (RSAT) et un compte autorisé à lire l'annuaire." `
-        -Command 'Import-Module ActiveDirectory; (Get-ADDomain).PDCEmulator' -ErrorRecord $_
+        -Command "Import-Module ActiveDirectory; $PdcCommand" -ErrorRecord $_
     $Pdc = $env:COMPUTERNAME
 }
 

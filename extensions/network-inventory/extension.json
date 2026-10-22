@@ -2,7 +2,7 @@
   "id": "network-inventory",
   "name": "Network Inventory",
   "version": 1,
-  "release": "0.0.5",
+  "release": "0.0.6",
   "page": "network-inventory.html",
   "icon": "network",
   "labelKey": "nav_network_inventory",
