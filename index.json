@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-22T10:34:17Z",
+  "generatedAt": "2026-10-22T12:14:29Z",
   "repo": "Chase-perfection/aegis-extensions",
   "extensions": [
     {
@@ -73,7 +73,7 @@
     {
       "id": "network-inventory",
       "name": "Network Inventory",
-      "version": "0.0.5",
+      "version": "0.0.6",
       "manifestVersion": 1,
       "minAppVersion": "1.0.7",
       "labelKey": "nav_network_inventory",
@@ -85,13 +85,13 @@
         "/api/inventory"
       ],
       "requiresHostOptIn": false,
-      "file": "network-inventory-0.0.5.zip",
-      "size": 115211,
-      "sha256": "50149625f0dc490c714d1b1f1dc77ae3b460d2b8085e0368ac14e2e95bea2f13",
-      "download": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.5/network-inventory-0.0.5.zip",
-      "manifest": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.5/network-inventory-0.0.5.manifest.json",
-      "signature": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.5/network-inventory-0.0.5.manifest.json.sig",
-      "publishedAt": "2026-10-22T10:34:05Z",
+      "file": "network-inventory-0.0.6.zip",
+      "size": 115449,
+      "sha256": "3b7444906f96306382301f1511b051f9aa4e3bc7c81bbdce0bc0824761336df5",
+      "download": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.6/network-inventory-0.0.6.zip",
+      "manifest": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.6/network-inventory-0.0.6.manifest.json",
+      "signature": "https://github.com/Chase-perfection/aegis-extensions/releases/download/network-inventory-v0.0.6/network-inventory-0.0.6.manifest.json.sig",
+      "publishedAt": "2026-10-22T12:14:17Z",
       "channel": "stable",
       "image": "https://raw.githubusercontent.com/Chase-perfection/aegis-extensions/main/extensions/network-inventory/card.png",
       "imageSha256": "78e2d227e841f8c13b3e2ace31211c5dc73d3833baf2c1ba3bda3695e3cf6d2c"
