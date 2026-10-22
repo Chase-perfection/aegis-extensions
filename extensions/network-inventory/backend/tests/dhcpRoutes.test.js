@@ -201,6 +201,26 @@ test('the DHCP block survives PowerShell handing lone items over as bare objects
     assert.strictEqual(c.origin, 'directory');
 });
 
+test('each lease and reservation carries the vendor of its MAC, null when the prefix is unknown', () => {
+    const d = inventoryService.normalizeDhcp({
+        servers: [{
+            name: 'srv-dhcp-01', status: 'read',
+            scopes: [{
+                scopeId: '10.0.0.0',
+                leases: [
+                    { ip: '10.0.1.60', mac: '00-50-56-AA-BB-01', hostName: 'poste-a', state: 'Active' },
+                    { ip: '10.0.1.61', mac: '02-00-00-AA-BB-02', hostName: 'poste-a', state: 'Active' }
+                ],
+                reservations: [{ ip: '10.0.1.10', mac: '00:0C:29:00:00:01', name: 'imprimante-1' }]
+            }]
+        }]
+    });
+    const scope = d.servers[0].scopes[0];
+    assert.strictEqual(scope.leases[0].vendor, 'VMware');
+    assert.strictEqual(scope.leases[1].vendor, null);
+    assert.strictEqual(scope.reservations[0].vendor, 'VMware');
+});
+
 test('a scan with no DHCP block is not the same as a scan whose servers all answered', () => {
     assert.strictEqual(inventoryService.normalizeDhcp(undefined), null);
     assert.strictEqual(inventoryService.normalizeDhcp({}), null);

@@ -681,7 +681,9 @@
     padding: 10px 18px;
 }
 .ni-dhcp-grid.leases { grid-template-columns: 128px 1.4fr 1.2fr 1fr 150px; }
+.ni-dhcp-grid.hosts { grid-template-columns: 1.1fr 1.3fr 1.8fr 1.2fr 1.1fr; }
 .ni-dhcp-grid.reservations { grid-template-columns: 128px 1.4fr 1fr; }
+.ni-dhcp-doc { display: block; font-size: 13px; line-height: 1.55; }
 .ni-dhcp-grid.pool { grid-template-columns: 150px 150px 110px 1fr; }
 .ni-dhcp-grid.filters { grid-template-columns: 220px 1fr; }
 .ni-dhcp-grid.scopes { grid-template-columns: 150px 1.2fr 1.4fr 110px 110px; }

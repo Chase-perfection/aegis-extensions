@@ -12,6 +12,11 @@
  * place that says which server refused, or that a server is missing from the
  * list altogether, is a list of servers.
  *
+ * A host name on several leases gets a probable cause from its MAC addresses:
+ * several network cards on one machine, or a device with private addresses.
+ * The fix for the first is on the client, so the view names it and links the
+ * dashboard's remediation doc; it changes nothing on the DHCP server.
+ *
  * Read only in this release. It holds no copy of the inventory: the page's main
  * module announces each load and each scan with an `ni:inventory` event, and
  * this one redraws from it.
@@ -36,7 +41,9 @@
         query: '',
         sort: { key: '', dir: 1 },
         // A network the subnet explorer asked for before the data was there.
-        wantedCidr: null
+        wantedCidr: null,
+        // Whether the dashboard serves the remediation doc: null until probed.
+        docAvailable: null
     };
 
     // ── reading the block ──────────────────────────────────────────────────
@@ -139,15 +146,93 @@
         return usable ? Math.min(100, Math.round((activeLeases(scope).length / usable) * 100)) : 0;
     }
 
-    /** Host names that hold more than one active lease in a scope. */
-    function repeatedHosts(scope) {
-        const count = new Map();
+    function macKey(mac) {
+        return String(mac || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+    }
+
+    // Leases that expire within this window of each other were granted or
+    // renewed together: both interfaces were up at the same moment.
+    const TOGETHER_MS = 120 * 1000;
+
+    /**
+     * Host names that hold more than one active lease in a scope, keyed by the
+     * lower-cased name, each with its probable cause. The DHCP server sees two
+     * clients either way; the MAC addresses tell the cases apart.
+     *
+     * - interfaces: every MAC is a distinct hardware address. One machine has
+     *   two network cards up at once, typically Wi-Fi plus a cable or a dock.
+     * - private: every MAC is locally administered. A device that changes its
+     *   address takes a new lease each time.
+     * - mixed: anything else.
+     *
+     * `allowed` counts the leases whose MAC is on the server's Allow list, null
+     * when the filters were not read.
+     */
+    function hostGroups(scope, server) {
+        const byHost = new Map();
         activeLeases(scope).forEach(l => {
             const h = String(l.hostName || '').trim().toLowerCase();
-            if (h) count.set(h, (count.get(h) || 0) + 1);
+            if (!h) return;
+            if (!byHost.has(h)) byHost.set(h, []);
+            byHost.get(h).push(l);
         });
-        return new Set([...count.entries()].filter(([, n]) => n > 1).map(([h]) => h));
+        const f = server && server.filters;
+        const allowList = new Set(((f && f.allow) || []).map(e => macKey(e.mac)));
+        const groups = new Map();
+        byHost.forEach((leases, h) => {
+            if (leases.length < 2) return;
+            const random = leases.filter(l => isRandomMac(l.mac)).length;
+            const distinct = new Set(leases.map(l => macKey(l.mac))).size === leases.length;
+            const kind = random === 0 && distinct ? 'interfaces'
+                : (random === leases.length ? 'private' : 'mixed');
+            const times = leases.map(l => Date.parse(l.expiresAt)).filter(Number.isFinite);
+            groups.set(h, {
+                name: String(leases[0].hostName || '').trim(),
+                leases,
+                kind,
+                together: times.length === leases.length && Math.max(...times) - Math.min(...times) <= TOGETHER_MS,
+                allowed: f ? leases.filter(l => allowList.has(macKey(l.mac))).length : null,
+                allowListSize: allowList.size,
+                allowEnforced: !!(f && f.allowEnabled)
+            });
+        });
+        return groups;
     }
+
+    const HOST_KINDS = {
+        interfaces: {
+            label: () => T('ni_dhcp_kind_interfaces', 'PLUSIEURS CARTES'),
+            hint: () => T('ni_dhcp_kind_interfaces_hint', 'Deux cartes réseau de cette machine tiennent chacune un bail : en général le Wi-Fi et un câble ou une station d\'accueil, branchés en même temps.')
+        },
+        private: {
+            label: () => T('ni_dhcp_kind_private', 'MAC PRIVÉE'),
+            hint: () => T('ni_dhcp_kind_private_hint', 'Cet appareil présente des adresses MAC aléatoires et en change : chaque nouvelle adresse prend un nouveau bail.')
+        },
+        mixed: {
+            label: () => T('ni_dhcp_repeated', 'PLUSIEURS BAUX'),
+            hint: () => T('ni_dhcp_repeated_hint', 'Ce nom d\'hôte tient plusieurs baux actifs dans cette étendue.')
+        }
+    };
+
+    /** Extra addresses the repeated hosts hold: every lease past the first. */
+    function extraAddresses(groups, kind) {
+        let n = 0;
+        groups.forEach(g => { if (!kind || g.kind === kind) n += g.leases.length - 1; });
+        return n;
+    }
+    function countKind(groups, kind) {
+        let n = 0;
+        groups.forEach(g => { if (g.kind === kind) n += 1; });
+        return n;
+    }
+    function partlyAllowed(g) {
+        return g.allowed != null && g.allowListSize > 0 && g.allowed > 0 && g.allowed < g.leases.length;
+    }
+
+    // The product doc this view links to. It ships with the dashboard, so an
+    // older dashboard does not have it: the link appears only once a HEAD
+    // request has found the file.
+    const DOC_URL = '/docs/DHCP_Multiple_Interfaces_Remediation.md';
 
     // ── selection ──────────────────────────────────────────────────────────
     function select(sel) {
@@ -252,12 +337,13 @@
         </div>`;
     }
 
-    function scopeSummary(scope) {
+    function scopeSummary(scope, server) {
         const pool = poolOf(scope);
         const pct = occupancy(scope);
         const active = activeLeases(scope);
         const random = active.filter(l => isRandomMac(l.mac)).length;
-        const repeated = repeatedHosts(scope).size;
+        const groups = hostGroups(scope, server);
+        const multi = countKind(groups, 'interfaces');
         const inactive = scope.state && !/active/i.test(scope.state);
         const fo = scope.failover
             ? T('ni_dhcp_failover', 'Basculement {m} avec {p}, état {s}')
@@ -280,9 +366,42 @@
                 pct >= 80 ? 'warn' : ''),
             card(T('ni_dhcp_card_leases', 'BAUX'),
                 `<span class="ni-ctx-strong">${esc(T('ni_dhcp_lease_duration', 'Durée du bail : {d}').replace('{d}', durationLabel(scope.leaseSeconds)))}</span>`,
-                T('ni_dhcp_leases_caption', '{r} MAC aléatoire(s) sur {n} baux actifs · {h} nom(s) d\'hôte sur plusieurs baux')
-                    .replace('{r}', random).replace('{n}', active.length).replace('{h}', repeated),
-                repeated > 0 ? 'warn' : '')
+                T('ni_dhcp_leases_caption', '{r} MAC aléatoire(s) sur {n} baux actifs · {h} nom(s) d\'hôte sur plusieurs baux, dont {m} machine(s) à plusieurs cartes')
+                    .replace('{r}', random).replace('{n}', active.length).replace('{h}', groups.size).replace('{m}', multi),
+                groups.size > 0 ? 'warn' : '')
+        ].join('');
+    }
+
+    /** The cards above the "Plusieurs baux" tab: what it costs, and the fix. */
+    function hostsSummary(scope, server) {
+        const groups = hostGroups(scope, server);
+        const multi = countKind(groups, 'interfaces');
+        const together = [...groups.values()].filter(g => g.kind === 'interfaces' && g.together).length;
+        const partial = [...groups.values()].filter(partlyAllowed).length;
+        const f = server.filters;
+        const allowCaption = !f
+            ? T('ni_dhcp_hosts_allow_unread', 'Les filtres de ce serveur n\'ont pas été lus.')
+            : (!(f.allow || []).length
+                ? T('ni_dhcp_hosts_allow_empty', 'La liste Autoriser est vide.')
+                : (f.allowEnabled
+                    ? T('ni_dhcp_hosts_allow_on', 'Liste appliquée : la carte absente de la liste ne recevra plus de bail.')
+                    : T('ni_dhcp_hosts_allow_off', 'Liste coupée : sans effet tant qu\'elle reste coupée.')));
+        const docLink = state.docAvailable
+            ? `<div><button class="ni-ctx-link" type="button" data-ni-dhcp-doc>${esc(T('ni_dhcp_hosts_doc', 'Voir la procédure →'))}</button></div>`
+            : '';
+        return [
+            card(T('ni_dhcp_card_multi', 'PLUSIEURS CARTES'),
+                `<span class="ni-ctx-strong">${esc(T('ni_dhcp_multi_count', '{m} machine(s)').replace('{m}', multi))}</span>`,
+                T('ni_dhcp_multi_caption', '{x} adresse(s) prise(s) en plus · {t} avec des baux pris au même moment')
+                    .replace('{x}', extraAddresses(groups, 'interfaces')).replace('{t}', together),
+                multi > 0 ? 'warn' : ''),
+            card(T('ni_dhcp_card_allow_cover', 'LISTE AUTORISER'),
+                `<span class="ni-ctx-strong">${esc(T('ni_dhcp_allow_partial', '{p} machine(s) couverte(s) en partie').replace('{p}', partial))}</span>`,
+                allowCaption,
+                partial > 0 && f && f.allowEnabled ? 'warn' : ''),
+            card(T('ni_dhcp_card_fix', 'CORRECTION'),
+                `<span class="ni-ctx-body">${esc(T('ni_dhcp_fix_body', 'Couper le Wi-Fi quand un câble est branché : stratégie de groupe Windows Connection Manager, fMinimizeConnections = 3.'))}</span>${docLink}`,
+                T('ni_dhcp_fix_caption', 'Sans effet sur une MAC privée.'))
         ].join('');
     }
 
@@ -375,7 +494,51 @@
                     empty: ''
                 };
             }
-            const repeated = repeatedHosts(scope);
+            const groups = hostGroups(scope, server);
+            if (state.tab === 'hosts') {
+                const macLabel = l => (l.vendor ? `${l.mac} (${l.vendor})` : String(l.mac || ''));
+                const allowLabel = g => {
+                    if (g.allowed == null) return T('ni_dhcp_allow_unread', 'non lus');
+                    if (!g.allowListSize) return T('ni_dhcp_allow_empty', 'liste vide');
+                    return T('ni_dhcp_allow_cover', '{a} sur {n} autorisée(s)')
+                        .replace('{a}', g.allowed).replace('{n}', g.leases.length);
+                };
+                const ips = g => g.leases.map(l => l.ip).sort((a, b) => ipNum(a) - ipNum(b));
+                return {
+                    grid: 'hosts',
+                    cols: [
+                        { key: 'name', label: 'NOM D\'HÔTE', value: g => g.name.toLowerCase(), cell: g => `<span class="ni-host">${esc(g.name)}</span>` },
+                        {
+                            key: 'ips', label: 'ADRESSES IP', value: g => ipNum(ips(g)[0]),
+                            cell: g => `<span class="ni-cell-ip" title="${esc(ips(g).join(', '))}">${esc(ips(g).join(', '))}</span>`
+                        },
+                        {
+                            key: 'macs', label: 'MAC', value: g => macKey(g.leases[0].mac),
+                            cell: g => {
+                                const text = g.leases.map(macLabel).join(', ');
+                                return `<span class="ni-mac" title="${esc(text)}">${esc(text)}</span>`;
+                            }
+                        },
+                        {
+                            key: 'kind', label: 'CAUSE PROBABLE', value: g => g.kind,
+                            cell: g => `<span title="${esc(HOST_KINDS[g.kind].hint())}">${tag({
+                                label: HOST_KINDS[g.kind].label(),
+                                variant: g.kind === 'interfaces' ? 'warning' : 'info',
+                                mono: true
+                            })}${g.kind === 'interfaces' && g.together
+                                ? `<span class="ni-dhcp-cell"> ${esc(T('ni_dhcp_together', 'même instant'))}</span>` : ''}</span>`
+                        },
+                        {
+                            key: 'allow', label: 'LISTE AUTORISER', value: g => (g.allowed == null ? -1 : g.allowed),
+                            cell: g => `<span class="ni-dhcp-cell">${esc(allowLabel(g))}${partlyAllowed(g)
+                                ? `<span class="ni-chip-inline" title="${esc(T('ni_dhcp_allow_partial_hint', 'Une seule des cartes de cette machine figure sur la liste Autoriser.'))}">${esc(T('ni_dhcp_allow_partial_chip', 'EN PARTIE'))}</span>` : ''}</span>`
+                        }
+                    ],
+                    rows: [...groups.values()],
+                    text: g => [g.name].concat(g.leases.map(l => l.ip), g.leases.map(l => l.mac), g.leases.map(l => l.vendor)),
+                    empty: T('ni_dhcp_no_repeated', 'Aucun nom d\'hôte ne tient plus d\'un bail actif dans cette étendue.')
+                };
+            }
             return {
                 grid: 'leases',
                 cols: [
@@ -383,10 +546,12 @@
                     {
                         key: 'hostName', label: 'NOM D\'HÔTE', value: l => String(l.hostName || '').toLowerCase(),
                         cell: l => {
-                            const many = repeated.has(String(l.hostName || '').trim().toLowerCase())
-                                && String(l.state || '').toLowerCase().includes('active');
-                            return `<span class="ni-host">${esc(l.hostName || '')}${many
-                                ? `<span class="ni-chip-inline" title="${esc(T('ni_dhcp_repeated_hint', 'Ce nom d\'hôte tient plusieurs baux actifs dans cette étendue.'))}">${esc(T('ni_dhcp_repeated', 'PLUSIEURS BAUX'))}</span>` : ''}</span>`;
+                            const g = String(l.state || '').toLowerCase().includes('active')
+                                ? groups.get(String(l.hostName || '').trim().toLowerCase())
+                                : null;
+                            const k = g && HOST_KINDS[g.kind];
+                            return `<span class="ni-host">${esc(l.hostName || '')}${k
+                                ? `<span class="ni-chip-inline" title="${esc(k.hint())}">${esc(k.label())}</span>` : ''}</span>`;
                         }
                     },
                     {
@@ -444,6 +609,7 @@
         if (state.sel.kind === 'scope' && scope) {
             return [
                 { key: 'leases', label: 'Baux', count: (scope.leases || []).length },
+                { key: 'hosts', label: 'Plusieurs baux', count: hostGroups(scope, server).size },
                 { key: 'reservations', label: 'Réservations', count: (scope.reservations || []).length },
                 { key: 'pool', label: 'Pool d\'adresses', count: 1 + (scope.exclusions || []).length }
             ];
@@ -489,7 +655,7 @@
         if (state.sel.kind === 'scope' && scope) {
             title.textContent = scope.cidr || scope.scopeId;
             if (sub) sub.textContent = [scope.name, serverName].filter(Boolean).join(' · ');
-            if (summary) summary.innerHTML = scopeSummary(scope);
+            if (summary) summary.innerHTML = state.tab === 'hosts' ? hostsSummary(scope, server) : scopeSummary(scope, server);
         } else if (state.sel.kind === 'filters') {
             title.textContent = T('ni_dhcp_filters', 'Filtres MAC');
             if (sub) sub.textContent = serverName;
@@ -615,6 +781,44 @@
         }
     }
 
+    // ── remediation doc ────────────────────────────────────────────────────
+    async function probeDoc() {
+        try {
+            const res = await fetch(DOC_URL, { method: 'HEAD', credentials: 'same-origin' });
+            state.docAvailable = res.ok;
+        } catch (_) {
+            state.docAvailable = false;
+        }
+        if (state.docAvailable && state.tab === 'hosts') renderMain();
+    }
+
+    async function openDoc() {
+        const modal = byId('ni-dhcp-doc-modal');
+        const body = byId('ni-dhcp-doc-body');
+        if (!modal || !body) return;
+        body.textContent = T('ni_dhcp_doc_loading', 'Chargement…');
+        modal.hidden = false;
+        try {
+            const res = await fetch(DOC_URL, { credentials: 'same-origin' });
+            if (!res.ok) throw new Error(String(res.status));
+            const text = (await res.text()).trimStart().replace(/^---\r?\n[\s\S]*?\r?\n---/, '').trim();
+            if (window.marked && window.DOMPurify) {
+                body.innerHTML = window.DOMPurify.sanitize(window.marked.parse(text));
+            } else {
+                const pre = document.createElement('pre');
+                pre.textContent = text;
+                body.replaceChildren(pre);
+            }
+        } catch (_) {
+            body.textContent = T('ni_dhcp_doc_error', 'La procédure n\'a pas pu être chargée.');
+        }
+    }
+
+    function closeDoc() {
+        const modal = byId('ni-dhcp-doc-modal');
+        if (modal) modal.hidden = true;
+    }
+
     // ── events ─────────────────────────────────────────────────────────────
     function wire() {
         const view = byId('network-inventory-view');
@@ -622,6 +826,7 @@
 
         view.addEventListener('click', (e) => {
             if (e.target.closest('[data-ni-dhcp-servers]')) { openServers(); return; }
+            if (e.target.closest('[data-ni-dhcp-doc]')) { openDoc(); return; }
             const node = e.target.closest('[data-dhcp-kind]');
             if (node) {
                 select({ server: node.dataset.dhcpServer, kind: node.dataset.dhcpKind, scopeId: node.dataset.dhcpScope || null });
@@ -658,9 +863,18 @@
                 e.target.closest('#ni-dhcp-servers-cancel') ||
                 e.target.closest('#ni-dhcp-servers-backdrop')) closeServers();
         });
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && modal && !modal.hidden) closeServers();
+        const docModal = byId('ni-dhcp-doc-modal');
+        if (docModal) docModal.addEventListener('click', (e) => {
+            if (e.target.closest('#ni-dhcp-doc-close') ||
+                e.target.closest('#ni-dhcp-doc-done') ||
+                e.target.closest('#ni-dhcp-doc-backdrop')) closeDoc();
         });
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            if (modal && !modal.hidden) closeServers();
+            if (docModal && !docModal.hidden) closeDoc();
+        });
+        probeDoc();
 
         document.addEventListener('ni:inventory', (e) => {
             const d = e.detail || {};

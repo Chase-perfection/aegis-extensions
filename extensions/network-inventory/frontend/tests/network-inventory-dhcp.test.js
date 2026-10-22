@@ -305,18 +305,18 @@ test('"Gérer" on a network opens its scope, with every label readable', async (
   assert.ok(v, 'the DHCP view must exist');
   assert.strictEqual(v.title, WITH_SCOPE);
   assert.strictEqual(v.subtitle, 'Postes · SRV-DHCP-01');
-  assert.deepStrictEqual(v.tabs, ['Baux · 4', 'Réservations · 1', "Pool d'adresses · 2"]);
+  assert.deepStrictEqual(v.tabs, ['Baux · 4', 'Plusieurs baux · 1', 'Réservations · 1', "Pool d'adresses · 2"]);
   assert.strictEqual(v.activeTab, 'Baux · 4');
   assert.deepStrictEqual(v.head, ['ADRESSE IP', "NOM D'HÔTE", 'MAC', 'ÉTAT', 'EXPIRE']);
   assert.deepStrictEqual(v.rawKeys, [], 'a raw translation key reached the screen');
 
   // Leases, in address order whatever order the server returned them in.
   assert.deepStrictEqual(v.firstCells, ['10.0.1.60', '10.0.1.61', '10.0.1.72', '10.0.1.90']);
-  assert.match(v.rows[0], /mobile-a.*PLUSIEURS BAUX/, 'a host name holding two active leases is flagged');
+  assert.match(v.rows[0], /mobile-a.*MAC PRIVÉE/, 'a host name holding two leases on random MACs is flagged as such');
   assert.match(v.rows[0], /02:00:00:AA:BB:01.*ALÉATOIRE/, 'a locally administered MAC is flagged');
-  assert.doesNotMatch(v.rows[2], /ALÉATOIRE|PLUSIEURS BAUX/, 'a burned-in MAC on a single lease carries no flag');
+  assert.doesNotMatch(v.rows[2], /ALÉATOIRE|PLUSIEURS|MAC PRIVÉE/, 'a burned-in MAC on a single lease carries no flag');
   assert.match(v.rows[3], /Expiré/);
-  assert.doesNotMatch(v.rows[3], /PLUSIEURS BAUX/);
+  assert.doesNotMatch(v.rows[3], /PLUSIEURS|MAC PRIVÉE/);
   assert.strictEqual(v.count, '4 ligne(s) sur 4');
   assert.match(v.note, /Lecture seule/);
 
@@ -326,7 +326,7 @@ test('"Gérer" on a network opens its scope, with every label readable', async (
   // 100 addresses, 10 excluded, 3 active leases: 3 of 90, rounded.
   assert.match(v.cards[1], /OCCUPATION.*3%.*3 baux actifs · 90 adresses distribuables · 10 exclues/);
   assert.match(v.cards[2], /Durée du bail : 8 j/);
-  assert.match(v.cards[2], /2 MAC aléatoire\(s\) sur 3 baux actifs · 1 nom\(s\) d'hôte sur plusieurs baux/);
+  assert.match(v.cards[2], /2 MAC aléatoire\(s\) sur 3 baux actifs · 1 nom\(s\) d'hôte sur plusieurs baux, dont 0 machine\(s\) à plusieurs cartes/);
 
   assert.match(v.selectedNodes.join(' | '), /10\.0\.0\.0\/22/, 'the tree marks the scope that is open');
 });
@@ -367,13 +367,13 @@ test('reservations, the address pool and the MAC filters each have their table',
   const { page, close, pageErrors } = await open(inventory({ servers: [SRV_READ] }));
   await click(page, '#ni-cards [data-ni-manage]');
 
-  await click(page, '#ni-dhcp-tabs .ni-seg', 1);
+  await click(page, '#ni-dhcp-tabs .ni-seg', 2);
   const res = await page.evaluate(readDhcp);
   assert.deepStrictEqual(res.head, ['ADRESSE IP', 'NOM', 'MAC']);
   assert.strictEqual(res.rows.length, 1);
   assert.match(res.rows[0], /10\.0\.1\.140.*imprimante.*00:11:22:33:44:77/);
 
-  await click(page, '#ni-dhcp-tabs .ni-seg', 2);
+  await click(page, '#ni-dhcp-tabs .ni-seg', 3);
   const pool = await page.evaluate(readDhcp);
   assert.deepStrictEqual(pool.head, ['DÉBUT', 'FIN', 'ADRESSES', 'RÔLE']);
   assert.strictEqual(pool.rows.length, 2);
@@ -403,6 +403,103 @@ test('reservations, the address pool and the MAC filters each have their table',
   assert.deepStrictEqual(allow.rows, []);
   assert.match(allow.empty, /La liste Autoriser est vide/);
   assert.deepStrictEqual(allow.rawKeys, []);
+});
+
+// ── One host name, several leases ───────────────────────────────────────────
+
+// A laptop with two network cards up at once: two hardware MACs whose leases
+// were granted in the same minute, one of them on the Allow list. The phone
+// with random MACs and the single lease come from SCOPE; the expired lease
+// under the laptop's name must not count.
+const MULTI_SCOPE = {
+  ...SCOPE,
+  leases: SCOPE.leases.concat([
+    { ip: '10.0.1.81', mac: '00:50:56:AA:00:02', vendor: 'VMware', hostName: 'portable-a', state: 'Active', expiresAt: '2026-09-23T08:00:30.000Z' },
+    { ip: '10.0.1.80', mac: '00:11:22:33:44:01', vendor: null, hostName: 'PORTABLE-A', state: 'Active', expiresAt: '2026-09-23T08:00:00.000Z' },
+    { ip: '10.0.1.82', mac: '00:11:22:33:44:09', vendor: null, hostName: 'portable-a', state: 'Expired', expiresAt: '2026-09-01T08:00:00.000Z' }
+  ])
+};
+const SRV_MULTI = {
+  ...SRV_READ,
+  filters: { allowEnabled: true, denyEnabled: false, allow: [{ mac: '00-11-22-33-44-01', description: '' }], deny: [] },
+  scopes: [MULTI_SCOPE]
+};
+
+/** The "Plusieurs baux" tab, opened by its label rather than its position. */
+async function openHostsTab(page) {
+  const ok = await page.evaluate(() => {
+    const tab = [...document.querySelectorAll('#ni-dhcp-tabs .ni-seg')].find((t) => /^Plusieurs baux/.test(t.textContent.trim()));
+    if (!tab) return false;
+    tab.click();
+    return true;
+  });
+  assert.ok(ok, 'the scope must offer a "Plusieurs baux" tab');
+  await settle(page);
+}
+
+test('a host on several leases is listed once, with the probable cause and the fix', async () => {
+  const { page, close, pageErrors } = await open(inventory({ servers: [SRV_MULTI] }));
+  await click(page, '#ni-cards [data-ni-manage]');
+
+  const leases = await page.evaluate(readDhcp);
+  const laptopRows = leases.rows.filter((r) => /portable-a/i.test(r));
+  assert.strictEqual(laptopRows.length, 3);
+  assert.strictEqual(laptopRows.filter((r) => /PLUSIEURS CARTES/.test(r)).length, 2,
+    'both active leases of the laptop carry the chip, the expired one does not');
+
+  await openHostsTab(page);
+  const v = await page.evaluate(readDhcp);
+  // What was measured: the table and its head are on screen, not just built.
+  const shown = await page.evaluate(() => {
+    const head = document.getElementById('ni-dhcp-thead');
+    return head.getBoundingClientRect().height > 0 && document.querySelectorAll('#ni-dhcp-tbody .ni-dhcp-line').length > 0;
+  });
+  const docLink = await page.evaluate(() => !!document.querySelector('#ni-dhcp-summary [data-ni-dhcp-doc]'));
+  await close();
+
+  assert.deepStrictEqual(pageErrors, []);
+  assert.ok(shown, 'the "Plusieurs baux" table must be on screen');
+  assert.strictEqual(v.activeTab, 'Plusieurs baux · 2');
+  assert.deepStrictEqual(v.head, ["NOM D'HÔTE", 'ADRESSES IP', 'MAC', 'CAUSE PROBABLE', 'LISTE AUTORISER']);
+  assert.strictEqual(v.rows.length, 2, 'one row per host name, whatever its case');
+
+  const laptop = v.rows.find((r) => /portable-a/i.test(r));
+  const phone = v.rows.find((r) => /mobile-a/.test(r));
+  assert.ok(laptop && phone);
+  assert.match(laptop, /10\.0\.1\.80, 10\.0\.1\.81/, 'the addresses, in address order');
+  assert.match(laptop, /00:50:56:AA:00:02 \(VMware\)/, 'a known vendor is named');
+  assert.doesNotMatch(laptop, /10\.0\.1\.82/, 'an expired lease is not a second interface');
+  assert.match(laptop, /PLUSIEURS CARTES.*même instant/);
+  assert.match(laptop, /1 sur 2 autorisée\(s\).*EN PARTIE/, 'one card on the Allow list and the other off it is flagged');
+  assert.match(phone, /MAC PRIVÉE/);
+  assert.doesNotMatch(phone, /même instant|EN PARTIE/);
+
+  assert.strictEqual(v.cards.length, 3);
+  assert.match(v.cards[0], /PLUSIEURS CARTES.*1 machine\(s\).*1 adresse\(s\) prise\(s\) en plus · 1 avec des baux pris au même moment/);
+  assert.match(v.cards[1], /LISTE AUTORISER.*1 machine\(s\) couverte\(s\) en partie.*Liste appliquée/);
+  assert.match(v.cards[2], /CORRECTION.*fMinimizeConnections = 3.*Sans effet sur une MAC privée/);
+  // The test server serves no /docs, as an older dashboard would not: no link to a 404.
+  assert.strictEqual(docLink, false);
+  assert.deepStrictEqual(v.rawKeys, []);
+});
+
+test('a scope where no host name repeats says so on the "Plusieurs baux" tab', async () => {
+  const single = { ...SCOPE, leases: SCOPE.leases.filter((l) => l.hostName !== 'mobile-a') };
+  const { page, close, pageErrors } = await open(inventory({ servers: [{ ...SRV_READ, scopes: [single] }] }));
+  await click(page, '#ni-cards [data-ni-manage]');
+  await openHostsTab(page);
+  const v = await page.evaluate(readDhcp);
+
+  await click(page, '#ni-dhcp-tabs .ni-seg', 0);
+  const back = await page.evaluate(readDhcp);
+  await close();
+
+  assert.deepStrictEqual(pageErrors, []);
+  assert.strictEqual(v.activeTab, 'Plusieurs baux · 0');
+  assert.deepStrictEqual(v.rows, []);
+  assert.match(v.empty, /Aucun nom d'hôte ne tient plus d'un bail actif/);
+  assert.match(v.cards[0], /0 machine\(s\)/);
+  assert.match(back.cards[0], /PLAGE/, 'leaving the tab brings the scope cards back');
 });
 
 test('the search narrows the rows and a column header reverses their order', async () => {

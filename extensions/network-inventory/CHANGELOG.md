@@ -2,7 +2,7 @@
 
 Hosts and services discovered on the network.
 
-## 0.0.4
+## 0.0.5
 
 DHCP scopes appear again, and the page has a DHCP view.
 
@@ -32,6 +32,22 @@ the scan tried, read or not, and under each one:
 
 A server that was not read shows its status and the scan's own explanation. It
 is never shown as empty. The view is read only in this release.
+
+**A host name on several leases gets a probable cause.** A scope has a
+"Plusieurs baux" tab with one row per host name holding more than one active
+lease: its addresses, its MACs with their vendor when known, and the cause the
+MACs point to.
+
+- Two hardware MACs mean one machine with two network cards up at once, most
+  often Wi-Fi plus a cable or a dock. The row says so, and says when both leases
+  were taken in the same minute.
+- Random MACs mean a device that changes its address.
+
+The tab also counts the addresses these machines hold twice, and flags a machine
+with one card on the Allow list and the other off it. The fix for two cards is
+on the client: the Windows Connection Manager group policy that turns Wi-Fi off
+while a cable is plugged in. The tab names it and opens the dashboard's
+procedure when the dashboard carries it. Nothing changes on the DHCP server.
 
 **Servers the directory does not list can be declared.** The scan read the
 servers authorized in Active Directory and no others, so a standalone Windows

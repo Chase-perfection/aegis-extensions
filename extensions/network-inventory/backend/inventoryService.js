@@ -247,10 +247,11 @@ function normalizeDhcp(raw) {
                     mac: str(l.mac),
                     hostName: str(l.hostName),
                     state: str(l.state),
-                    expiresAt: l.expiresAt || null
+                    expiresAt: l.expiresAt || null,
+                    vendor: vendorForMac(str(l.mac))
                 })),
                 reservations: toArr(x.reservations).filter(Boolean)
-                    .map(r => ({ ip: str(r.ip), mac: str(r.mac), name: str(r.name) })),
+                    .map(r => ({ ip: str(r.ip), mac: str(r.mac), name: str(r.name), vendor: vendorForMac(str(r.mac)) })),
                 failover: x.failover && typeof x.failover === 'object' ? {
                     mode: str(x.failover.mode),
                     role: str(x.failover.role),

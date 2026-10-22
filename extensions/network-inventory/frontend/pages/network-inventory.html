@@ -263,6 +263,29 @@
                     </div>
                 </div>
 
+                <!-- ── Remediation doc for a host on several leases ──
+                     Fetched from the dashboard's /docs and rendered here. -->
+                <div id="ni-dhcp-doc-modal" class="ni-diag-modal" hidden role="dialog" aria-modal="true"
+                    aria-labelledby="ni-dhcp-doc-title">
+                    <div id="ni-dhcp-doc-backdrop" class="ni-diag-backdrop"></div>
+                    <div class="ni-diag-panel">
+                        <div class="ni-diag-head">
+                            <h2 id="ni-dhcp-doc-title" class="ni-diag-title">Une machine, plusieurs baux</h2>
+                            <button id="ni-dhcp-doc-close" class="ni-close" type="button" aria-label="Fermer">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div id="ni-dhcp-doc-body" class="ni-diag-list markdown-body ni-dhcp-doc"></div>
+                        <div class="ni-diag-foot">
+                            <button id="ni-dhcp-doc-done" class="ni-btn ni-btn-secondary" type="button">Fermer</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- ── IP detail drawer (read-only v1) ── -->
                 <div id="ni-scrim" class="ni-scrim"></div>
                 <aside id="ni-drawer" class="ni-drawer" aria-hidden="true"></aside>
