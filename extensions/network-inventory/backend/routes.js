@@ -28,6 +28,8 @@ const inventoryService = require('./inventoryService');
 const scanAccount = require('./scanAccount');
 const scanSettings = require('./scanSettings');
 const accountRoutes = require('./accountRoutes');
+const dhcpRoutes = require('./dhcpRoutes');
+const dhcpSettings = require('./dhcpSettings');
 
 /** The scan script, inside this package rather than in core's `shield/`. */
 const SCRIPT_PATH = path.join(__dirname, 'scan', 'network_scan.ps1');
@@ -82,13 +84,15 @@ function feedbackFrom(context) {
  * refused to start rejects with `err.netOnly = { win32, message }`, and one
  * stopped for running too long with `err.timedOut = true`.
  */
-function runScript({ slug, domain, probeOnly, tcpProbe, creds, log, event, stderrLines }) {
+function runScript({ slug, domain, probeOnly, tcpProbe, dhcpServers, creds, log, event, stderrLines }) {
     return new Promise((resolve, reject) => {
         let file = 'powershell.exe';
         let args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT_PATH];
-        let options = { maxBuffer: 10 * 1024 * 1024, timeout: probeOnly ? PROBE_TIMEOUT_MS : SCAN_TIMEOUT_MS };
+        // 32 MB: the payload now carries every lease of every scope a second
+        // time, under the server that holds it, for the DHCP view.
+        let options = { maxBuffer: 32 * 1024 * 1024, timeout: probeOnly ? PROBE_TIMEOUT_MS : SCAN_TIMEOUT_MS };
         if (creds) {
-            const l = scanAccount.launch(creds, { domain, probeOnly, tcpProbe });
+            const l = scanAccount.launch(creds, { domain, probeOnly, tcpProbe, dhcpServers });
             file = l.file;
             args = l.args;
             options = { ...options, env: l.env, windowsHide: true };
@@ -96,6 +100,7 @@ function runScript({ slug, domain, probeOnly, tcpProbe, creds, log, event, stder
             if (domain) args.push('-Domain', domain);
             if (probeOnly) args.push('-ProbeOnly');
             if (tcpProbe) args.push('-TcpProbe');
+            if (dhcpServers && dhcpServers.length) args.push('-DhcpServer', dhcpServers.join(','));
         }
 
         // powershell.exe, not pwsh. The scan targets Windows PowerShell
@@ -197,6 +202,7 @@ function register(router, context) {
     const { log, event, activity } = feedbackFrom(context);
 
     accountRoutes.register(router, context, { runScript, lastJsonLine, scanCredentials, launcherDiagnostic, log, event });
+    dhcpRoutes.register(router, context);
 
     router.get('/api/inventory/network', (req, res) => {
         try {
@@ -262,7 +268,8 @@ function register(router, context) {
                 ? `Starting standalone Network Inventory scan as ${creds.account}...`
                 : 'Starting standalone Network Inventory scan...');
 
-            const result = await runScript({ slug, domain, tcpProbe, creds, log, event, stderrLines });
+            const dhcpServers = dhcpSettings.read(req.tenantPaths.data).dhcpServers;
+            const result = await runScript({ slug, domain, tcpProbe, dhcpServers, creds, log, event, stderrLines });
             const jsonLine = lastJsonLine(result);
 
             activity(req, 'audit', 'scan', {

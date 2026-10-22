@@ -2,6 +2,66 @@
 
 Hosts and services discovered on the network.
 
+## 0.0.5
+
+DHCP scopes appear again, and the page has a DHCP view.
+
+**The scan dropped every scope it read.** It called two helpers from a file it
+never loaded. Each call failed as an unknown command, PowerShell carried on, and
+the scan threw away every scope while its report said "1 étendue lue". No
+network showed a DHCP card, a scope name or a lease. The file is loaded now, a
+test checks that the scan loads every helper it calls, and a scope that cannot
+be attached to a server is reported instead of skipped.
+
+**The DHCP card says what the scan knows.** A network without a scope used to
+read "Aucune étendue DHCP pour ce réseau" whatever had happened. It now says one
+of four things: the scope was not read because a server refused or stayed
+silent, and which one; every known server answered and none holds a scope for
+this network; no DHCP server is known; or the inventory is too old to tell.
+
+**A DHCP view, beside the subnet explorer.** The switch at the top of the
+sidebar opens it, and so does "Gérer" on a network's card. It lists every server
+the scan tried, read or not, and under each one:
+
+- its scopes, with range, mask, occupancy and lease duration;
+- leases, with their state and expiry. A randomised MAC address is flagged, and
+  so is a host name that holds several active leases in one scope;
+- reservations;
+- the address pool: the distributed range and each exclusion;
+- the Allow and Deny MAC filter lists, and whether each is enforced.
+
+A server that was not read shows its status and the scan's own explanation. It
+is never shown as empty. The view is read only in this release.
+
+**A host name on several leases gets a probable cause.** A scope has a
+"Plusieurs baux" tab with one row per host name holding more than one active
+lease: its addresses, its MACs with their vendor when known, and the cause the
+MACs point to.
+
+- Two hardware MACs mean one machine with two network cards up at once, most
+  often Wi-Fi plus a cable or a dock. The row says so, and says when both leases
+  were taken in the same minute.
+- Random MACs mean a device that changes its address.
+
+The tab also counts the addresses these machines hold twice, and flags a machine
+with one card on the Allow list and the other off it. The fix for two cards is
+on the client: the Windows Connection Manager group policy that turns Wi-Fi off
+while a cable is plugged in. The tab names it and opens the dashboard's
+procedure when the dashboard carries it. Nothing changes on the DHCP server.
+
+**Servers the directory does not list can be declared.** The scan read the
+servers authorized in Active Directory and no others, so a standalone Windows
+DHCP server could not be read at all. "+ Déclarer" in the DHCP view takes host
+names, one per line, admins only. They are read at the next scan with the scan
+account, and "Tester les accès" probes them too. A DHCP service held by a
+firewall, a router or an access point still cannot be read this way.
+
+**An authorization that points elsewhere is no longer called obsolete.** When
+the directory records a DHCP server on one address and its name answers on
+another, the report said the server had been decommissioned. It may equally
+have been re-addressed and still be serving. The report now gives both cases
+and the command for each.
+
 ## 0.0.4
 
 The scan finds more, says when it could not look, and the access test is faster.

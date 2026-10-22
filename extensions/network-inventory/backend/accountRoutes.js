@@ -17,6 +17,7 @@
 'use strict';
 
 const scanAccount = require('./scanAccount');
+const dhcpSettings = require('./dhcpSettings');
 
 function register(router, context, scan) {
     const { requireRole } = context;
@@ -78,7 +79,10 @@ function register(router, context, scan) {
         const account = creds ? creds.account : scanAccount.serviceIdentity();
         const stderrLines = [];
         try {
-            const stdout = await runScript({ slug, probeOnly: true, creds, log, event, stderrLines });
+            // Declared servers are probed too: the test would otherwise pass
+            // on the directory's servers and say nothing of the one added by hand.
+            const dhcpServers = dhcpSettings.read(req.tenantPaths.data).dhcpServers;
+            const stdout = await runScript({ slug, probeOnly: true, dhcpServers, creds, log, event, stderrLines });
             const line = lastJsonLine(stdout);
             const parsed = line ? JSON.parse(line) : null;
             if (!parsed || !Array.isArray(parsed.diagnostics)) {
