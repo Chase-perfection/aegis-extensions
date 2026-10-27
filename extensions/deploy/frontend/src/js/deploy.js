@@ -83,7 +83,17 @@
             deploy_access_closed: 'Fermée',
             deploy_access_admins_only: 'Administrateurs seulement',
             deploy_access_person_one: 'personne', deploy_access_person_many: 'personnes',
-            deploy_access_group_one: 'groupe', deploy_access_group_many: 'groupes'
+            deploy_access_group_one: 'groupe', deploy_access_group_many: 'groupes',
+            // Two versions side by side: the English stays the fallback in the
+            // code, only the French was missing and showed through in English.
+            deploy_err_queued: 'La version précédente sert encore les visiteurs qui étaient dessus. Le dernier commit sera déployé dès qu\'elle s\'arrête, ou utilisez « Déployer maintenant ».',
+            deploy_err_slot_busy: 'La version précédente sert encore les visiteurs qui étaient dessus. Réessayez, ou utilisez « Déployer maintenant ».',
+            deploy_card_draining: '$1 sert encore les visiteurs qui étaient dessus, dernière activité $2.',
+            deploy_card_pending: '$1 attend et sera déployé dès que la version précédente s\'arrête.',
+            deploy_card_gave_up: 'Aegis a cessé de réessayer ce commit. Poussez un correctif, ou redéployez-le à la main.',
+            deploy_now_cta: 'Déployer maintenant',
+            deploy_toast_live: '$1 : $2 est en ligne.',
+            deploy_toast_queued: '$1 : $2 attend que la version précédente ne serve plus ses visiteurs.'
         }
     };
     (function mergeOwnStrings() {
@@ -108,6 +118,20 @@
         if (cls) n.className = cls;
         if (text != null) n.textContent = text;
         return n;
+    }
+
+    /**
+     * Writes a refusal on a project card, under its buttons.
+     *
+     * Into the padded body, not the card: appended to the card itself the line
+     * sat flush against its edge, below the body, and the card's rounded,
+     * clipped corner cut into it. An error line the card already shows (a last
+     * failure) is reused, so the card never carries two.
+     */
+    function cardError(card, msg) {
+        var line = card.querySelector('.dep-card-error') || el('p', 'dep-card-error', '');
+        line.textContent = msg;
+        (card.querySelector('.dep-card-body') || card).appendChild(line);
     }
 
     var NS = 'http://www.w3.org/2000/svg';
@@ -1420,11 +1444,7 @@
      */
     function deployFrom(values, btn, card) {
         var report = card
-            ? function (msg) {
-                var line = card.querySelector('.dep-card-error') || el('p', 'dep-card-error', '');
-                line.textContent = msg;
-                card.appendChild(line);
-            }
+            ? function (msg) { cardError(card, msg); }
             : newNote;
 
         // Said in both places, because the operator is looking at the console
@@ -1757,9 +1777,7 @@
                     ? tr('deploy_delete_busy', 'That project is deploying. Stop it from its console, or try again in a moment.')
                     : tr('deploy_delete_failed', 'Aegis could not remove that project.');
                 if (card) {
-                    var line = card.querySelector('.dep-card-error') || el('p', 'dep-card-error', '');
-                    line.textContent = msg;
-                    card.appendChild(line);
+                    cardError(card, msg);
                 } else {
                     projectsNote(msg);
                 }
@@ -2056,11 +2074,7 @@
                 // next to the project it belongs to rather than at the top of
                 // the page.
                 consoleNote(msg);
-                if (card) {
-                    var line = card.querySelector('.dep-card-error') || el('p', 'dep-card-error', '');
-                    line.textContent = msg;
-                    card.appendChild(line);
-                }
+                if (card) cardError(card, msg);
             }
         })
             .then(function (res) {
@@ -6821,11 +6835,87 @@
 
     // --- Loading and wiring -------------------------------------------------
 
+    // --- What a push became ---------------------------------------------------
+
+    /**
+     * Says, in a toast, when a pushed commit starts waiting and when a new
+     * commit goes live.
+     *
+     * A push that waits for the previous version to stop looks, on a card
+     * nobody re-reads, exactly like a push that did nothing. So while the page
+     * is on screen it asks for the project list every QUEUE_WATCH_MS, the
+     * period the backend polls branches at, and compares the commits with the
+     * last answer: a new `pendingSha` is said once, a `lastSha` that moved is
+     * said once. The first answer says nothing, it has nothing to compare with.
+     * The cards repaint only when a commit moved, so a form open in a project
+     * pane is not redrawn under the operator every 20 seconds.
+     *
+     * A closed page hears nothing: Deploy keeps no notification on the server.
+     */
+    var QUEUE_WATCH_MS = 20000;
+    var queueWatchTimer = null;
+    var seenCommits = null;
+
+    function commitsOf(list) {
+        var out = {};
+        (list || []).forEach(function (p) {
+            out[p.id] = { pending: p.pendingSha || null, last: p.lastSha || null };
+        });
+        return out;
+    }
+
+    function sameCommits(a, b) {
+        return JSON.stringify(a) === JSON.stringify(b);
+    }
+
+    function announceCommits(list) {
+        var before = seenCommits;
+        seenCommits = commitsOf(list);
+        if (!before || typeof window.showToast !== 'function') return;
+        (list || []).forEach(function (p) {
+            var was = before[p.id];
+            if (!was) return;
+            var name = p.name || p.id;
+            if (p.lastSha && was.last && p.lastSha !== was.last) {
+                window.showToast(tr('deploy_toast_live', '$1: $2 is live.')
+                    .replace('$1', name).replace('$2', p.lastSha.slice(0, 7)), { variant: 'success' });
+            } else if (p.pendingSha && p.pendingSha !== was.pending) {
+                window.showToast(tr('deploy_toast_queued', '$1: $2 waits until the previous version stops serving its visitors.')
+                    .replace('$1', name).replace('$2', p.pendingSha.slice(0, 7)), { variant: 'info', duration: 8000 });
+            }
+        });
+    }
+
+    function watchCommits() {
+        // Hidden tab, or the operator left the Deploy page: nothing to tell.
+        if (document.hidden || !document.getElementById('deploy-projects')) return;
+        window.api('/api/deploy/projects')
+            .then(function (r) { return readJson(r, '/api/deploy/projects'); })
+            .then(function (p) {
+                var list = (p && p.projects) || [];
+                if (!sameCommits(commitsOf(list), seenCommits)) return loadProjects();
+                return undefined;
+            })
+            // A blip must not stop the watch: the next tick asks again.
+            .catch(function (e) { console.error('[Deploy] commit watch failed:', e); });
+    }
+
+    function syncCommitWatch() {
+        if (!queueWatchTimer && projects.length) {
+            queueWatchTimer = setInterval(watchCommits, QUEUE_WATCH_MS);
+        } else if (queueWatchTimer && !projects.length) {
+            clearInterval(queueWatchTimer);
+            queueWatchTimer = null;
+        }
+    }
+
     function loadProjects() {
         return window.api('/api/deploy/projects')
             .then(function (r) { return readJson(r, '/api/deploy/projects'); })
             .then(function (p) {
                 projects = (p && p.projects) || [];
+                announceCommits(projects);
+                syncCommitWatch();
                 renderProjects();
                 // The detail pane is built from this list, so it repaints with it
                 // rather than holding the version from before a redeploy.
