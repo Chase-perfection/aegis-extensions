@@ -1744,6 +1744,12 @@ button.dep-listrow {
     margin-top: var(--space-md);
 }
 
+/* The preview form has a branch field and a button, nothing else: on the
+   four-column track the button took the 1.6fr value column, 1100px wide. */
+.dep-env-form-pair {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
 /* `.dep-input` is a block field in a stacked form, which is where it is used
    everywhere else. Inside this row it is a cell. */
 .dep-env-form .dep-input,
@@ -1842,8 +1848,14 @@ button.dep-listrow {
     min-width: 0;
 }
 
+/* A fact is its key over its value. .dep-detail-url (margin-left: auto, made
+   for the header row) and .dep-meta-value (text-align: right, made for the
+   key/value rows) pushed four of the seven values 1200px away from their key,
+   on a line of their own; the status chip stayed on the left. */
 .dep-prod-fact > * {
     overflow-wrap: anywhere;
+    margin-left: 0;
+    text-align: left;
 }
 
 @media (max-width: 60rem) {
