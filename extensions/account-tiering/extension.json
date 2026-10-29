@@ -2,7 +2,7 @@
   "id": "account-tiering",
   "name": "Account Tiering",
   "version": 1,
-  "release": "0.0.0",
+  "release": "0.0.1",
   "page": "account-tiering.html",
   "icon": "users",
   "labelKey": "nav_account_tiering",

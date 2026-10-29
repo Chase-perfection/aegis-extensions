@@ -57,7 +57,52 @@
             deploy_access_closed: 'Closed',
             deploy_access_admins_only: 'Administrators only',
             deploy_access_person_one: 'person', deploy_access_person_many: 'people',
-            deploy_access_group_one: 'group', deploy_access_group_many: 'groups'
+            deploy_access_group_one: 'group', deploy_access_group_many: 'groups',
+            // Environment, migrations
+            deploy_env_target_runtime: 'Live site only, never the build',
+            deploy_env_runtime_hint: 'A password or a key for another server: choose "Live site only, never the build". The site\'s process reads it, the install and the build never do, and neither does a preview. To let the site reach a server on the internal network, open it in Settings, Internal network access.',
+            deploy_new_migration_failed: 'A migration was refused. What SQLite said is in the console above; the version that was serving has been put back.',
+            deploy_ref_migration_failed: 'A migration in that branch was refused',
+            deploy_new_migrations_unsupported: 'That branch carries migrations and this Aegis is too old to play them. Update Aegis on this server, or take the migrations folder out of the branch.',
+            deploy_ref_migrations_unsupported: 'This Aegis cannot play the migrations in that branch',
+            deploy_stage_migrate: 'Migrations',
+            // Internal network access
+            deploy_egress_err_host: 'Type an IPv4 address such as 10.0.0.25, with no name and no port.',
+            deploy_egress_err_port: 'The port is a number from 1 to 65535.',
+            deploy_egress_err_preview: 'A preview never reaches the internal network.',
+            deploy_egress_err_none: 'Nothing is open for this project. Reload the page.',
+            deploy_egress_err_write: 'Aegis could not write the project record. The backend log has the detail.',
+            deploy_egress_restarted: 'Done. The site restarted with the new access.',
+            deploy_egress_next: 'Saved. It applies at the next deployment or start of the site.',
+            deploy_egress_restart_failed: 'Saved, but the site did not restart: the previous version is still serving. Redeploy to apply it.',
+            deploy_egress_title: 'Internal network access',
+            deploy_egress_body: 'The site runs under an account that cannot reach the internal network. Open one server here, by address and port, when the site needs it: a business database, an internal API. Only that port of that machine opens, for the live site only. It is separate from where the site keeps its data: a site on an external database can hold one too. An address opened for the first time asks you to confirm.',
+            deploy_egress_host: 'Address, e.g. 10.0.0.25',
+            deploy_egress_host_label: 'Server address',
+            deploy_egress_port: 'Port',
+            deploy_egress_open: 'Open',
+            deploy_egress_close: 'Close',
+            deploy_egress_none: 'Nothing open. The site reaches the internet only.',
+            deploy_egress_current: 'Open: $1',
+            deploy_egress_unapproved: 'no longer approved on the server, so closed',
+            deploy_egress_approve_confirm: 'No site on this server has reached $1 before. Approve this address and open it for this site? Your name is recorded with the approval.',
+            deploy_egress_approve_declined: 'Nothing was opened.',
+            deploy_egress_err_approval: 'Aegis could not record the approval on this server. An administrator of that machine runs the line below in PowerShell, then clicks Open again.',
+            deploy_egress_close_confirm: 'Close the access to $1? The site restarts without it.',
+            // Reachability
+            deploy_net_title: 'Reachability',
+            deploy_net_unsupported: 'This host has no firewall Aegis drives. A site answers as soon as whatever sits in front of it allows the port.',
+            deploy_net_off: 'Sites answer on this machine only. From another machine the port is dropped, which a browser reports as a timeout and reads as the site being down.',
+            deploy_net_off_fix: 'To open it, go to the extension store and use "Finish setup on this host" on the Deploy card. It is a decision taken on the host, not from here.',
+            deploy_net_on: 'Sites are reachable from $1.',
+            deploy_net_scope: 'Networks allowed',
+            deploy_net_pinned: 'Set in the service environment by AEGIS_DEPLOY_FIREWALL_SCOPE, so this field cannot change it.',
+            deploy_net_hint: 'LocalSubnet means the networks this machine is on: $1. Widen it for a domain that spans subnets, for example 192.168.0.0/16. Comma separated.',
+            deploy_net_hint_bare: 'LocalSubnet means the networks this machine is on. Widen it for a domain that spans subnets, for example 192.168.0.0/16. Comma separated.',
+            deploy_net_save: 'Apply',
+            deploy_net_applied: 'Saved. Every open port was rewritten to match.',
+            deploy_net_bad: 'That is not a network. Use LocalSubnet, an address, a CIDR block or a range, separated by commas.',
+            deploy_net_failed: 'Aegis refused the change ($1).'
         },
         fr: {
             deploy_access_title: 'Accès par ressource',
@@ -93,7 +138,52 @@
             deploy_card_gave_up: 'Aegis a cessé de réessayer ce commit. Poussez un correctif, ou redéployez-le à la main.',
             deploy_now_cta: 'Déployer maintenant',
             deploy_toast_live: '$1 : $2 est en ligne.',
-            deploy_toast_queued: '$1 : $2 attend que la version précédente ne serve plus ses visiteurs.'
+            deploy_toast_queued: '$1 : $2 attend que la version précédente ne serve plus ses visiteurs.',
+            // Environment, migrations
+            deploy_env_target_runtime: 'Site en ligne uniquement, jamais le build',
+            deploy_env_runtime_hint: 'Un mot de passe ou une clé pour un autre serveur : choisissez « Site en ligne uniquement, jamais le build ». Le processus du site la lit, l\'installation et le build ne la lisent jamais, ni un aperçu. Pour que le site atteigne un serveur du réseau interne, ouvrez-le dans Réglages, Accès au réseau interne.',
+            deploy_new_migration_failed: 'Une migration a été refusée. Le message de SQLite est dans la console ci-dessus ; la version qui était en ligne a été remise.',
+            deploy_ref_migration_failed: 'Une migration de cette branche a été refusée',
+            deploy_new_migrations_unsupported: 'Cette branche contient des migrations et cette version d\'Aegis est trop ancienne pour les jouer. Mettez Aegis à jour sur ce serveur, ou retirez le dossier de migrations de la branche.',
+            deploy_ref_migrations_unsupported: 'Cette version d\'Aegis ne peut pas jouer les migrations de cette branche',
+            deploy_stage_migrate: 'Migrations',
+            // Internal network access
+            deploy_egress_err_host: 'Saisissez une adresse IPv4 comme 10.0.0.25, sans nom et sans port.',
+            deploy_egress_err_port: 'Le port est un nombre de 1 à 65535.',
+            deploy_egress_err_preview: 'Un aperçu n\'atteint jamais le réseau interne.',
+            deploy_egress_err_none: 'Rien n\'est ouvert pour ce projet. Rechargez la page.',
+            deploy_egress_err_write: 'Aegis n\'a pas pu écrire la fiche du projet. Le détail est dans le journal du backend.',
+            deploy_egress_restarted: 'Terminé. Le site a redémarré avec le nouvel accès.',
+            deploy_egress_next: 'Enregistré. Il s\'applique au prochain déploiement ou au prochain démarrage du site.',
+            deploy_egress_restart_failed: 'Enregistré, mais le site n\'a pas redémarré : la version précédente est toujours en ligne. Redéployez pour l\'appliquer.',
+            deploy_egress_title: 'Accès au réseau interne',
+            deploy_egress_body: 'Le site tourne sous un compte qui ne peut pas atteindre le réseau interne. Ouvrez ici un serveur, par adresse et port, quand le site en a besoin : une base de données métier, une API interne. Seul ce port de cette machine s\'ouvre, pour le site en ligne uniquement. C\'est distinct de l\'endroit où le site garde ses données : un site sur une base externe peut aussi en avoir un. Une adresse ouverte pour la première fois demande une confirmation.',
+            deploy_egress_host: 'Adresse, par ex. 10.0.0.25',
+            deploy_egress_host_label: 'Adresse du serveur',
+            deploy_egress_port: 'Port',
+            deploy_egress_open: 'Ouvrir',
+            deploy_egress_close: 'Fermer',
+            deploy_egress_none: 'Rien d\'ouvert. Le site n\'atteint que internet.',
+            deploy_egress_current: 'Ouvert : $1',
+            deploy_egress_unapproved: 'n\'est plus approuvé sur le serveur, donc fermé',
+            deploy_egress_approve_confirm: 'Aucun site de ce serveur n\'a encore atteint $1. Approuver cette adresse et l\'ouvrir pour ce site ? Votre nom est enregistré avec l\'approbation.',
+            deploy_egress_approve_declined: 'Rien n\'a été ouvert.',
+            deploy_egress_err_approval: 'Aegis n\'a pas pu enregistrer l\'approbation sur ce serveur. Un administrateur de cette machine exécute la ligne ci-dessous dans PowerShell, puis clique de nouveau sur Ouvrir.',
+            deploy_egress_close_confirm: 'Fermer l\'accès à $1 ? Le site redémarre sans lui.',
+            // Reachability
+            deploy_net_title: 'Accessibilité réseau',
+            deploy_net_unsupported: 'Cet hôte n\'a pas de pare-feu piloté par Aegis. Un site répond dès que ce qui se trouve devant lui autorise le port.',
+            deploy_net_off: 'Les sites répondent sur cette machine uniquement. Depuis une autre machine, le port est bloqué : un navigateur l\'affiche comme un délai dépassé et croit que le site est en panne.',
+            deploy_net_off_fix: 'Pour l\'ouvrir, allez dans le catalogue des extensions et utilisez « Terminer l\'installation sur cet hôte » sur la carte Deploy. C\'est une décision prise sur l\'hôte, pas d\'ici.',
+            deploy_net_on: 'Les sites sont accessibles depuis $1.',
+            deploy_net_scope: 'Réseaux autorisés',
+            deploy_net_pinned: 'Défini dans l\'environnement du service par AEGIS_DEPLOY_FIREWALL_SCOPE : ce champ ne peut pas le modifier.',
+            deploy_net_hint: 'LocalSubnet désigne les réseaux sur lesquels se trouve cette machine : $1. Élargissez-le pour un domaine qui couvre plusieurs sous-réseaux, par exemple 192.168.0.0/16. Séparés par des virgules.',
+            deploy_net_hint_bare: 'LocalSubnet désigne les réseaux sur lesquels se trouve cette machine. Élargissez-le pour un domaine qui couvre plusieurs sous-réseaux, par exemple 192.168.0.0/16. Séparés par des virgules.',
+            deploy_net_save: 'Appliquer',
+            deploy_net_applied: 'Enregistré. Tous les ports ouverts ont été réécrits en conséquence.',
+            deploy_net_bad: 'Ce n\'est pas un réseau. Utilisez LocalSubnet, une adresse, un bloc CIDR ou une plage, séparés par des virgules.',
+            deploy_net_failed: 'Aegis a refusé la modification ($1).'
         }
     };
     (function mergeOwnStrings() {
@@ -3597,7 +3687,7 @@
             block.appendChild(rows);
         }
 
-        var form = el('div', 'dep-env-form');
+        var form = el('div', 'dep-env-form dep-env-form-pair');
         var branchIn = el('input', 'dep-input');
         branchIn.type = 'text';
         branchIn.autocomplete = 'off';

@@ -2,6 +2,23 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.15
+
+**A push that waits for the previous version says so.** The card shows the
+queued push and a toast says when it goes live. While the Deploy page is open
+it asks the project list every 20 seconds and announces a new pending commit,
+then the commit that went live, once each. A refusal line on a card now sits
+inside the card body, under its buttons, instead of against the clipped edge.
+
+**The page is in French when Aegis is.** Internal network access,
+Reachability, the runtime-only variable hint, the migration errors and the
+queue messages were still in English: 42 strings had no French. They are in
+the page's own string table now.
+
+**Layout.** The facts of a project's overview sit next to their labels; they
+were pushed to the far right of a wide screen. The "Deploy this branch" form of
+a preview no longer stretches its button across the whole row.
+
 ## 0.2.14
 
 **The sign-in page shows the site's own icon for a project served by a
