@@ -579,6 +579,8 @@ test('sessions route: GET lists who is signed in, without any token', async (t) 
     assert.equal(answer.body.sessions.length, 1);
     assert.equal(answer.body.sessions[0].username, 'alice');
     assert.equal(answer.body.sessions[0].ip, '10.0.0.7');
+    assert.equal(typeof answer.body.sessions[0].loginAt, 'number', 'the login time is loginAt');
+    assert.equal(answer.body.sessions[0].login, undefined);
     assert.ok(!JSON.stringify(answer.body).includes(token), 'the session token never leaves the guard');
 });
 
@@ -612,6 +614,18 @@ test('sessions route: a blank username is refused rather than read as everyone',
     const answer = await call('DELETE /api/deploy/projects/:id/sessions', req);
     assert.equal(answer.status, 400);
     assert.equal(answer.body.error, 'bad_username');
+});
+
+test('auth payload: writeRecheck says whether a write can be rechecked against the group', async () => {
+    authStore.writeConfig(pathsFor('acme'), Object.assign({}, DIRECTORY_BODY, { bindPassword: 'service-secret' }));
+    const searchable = await call('GET /api/deploy/auth', request(null));
+    assert.equal(searchable.body.writeRecheck, true);
+
+    // A bind DN with no password: ldap.lookup refuses before opening a socket.
+    authStore.writeConfig(pathsFor('acme'), { bindPassword: '' });
+    const blind = await call('GET /api/deploy/auth', request(null));
+    assert.equal(blind.body.writeRecheck, false);
+    authStore.writeConfig(pathsFor('acme'), { bindPassword: 'service-secret' });
 });
 
 test('sessions route: an unknown project is 404', async () => {

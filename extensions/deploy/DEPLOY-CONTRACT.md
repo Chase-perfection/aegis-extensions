@@ -252,7 +252,7 @@ An `index.html` at its root. Beyond that:
 
 **Assets referenced from `/`.** Each project gets its own port and serves from
 the root, so `/assets/app.js` resolves. If your build sets a base path such as
-`/portail-interne/`, remove it. Vite calls this `base`, Next calls it `basePath`,
+`/internal-portal/`, remove it. Vite calls this `base`, Next calls it `basePath`,
 and both must be `/`.
 
 **No server, in a static project.** A static export works as files. Server-side
@@ -331,8 +331,8 @@ deployed by pasting a repository URL and nothing else.
 ```json
 {
   "installCmd": "pip install --no-cache-dir -r packaging/api/requirements.txt --target .",
-  "startCmd": "python packaging/api/kpi_api.py",
-  "dbFile": "kpi.db",
+  "startCmd": "python packaging/api/reports_api.py",
+  "dbFile": "reports.db",
   "migrationsDir": "migrations"
 }
 ```
@@ -424,8 +424,8 @@ empty, so nothing ever overwrites a decision somebody made.
 
 **What a process needs is asked, not filled in.** The table above reads the root
 of the branch, once, at creation. A project served by a process can keep its
-dependencies elsewhere (KPI: `packaging/api/requirements.txt`, beside
-`kpi_api.py`), and installing packages is a decision about the site, not a
+dependencies elsewhere (the reports app: `packaging/api/requirements.txt`, beside
+`reports_api.py`), and installing packages is a decision about the site, not a
 guess Deploy should make silently. So on every deployment of a project with a
 start command and an empty install command, `backend/siteNeeds.js` looks for
 the nearest `requirements.txt` from the start script's folder up to the root,
@@ -438,7 +438,7 @@ would run. Yes saves that command as the project's install command and
 redeploys; No leaves everything as it is. Any install command, typed or
 declared, counts as the answer and is never second-guessed.
 
-## Your case: `Chase-perfection/portail-interne`
+## Example: `example-org/internal-portal`
 
 The root of `main` holds `frontend/`, `infra/`, `deploy/`, `docs/`, `scripts/`,
 and the blueprint files. No `index.html`, and no `package.json` at the top
@@ -499,7 +499,7 @@ jobs:
           force_orphan: true
 ```
 
-Then in Aegis: repository URL `https://github.com/Chase-perfection/portail-interne`,
+Then in Aegis: repository URL `https://github.com/example-org/internal-portal`,
 branch `aegis-static`, subfolder empty.
 
 Check `frontend/vite.config.*` for a `base` other than `/` before the first
@@ -1242,7 +1242,7 @@ So an application must:
 - write its database and uploads under `AEGIS_DATA_DIR`, never beside its code;
 - write temporary files to `TEMP`, which already points into its own home;
 - expect its version folder as its working directory, so a relative path such
-  as `packaging/api/kpi_api.py` resolves. That folder is `releases/<sha>`, not
+  as `packaging/api/reports_api.py` resolves. That folder is `releases/<sha>`, not
   `current/`: never build an absolute path through `current/`, which may point at
   a newer version than the one running.
 
@@ -1269,10 +1269,10 @@ deployment fails with `start_failed`, and the previous version keeps serving.
 | `ModuleNotFoundError: No module named '...'` / `Cannot find module '...'` above that line | A package the code imports was never installed into `current/`, or (Deploy 0.2.7 and older, Python script in a subfolder) was installed at the root where Python did not look | Add it to the requirements or `package.json` the install command reads, or fix the install command. If the install log shows it installed, update Deploy to 0.2.8, which puts the site root on `PYTHONPATH`. Installing it by hand on the server does not reach the runtime account |
 | `nothing answered on port ... within 60s` | The application runs but listens somewhere else | Listen on `PORT` and `HOST` from the environment |
 
-### Native KPI pattern
+### Native Python pattern
 
-For the Python KPI application, the Deploy project is the `aegis` branch of the
-KPI repository, not `main`. `main` serves the production install under IIS, and
+For a Python reports application, the Deploy project is the `aegis` branch of the
+reports repository, not `main`. `main` serves the production install under IIS, and
 merging the native code into it would move the hosting under the users on a day
 nobody chose. The two run side by side until the switch. Use these values:
 
@@ -1282,8 +1282,8 @@ nobody chose. The two run side by side until the switch. Use these values:
   "installCmd": "pip install --no-cache-dir -r packaging/api/requirements.txt --target .",
   "buildCmd": "",
   "outputDir": "",
-  "startCmd": "python packaging/api/kpi_api.py",
-  "dbFile": "kpi.db",
+  "startCmd": "python packaging/api/reports_api.py",
+  "dbFile": "reports.db",
   "migrationsDir": "migrations"
 }
 ```
@@ -1294,7 +1294,7 @@ stops on `needs_dependencies` and asks to install openpyxl, which is the answer
 to give. `python -m pip install` is the spelling Deploy proposes and the safer
 one: plain `pip` needs Python's `Scripts\` folder on the PATH.
 
-`kpi.db` is created under the per-project `AEGIS_DATA_DIR`. Deploy keeps that
+`reports.db` is created under the per-project `AEGIS_DATA_DIR`. Deploy keeps that
 directory across code deployments, and plays the SQL files from `migrations`
 before it starts the new process. Configure the project's access method as
 LDAP to use the Aegis directory connection. The runtime forces the application
@@ -1363,9 +1363,17 @@ revalidation interval. Every other method is a write, and a write waits for the
 directory first: a user no longer allowed gets 403 and loses the session, and a
 directory that cannot answer gets the write a 503. Neither reaches the
 application, and neither sets a cookie. So the headers on a write are current;
-on a read they can be one interval old. The write check is skipped where it can
-never run: `revalidateMinutes` at 0, or a directory with no service account to
-search with.
+on a read they can be one interval old. `revalidateMinutes` at 0 turns off the
+read timer only: writes are still checked. An account the directory no longer
+finds is refused on a write, like one taken out of the group.
+
+The write check is skipped in one case: a directory the client cannot search at
+all, which is a bind DN saved without its password. A service account with its
+password and an anonymous search (no bind DN, base DN and user filter set) both
+count as searchable; an anonymous search the controller refuses is no answer,
+so the write gets 503. Where the check is skipped, writes are let through on the
+login's verdict, and the site's Authentication panel says so: "Writes are not
+rechecked against the group: add a service account or allow anonymous search."
 
 A session ends eight hours after login, or after thirty minutes with no
 request, whichever comes first. A tenant administrator can also close the

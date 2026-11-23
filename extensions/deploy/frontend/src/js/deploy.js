@@ -57,7 +57,24 @@
             deploy_access_closed: 'Closed',
             deploy_access_admins_only: 'Administrators only',
             deploy_access_person_one: 'person', deploy_access_person_many: 'people',
-            deploy_access_group_one: 'group', deploy_access_group_many: 'groups'
+            deploy_access_group_one: 'group', deploy_access_group_many: 'groups',
+            // Site sessions and the HTTPS rules of a protected site.
+            deploy_sessions_title: 'Signed in now',
+            deploy_sessions_none: 'Nobody is signed in to this site.',
+            deploy_sessions_close_all: 'Close sessions',
+            deploy_sessions_close: 'Close',
+            deploy_sessions_close_user: 'Close the sessions of $1',
+            deploy_sessions_login: 'signed in $1',
+            deploy_sessions_seen: 'last seen $1',
+            deploy_sessions_confirm: 'Close every session on this site? Whoever is signed in gets the login form at their next request.',
+            deploy_sessions_closed: '$1 session(s) closed.',
+            deploy_sessions_failed: 'Could not read or close the sessions of this site.',
+            deploy_sessions_no_recheck: 'Writes are not rechecked against the group: add a service account or allow anonymous search.',
+            deploy_auth_err_requires_tls: 'A site behind a login must be served over HTTPS. Turn HTTPS on for this site first, or give it a host name served by the HTTPS host router, then protect it.',
+            deploy_tls_err_required_by_auth: 'This site is behind a login, which needs HTTPS. Switch the protection off first, then turn HTTPS off.',
+            deploy_settings_tls_required: 'This site is behind a login served over its host name, so the name cannot be removed. Switch the protection off first, or turn HTTPS on for the site itself.',
+            deploy_auth_err_requires_tls_ldap: 'The directory password is never sent in clear. Use an ldaps:// address, or keep ldap:// and tick StartTLS.',
+            deploy_auth_err_requires_validation: 'The directory certificate is always checked. If the controller uses a certificate Aegis does not know, use "Trust this authority" on the certificate shown after the test, then save again.'
         },
         fr: {
             deploy_access_title: 'Accès par ressource',
@@ -93,7 +110,23 @@
             deploy_card_gave_up: 'Aegis a cessé de réessayer ce commit. Poussez un correctif, ou redéployez-le à la main.',
             deploy_now_cta: 'Déployer maintenant',
             deploy_toast_live: '$1 : $2 est en ligne.',
-            deploy_toast_queued: '$1 : $2 attend que la version précédente ne serve plus ses visiteurs.'
+            deploy_toast_queued: '$1 : $2 attend que la version précédente ne serve plus ses visiteurs.',
+            deploy_sessions_title: 'Connectés en ce moment',
+            deploy_sessions_none: 'Personne n\'est connecté à ce site.',
+            deploy_sessions_close_all: 'Fermer les sessions',
+            deploy_sessions_close: 'Fermer',
+            deploy_sessions_close_user: 'Fermer les sessions de $1',
+            deploy_sessions_login: 'connecté $1',
+            deploy_sessions_seen: 'vu pour la dernière fois $1',
+            deploy_sessions_confirm: 'Fermer toutes les sessions de ce site ? Les personnes connectées retrouvent le formulaire de connexion à leur prochaine requête.',
+            deploy_sessions_closed: '$1 session(s) fermée(s).',
+            deploy_sessions_failed: 'Impossible de lire ou de fermer les sessions de ce site.',
+            deploy_sessions_no_recheck: 'Les écritures ne sont pas revérifiées par rapport au groupe : ajoutez un compte de service ou autorisez la recherche anonyme.',
+            deploy_auth_err_requires_tls: 'Un site protégé par une connexion doit être servi en HTTPS. Activez d\'abord le HTTPS pour ce site, ou donnez-lui un nom d\'hôte servi par le routeur HTTPS, puis protégez-le.',
+            deploy_tls_err_required_by_auth: 'Ce site est protégé par une connexion, qui exige le HTTPS. Désactivez d\'abord la protection, puis le HTTPS.',
+            deploy_settings_tls_required: 'Ce site est protégé par une connexion servie via son nom d\'hôte : le nom ne peut pas être retiré. Désactivez d\'abord la protection, ou activez le HTTPS sur le site lui-même.',
+            deploy_auth_err_requires_tls_ldap: 'Le mot de passe de l\'annuaire n\'est jamais envoyé en clair. Utilisez une adresse ldaps://, ou gardez ldap:// et cochez StartTLS.',
+            deploy_auth_err_requires_validation: 'Le certificat de l\'annuaire est toujours vérifié. Si le contrôleur utilise un certificat qu\'Aegis ne connaît pas, utilisez « Faire confiance à cette autorité » sur le certificat affiché après le test, puis enregistrez de nouveau.'
         }
     };
     (function mergeOwnStrings() {
@@ -5347,7 +5380,7 @@
      * the payload this card was built from rather than probed, so opening a tab
      * costs no directory round trip.
      */
-    function buildSiteAuthCard(site, canSearch) {
+    function buildSiteAuthCard(site, canSearch, writeRecheck) {
         var wrap = el('div', 'dep-auth-site');
 
         // The method, chosen rather than switched on. A checkbox could only
@@ -5487,6 +5520,17 @@
         // has been applied, and only an administrator may read them.
         if (isAdmin && current !== 'none') wrap.appendChild(buildSessionsBlock(site));
 
+        // The one directory a write cannot be rechecked against: a bind DN
+        // saved without its password, which the directory client refuses
+        // before asking anything. The guard lets writes through there rather
+        // than refuse them all, and this line is where that is said.
+        if (current !== 'none' && writeRecheck === false) {
+            var noRecheck = el('p', 'dep-auth-site-warn', tr('deploy_sessions_no_recheck',
+                'Writes are not rechecked against the group: add a service account or allow anonymous search.'));
+            noRecheck.setAttribute('data-i18n', 'deploy_sessions_no_recheck');
+            wrap.appendChild(noRecheck);
+        }
+
         appendTlsBlock(wrap, site, methodSelect);
         return wrap;
     }
@@ -5531,7 +5575,7 @@
                 main.appendChild(el('span', 'dep-listrow-name', s.username));
                 main.appendChild(el('span', 'dep-listrow-sub', [
                     s.projectId && s.projectId !== site.id ? s.projectId : null,
-                    s.login ? tr('deploy_sessions_login', 'signed in $1').replace('$1', ago(s.login)) : null,
+                    s.loginAt ? tr('deploy_sessions_login', 'signed in $1').replace('$1', ago(s.loginAt)) : null,
                     s.ip || null,
                     s.lastSeen ? tr('deploy_sessions_seen', 'last seen $1').replace('$1', ago(s.lastSeen)) : null
                 ].filter(Boolean).join(' · ')));
@@ -5644,7 +5688,7 @@
                 // drawn rather than after somebody has typed into it.
                 var canSearch = !!(data.ldap && data.ldap.configured
                     && data.ldap.bindDn && data.ldap.hasPassword);
-                box.appendChild(buildSiteAuthCard(site, canSearch));
+                box.appendChild(buildSiteAuthCard(site, canSearch, data.writeRecheck !== false));
             })
             .catch(function (e) {
                 note.textContent = tr('deploy_auth_load_failed',

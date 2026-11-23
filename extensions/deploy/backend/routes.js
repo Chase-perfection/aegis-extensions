@@ -2816,6 +2816,11 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         res.json({
             success: true,
             ldap: ldapView(authStore.publicConfig(req.tenantPaths)),
+            // False only for a directory ldap.lookup cannot search at all (a
+            // bind DN with no password): there a write on a protected site is
+            // not rechecked against the group, and the panel says so. A
+            // boolean, worked out here, so no password ever reaches the page.
+            writeRecheck: siteAuth.writesRecheckable(authStore.readConfig(req.tenantPaths)),
             // The vocabulary, sent rather than hardcoded in the page, so a
             // method added to the backend appears in the selector without a
             // second edit in the frontend.
@@ -3321,7 +3326,10 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
      *
      * `?username=` closes one person, compared as `siteAuth.normalizeUser`
      * spells it, so `CORP\alice` and `alice@corp.local` reach the same
-     * sessions. A blank name is refused rather than read as everyone.
+     * sessions. The domain is dropped, so `?username=alice` also closes an
+     * `OTHER\alice` signed in to the same site: that closes too much, never
+     * too little, which is the safe direction for a revoke. A blank name is
+     * refused rather than read as everyone.
      */
     function sitesOf(tenantPaths, project) {
         return [project.id].concat(previews.listFor(tenantPaths, project.id).map((p) => p.id));

@@ -23,11 +23,11 @@ switch: the command is the reason.
 Two things get installed, by two different owners. What Deploy itself needs on
 the server, git and, for applications, Python or Node, Deploy installs: the
 store drawer lists it and installs what is missing, for all users. What one site
-needs, `openpyxl` for KPI or `express` for a Node app, is that site's business.
+needs, `openpyxl` for a Python reports app or `express` for a Node app, is that site's business.
 The branch declares it (a `requirements.txt`, a `package.json`) and the install
 command installs it. When a site served by a process declares packages and has
 no install command, Deploy stops before publishing and asks on the project page:
-**"KPI Usine needs openpyxl to run. Do you want to install it?"** Yes saves the
+**"Reports needs openpyxl to run. Do you want to install it?"** Yes saves the
 install command it worked out and deploys again; No changes nothing. Either way
 the version that was serving keeps serving while you decide.
 
@@ -73,7 +73,7 @@ and their rules and works out which subnets to deny by looking at the
 interfaces that carry the domain. Turning on application processes is a click
 on the extension card.
 
-## Native KPI site
+## Native Python site
 
 The `aegis` branch carries `aegis.deploy.json`, so creating this project takes
 the repository URL and the branch and nothing else: the install command, the
@@ -88,25 +88,25 @@ for a project being created; who may enter is the Authentication tab's, always.
 
 ```json
 {
-  "repoUrl": "https://github.com/SI-BRI/KPI-BRICONORD-.git",
+  "repoUrl": "https://github.com/example-org/reports.git",
   "branch": "aegis",
-  "name": "KPI Usine",
+  "name": "Reports",
   "installCmd": "pip install --no-cache-dir -r packaging/api/requirements.txt --target .",
   "buildCmd": "",
   "outputDir": "",
-  "startCmd": "python packaging/api/kpi_api.py",
-  "dbFile": "kpi.db",
+  "startCmd": "python packaging/api/reports_api.py",
+  "dbFile": "reports.db",
   "migrationsDir": "migrations"
 }
 ```
 
 Choose LDAP for the project's Aegis authentication. Do not add a project
 variable named `AEGIS_PROXY_KEY`; Deploy owns that internal value and generates
-it again whenever the process starts. KPI reads `AEGIS_DATA_DIR` for its
-persistent `kpi.db`, and Deploy runs the `migrations` directory before the
-process starts. KPI has no `kpi-api.json` in this mode.
+it again whenever the process starts. The app reads `AEGIS_DATA_DIR` for its
+persistent `reports.db`, and Deploy runs the `migrations` directory before the
+process starts. The app has no `reports-api.json` in this mode.
 
-The requirements file also names PyInstaller, which builds `KPI.exe` and has no
+The requirements file also names PyInstaller, which builds `Reports.exe` and has no
 part in a project served as a process. The build skips it on its own and says so
 in the console, so the install command above needs no editing. See
 **Dependencies the build skips** in `DEPLOY-CONTRACT.md`.
@@ -128,11 +128,11 @@ Checklist before handing out the site:
 
 1. Confirm the repository is on `aegis` and the install command completes. On
    another branch, expect the openpyxl question on the first deployment.
-2. Confirm the process starts with `python packaging/api/kpi_api.py` and the
+2. Confirm the process starts with `python packaging/api/reports_api.py` and the
    health check answers through the Deploy URL.
-3. Confirm the deployed data directory contains `kpi.db` and that a migration
+3. Confirm the deployed data directory contains `reports.db` and that a migration
    is recorded before the application serves traffic.
-4. Sign in through the Aegis LDAP gate. Confirm KPI receives the canonical
+4. Sign in through the Aegis LDAP gate. Confirm the app receives the canonical
    `X-Aegis-User` (`sAMAccountName`) and that a client-supplied value is ignored.
 5. Confirm the application is reachable through the proxy but not through its
    internal loopback port from another machine.
@@ -145,9 +145,9 @@ Checklist before handing out the site:
 The login form is not single sign-on. Site authentication is a username, a
 password, and an LDAP bind. It is not integrated Windows authentication, so
 people type their domain password into a web form. On an intranet that is also
-a phishing target that Kerberos removes by construction. KPI Usine keeps IIS in
-front for exactly this reason. If your users expect silent sign-on, Deploy's
-grid is not the answer.
+a phishing target that Kerberos removes by construction. An application that
+needs silent sign-on keeps IIS or another Kerberos front end. If your users
+expect it, Deploy's grid is not the answer.
 
 A protected site is served over HTTPS only. Aegis refuses to protect a site
 that has no TLS (turn HTTPS on first, or give the site a host name served by the
@@ -234,7 +234,7 @@ Once per project, in the form or in `aegis.deploy.json` on the branch:
    Deploy looks for what the site declares and asks (below).
 2. **Build command**: empty unless something must be compiled.
 3. **Start command**: run from `current/`, so paths are relative to the
-   repository root, for example `python packaging/api/kpi_api.py` or
+   repository root, for example `python packaging/api/reports_api.py` or
    `node server.js`.
 4. **Database file** and **migrations directory**, if the application has them.
 
@@ -249,7 +249,7 @@ When a project has a start command and no install command, Deploy looks for
 what the site declares before it publishes anything:
 
 - for `python <script>`, the nearest `requirements.txt` from the script's folder
-  up to the repository root (`packaging/api/requirements.txt` for KPI);
+  up to the repository root (`packaging/api/requirements.txt` for the reports app);
 - for `node`, `npm` and the like, the nearest `package.json` with
   `dependencies` and no committed `node_modules`.
 
@@ -257,7 +257,7 @@ Packaging-only entries such as PyInstaller are not counted. If something is
 left, the deployment is refused with `needs_dependencies`, nothing is published,
 and the project card, its overview and the deployment console ask:
 
-> **KPI Usine needs openpyxl to run. Do you want to install it?**
+> **Reports needs openpyxl to run. Do you want to install it?**
 > Declared in packaging/api/requirements.txt. Yes runs this before every
 > deployment of this site:
 > `python -m pip install --no-cache-dir -r packaging/api/requirements.txt --target .`
@@ -305,7 +305,7 @@ A `start_failed` whose console ends in `ModuleNotFoundError` or
 `Cannot find module` is the same problem the question exists for, on a project
 Deploy could not read: the install command is missing, or does not install
 that package. Fix the install command, not the server. One exception: on Deploy
-0.2.7 and older, a Python script in a subfolder (KPI's
-`packaging/api/kpi_api.py`) did not see the packages pip had installed at the
+0.2.7 and older, a Python script in a subfolder (the reports app's
+`packaging/api/reports_api.py`) did not see the packages pip had installed at the
 site root, even with a correct install command. The install log shows the
 package installed; updating Deploy to 0.2.8 is the fix.

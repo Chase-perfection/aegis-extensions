@@ -418,8 +418,10 @@ function purgeSessions(now) {
 /**
  * The live session a cookie names on this site, or null.
  *
- * Every hit counts as activity and slides the idle window. The eight-hour cap
- * in `expiresAt` does not move: a visitor active all day still signs in again.
+ * Reading it is not activity: `served` slides the idle window, and only for a
+ * request the guard lets through. A 403, a 503 or a 404 on the reserved prefix
+ * must not keep an unattended session alive. The eight-hour cap in `expiresAt`
+ * never moves: a visitor active all day still signs in again.
  */
 function sessionFor(token, slug, projectId) {
     if (!token) return null;
@@ -430,8 +432,13 @@ function sessionFor(token, slug, projectId) {
     // Same host, different port: the browser sends a cookie minted for another
     // site. It is a valid token and still not a session here.
     if (s.slug !== slug || s.projectId !== projectId) return null;
-    s.lastSeen = now;
     return s;
+}
+
+/** Marks an accepted request on a session, and passes the verdict through. */
+function served(session, verdict) {
+    if (verdict === false) session.lastSeen = Date.now();
+    return verdict;
 }
 
 /**
@@ -461,7 +468,7 @@ function listSessions(slug, projectId) {
         if (s.slug !== slug || s.projectId !== projectId) continue;
         rows.push({
             username: s.login || s.username || '',
-            login: s.loginAt || 0,
+            loginAt: s.loginAt || 0,
             ip: s.ip || '',
             lastSeen: s.lastSeen || 0,
             expiresAt: s.expiresAt
@@ -1081,12 +1088,10 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
             'X-Content-Type-Options': 'nosniff'
         });
         res.end(req.method === 'HEAD' ? undefined : json);
+        if (session) served(session, false);
         return true;
     }
 
-    // Past the door only: which commits a protected site runs, and what it
-    // says to its visitors, is not for somebody who has not signed in. Without
-    // a session it is a reserved path like any other, and answers 404.
     const write = !READ_METHODS.has(req.method);
 
     // A write waits for the directory before it goes anywhere, the site's own
@@ -1101,19 +1106,22 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
                 sendHtml(res, 503, renderError(lang, tr(lang, 'errDirectoryTitle'), tr(lang, 'errDirectory')));
                 return true;
             }
-            if (isSitePath(pathOnly)) return false;
-            return admit(req, res, session, ctx, pathOnly);
+            if (isSitePath(pathOnly)) return served(session, false);
+            return served(session, admit(req, res, session, ctx, pathOnly));
         });
     }
 
-    if (session && isSitePath(pathOnly)) return false;
+    // Past the door only: which commits a protected site runs, and what it
+    // says to its visitors, is not for somebody who has not signed in. Without
+    // a session it is a reserved path like any other, and answers 404.
+    if (session && isSitePath(pathOnly)) return served(session, false);
 
     if (reserved) { notFound(res); return true; }
 
     if (session) {
         // Fires at most once per interval and never blocks: see maybeRevalidate.
         maybeRevalidate(session, token, ctx, config);
-        return admit(req, res, session, ctx, pathOnly);
+        return served(session, admit(req, res, session, ctx, pathOnly));
     }
 
     // Everything else on a protected site: send them to the form, remembering
@@ -1409,35 +1417,59 @@ function recheckable(session, config) {
  * - `unanswered`: the directory could not say. The write answers 503 and is
  *   not proxied; the session is KEPT, so reads go on as `maybeRevalidate`
  *   describes and the write can be tried again.
+ * - The directory answers that the account no longer exists
+ *   (`ldap_user_not_found`): that is a verdict, not a silence, so it is
+ *   `refused` too. Only here: on the read timer it stays "no answer", so a
+ *   filter mistake cannot empty a site in the background.
  *
- * Skipped, and the write treated as a read, where no check could ever run:
- * `revalidateMinutes: 0`, or a directory with no service account to search
- * with (`userDnTemplate` only). Failing closed there would forbid every write
- * on the site for good, which is a configuration fault and not a verdict.
+ * `revalidateMinutes: 0` turns off the read timer and nothing else: writes are
+ * still checked. The one exemption is a directory `ldap.lookup` refuses before
+ * opening a socket (`writesRecheckable`): failing closed there would forbid
+ * every write on the site for good, which is a configuration fault and not a
+ * verdict. The Authentication panel warns about it (`writeRecheck: false`).
  */
 function recheckWrite(session, token, ctx, config) {
-    const searchable = !!(config && config.bindDn && config.bindPassword);
-    if (!recheckable(session, config) || !searchable) return Promise.resolve('kept');
-    return revalidate(session, token, ctx, config).then((outcome) =>
-        (sessions.get(token) === session ? outcome : 'refused'));
+    if (!session.username || !writesRecheckable(config)) return Promise.resolve('kept');
+    return revalidate(session, token, ctx, config).then((outcome) => {
+        if (outcome === 'missing') {
+            sessions.delete(token);
+            console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} (account not found in the directory)`);
+            return 'refused';
+        }
+        return sessions.get(token) === session ? outcome : 'refused';
+    });
 }
 
 /**
- * One question to the directory about one session. Resolves `kept`, `refused`
- * or `unanswered` and never rejects. At most one is in flight per session: a
- * second caller gets the promise already running.
+ * Whether `ldap.lookup` can run on this configuration at all. The same
+ * preconditions it checks: a base DN, a user filter, and either a bind DN with
+ * its password or no bind DN, which is an anonymous search. A bind DN with no
+ * password is refused before any socket opens, so nothing can ever answer.
+ */
+function writesRecheckable(config) {
+    if (!config || !String(config.baseDn || '').trim() || !String(config.userFilter || '').trim()) return false;
+    const bindDn = String(config.bindDn || '').trim();
+    const bindPassword = config.bindPassword === undefined || config.bindPassword === null ? '' : String(config.bindPassword);
+    return !(bindDn && !bindPassword);
+}
+
+/**
+ * One question to the directory about one session. Resolves `kept`, `refused`,
+ * `missing` (the directory says the account does not exist; the session is not
+ * touched here) or `unanswered`, and never rejects. At most one is in flight
+ * per session: a second caller gets the promise already running.
  */
 function revalidate(session, token, ctx, config) {
     if (session.revalidating) return session.revalidating;
     const everyMs = revalidateEveryMs(config);
-    const retryMs = Math.min(everyMs, REVALIDATE_RETRY_MS);
+    const retryMs = everyMs > 0 ? Math.min(everyMs, REVALIDATE_RETRY_MS) : REVALIDATE_RETRY_MS;
 
     const running = Promise.resolve()
         .then(() => lookup(config, session.username))
         .then((result) => {
             if (!result || result.ok !== true) {
                 session.nextCheckAt = Date.now() + retryMs;
-                return 'unanswered';
+                return result && result.error === 'ldap_user_not_found' ? 'missing' : 'unanswered';
             }
             const groups = Array.isArray(result.groups) ? result.groups : [];
             // `lookup` searches rather than binding, so it reads the entry and
@@ -1483,7 +1515,7 @@ function dropSessions(slug, projectId) {
 
 module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
-    listSessions, dropSessionsFor, normalizeUser, IDLE_MS,
+    listSessions, dropSessionsFor, normalizeUser, writesRecheckable, IDLE_MS,
     PREFIX, LOGIN_PATH, WHOAMI_PATH, SESSION_COOKIE, LOCK_THRESHOLD, LOCK_MS,
     RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, isSitePath, safeNext, readCookie, pickLang,
     // Test seams. Not part of the contract's public surface; nothing outside

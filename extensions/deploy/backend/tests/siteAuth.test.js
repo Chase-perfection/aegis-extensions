@@ -1248,30 +1248,96 @@ test('mutating request with directory unreachable answers 503 and is not proxied
     assert.strictEqual(visit(slug, tenantPaths, 'wdown', token).handled, false);
 });
 
-test('a write is not rechecked where no check can ever run', async (t) => {
-    // Revalidation off, and a directory with no service account to search
-    // with: failing closed there would forbid every write on the site for good.
-    // Two tenants: the directory is read once per tenant, and cached by slug.
-    const off = seed('tenant-write-off', 'wskipoff',
+test('revalidateMinutes 0 still rechecks a write', async (t) => {
+    // Zero switches off the timer on reads, and nothing else.
+    const tenantPaths = seed('tenant-write-off', 'wskipoff',
         { name: 'Write', auth: { enabled: true, allowedGroups: ['Site Viewers'] } }, revalConfig(0));
-    const nosvc = seed('tenant-write-nosvc', 'wskipsvc',
+    t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions('tenant-write-off', 'wskipoff'); });
+    let calls = 0;
+    siteAuth._setLookup(() => { calls += 1; return { ok: true, groups: [HELPDESK_DN] }; });
+
+    const token = await loginToken('tenant-write-off', tenantPaths, 'wskipoff', '10.0.0.96');
+    assert.strictEqual(visit('tenant-write-off', tenantPaths, 'wskipoff', token).handled, false);
+    await settle();
+    assert.strictEqual(calls, 0, 'a read is not checked with the timer off');
+    const write = await send('tenant-write-off', tenantPaths, 'wskipoff', token, 'POST', '/api/items');
+    assert.strictEqual(calls, 1, 'a write is');
+    assert.strictEqual(write.res.statusCode, 403);
+});
+
+test('a template-only directory is searched anonymously on a write', async (t) => {
+    // No service account is not "cannot search": ldap.lookup binds anonymously
+    // with the base DN and the user filter, so the write waits for it.
+    const tenantPaths = seed('tenant-write-anon', 'wanon',
         { name: 'Write', auth: { enabled: true, allowedGroups: ['Site Viewers'] } },
         { url: 'ldaps://dc01.corp.local:636', baseDn: 'DC=corp,DC=local',
           userDnTemplate: 'CN={username},OU=Users,DC=corp,DC=local', revalidateMinutes: 10 });
-    t.after(() => {
-        siteAuth._setLookup(null);
-        siteAuth.dropSessions('tenant-write-off', 'wskipoff');
-        siteAuth.dropSessions('tenant-write-nosvc', 'wskipsvc');
-    });
+    t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions('tenant-write-anon', 'wanon'); });
+    let calls = 0;
+    siteAuth._setLookup(() => { calls += 1; return { ok: false, error: 'ldap_bind_refused' }; });
+
+    const token = await loginToken('tenant-write-anon', tenantPaths, 'wanon', '10.0.0.97');
+    const write = await send('tenant-write-anon', tenantPaths, 'wanon', token, 'POST', '/api/items');
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(write.res.statusCode, 503, 'an anonymous search the DC refuses is no answer');
+});
+
+test('a write is not rechecked where ldap.lookup cannot run at all', async (t) => {
+    // A bind DN with no password is refused by ldap.lookup before any socket
+    // opens. Failing closed there would forbid every write for good, so the
+    // write passes and the Authentication panel says so (writeRecheck false).
+    const config = { url: 'ldaps://dc01.corp.local:636', baseDn: 'DC=corp,DC=local',
+        bindDn: 'CN=svc,DC=corp,DC=local', revalidateMinutes: 10 };
+    const tenantPaths = seed('tenant-write-nopw', 'wnopw',
+        { name: 'Write', auth: { enabled: true, allowedGroups: ['Site Viewers'] } }, config);
+    t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions('tenant-write-nopw', 'wnopw'); });
     let calls = 0;
     siteAuth._setLookup(() => { calls += 1; return { ok: false, error: 'ldap_bad_config' }; });
 
-    const a = await loginToken('tenant-write-off', off, 'wskipoff', '10.0.0.96');
-    assert.strictEqual((await send('tenant-write-off', off, 'wskipoff', a, 'POST', '/api/items')).handled, false);
-    const b = await loginToken('tenant-write-nosvc', nosvc, 'wskipsvc', '10.0.0.97');
-    assert.ok(b, 'the template-only directory signs in');
-    assert.strictEqual((await send('tenant-write-nosvc', nosvc, 'wskipsvc', b, 'POST', '/api/items')).handled, false);
-    assert.strictEqual(calls, 0, 'nothing was asked of a directory that cannot answer');
+    assert.strictEqual(siteAuth.writesRecheckable(authStore.readConfig(tenantPaths)), false);
+    assert.strictEqual(siteAuth.writesRecheckable(
+        Object.assign({ userFilter: '(sAMAccountName={username})' }, GOOD_CONFIG)), true);
+    assert.strictEqual(siteAuth.writesRecheckable(GOOD_CONFIG), false,
+        'no user filter is refused by ldap.lookup too (authStore always supplies one)');
+    assert.strictEqual(siteAuth.writesRecheckable({ url: 'ldaps://dc01.corp.local:636',
+        baseDn: 'DC=corp,DC=local', userFilter: '(sAMAccountName={username})' }), true,
+        'anonymous search counts as searchable');
+
+    const token = await loginToken('tenant-write-nopw', tenantPaths, 'wnopw', '10.0.0.98');
+    const write = await send('tenant-write-nopw', tenantPaths, 'wnopw', token, 'POST', '/api/items');
+    assert.strictEqual(write.handled, false);
+    assert.strictEqual(calls, 0);
+});
+
+test('a write by a user deleted from the directory is refused and drops the session', async (t) => {
+    const tenantPaths = seed('tenant-write-gone', 'wgone',
+        { name: 'Write', auth: { enabled: true, allowedGroups: ['Site Viewers'] } }, revalConfig(10));
+    t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions('tenant-write-gone', 'wgone'); });
+    siteAuth._setLookup(() => ({ ok: false, error: 'ldap_user_not_found' }));
+
+    const token = await loginToken('tenant-write-gone', tenantPaths, 'wgone', '10.0.0.99');
+    const write = await send('tenant-write-gone', tenantPaths, 'wgone', token, 'DELETE', '/api/items/1');
+    assert.strictEqual(write.res.statusCode, 403);
+    assert.ok(isLoginRedirect(visit('tenant-write-gone', tenantPaths, 'wgone', token)));
+});
+
+test('a refused or unanswered request does not count as activity', async (t) => {
+    const tenantPaths = seed('tenant-idle-refused', 'irefused',
+        { name: 'Idle', auth: { enabled: true, allowedGroups: ['Site Viewers'] } }, revalConfig(10));
+    t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions('tenant-idle-refused', 'irefused'); });
+    siteAuth._setLookup(() => ({ ok: false, error: 'ldap_unreachable' }));
+    const token = await loginToken('tenant-idle-refused', tenantPaths, 'irefused', '10.0.0.100');
+
+    const advance = fakeClock(t);
+    advance(20 * 60 * 1000);
+    const down = await send('tenant-idle-refused', tenantPaths, 'irefused', token, 'POST', '/api/items');
+    assert.strictEqual(down.res.statusCode, 503);
+    const reserved = await send('tenant-idle-refused', tenantPaths, 'irefused', token, 'GET', '/__aegis/nothing');
+    assert.strictEqual(reserved.res.statusCode, 404);
+
+    advance(11 * 60 * 1000);
+    assert.ok(isLoginRedirect(visit('tenant-idle-refused', tenantPaths, 'irefused', token)),
+        'thirty-one minutes after the last accepted request, the 503 and the 404 slid nothing');
 });
 
 test('normalizeUser: case, a DOMAIN\\ prefix and an @suffix all reduce to one name', () => {
@@ -1298,7 +1364,7 @@ test('dropSessionsFor closes only the named user, and listSessions never shows a
     assert.strictEqual(listed.length, 2);
     for (const row of listed) {
         assert.deepStrictEqual(Object.keys(row).sort(),
-            ['expiresAt', 'ip', 'lastSeen', 'login', 'username']);
+            ['expiresAt', 'ip', 'lastSeen', 'loginAt', 'username']);
     }
     const text = JSON.stringify(listed);
     assert.ok(!text.includes(alice) && !text.includes(bob), 'no session token in the list');
