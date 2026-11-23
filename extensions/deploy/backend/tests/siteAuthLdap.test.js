@@ -346,6 +346,9 @@ async function scaffold(t, {
     t.after(async () => {
         siteServer.stopSiteFor(SLUG, 'demo');
         siteAuth.dropSessions(SLUG, 'demo');
+        // Every test reuses the id `demo` and the account `alice`: without
+        // this, the per-account counter of one test locks the next one out.
+        siteAuth.dropFailures('demo');
         await directory.close();
     });
 

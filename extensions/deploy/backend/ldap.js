@@ -1625,6 +1625,53 @@ async function testConnection(config) {
     }
 }
 
+/**
+ * How many bad passwords the directory allows before it locks an account,
+ * read from `lockoutThreshold` on the domain object. 0 means AD never locks.
+ *
+ * The domain object is the one the rootDSE names as `defaultNamingContext`,
+ * read by base scope, as the service account (or anonymously when no service
+ * account is set, which is how `lookup` runs too). The rootDSE is readable by
+ * anyone; the domain object usually is not, so an anonymous connection gets
+ * `ldap_search_denied` here.
+ *
+ * Rejects with an LdapError whenever the number cannot be read. The caller
+ * picks a conservative cap on rejection; this function never guesses one.
+ */
+async function readLockoutThreshold(config) {
+    let state = null;
+    try {
+        const cfg = normalizeConfig(config);
+        state = await openSession(cfg);
+        await bindService(state, cfg);
+
+        const everything = parseFilterString('(objectClass=*)');
+        const root = await search(state, {
+            baseDn: '', scope: SCOPE.BASE, filter: everything,
+            attributes: ['defaultNamingContext'], sizeLimit: 1
+        });
+        assertSearchable(root.result);
+        const rootAttrs = (root.entries[0] && root.entries[0].attributes) || Object.create(null);
+        const nc = rootAttrs.defaultnamingcontext && rootAttrs.defaultnamingcontext[0];
+        if (!nc) throw new LdapError('ldap_protocol_error', 'the rootDSE names no defaultNamingContext');
+
+        const domain = await search(state, {
+            baseDn: nc, scope: SCOPE.BASE, filter: everything,
+            attributes: ['lockoutThreshold'], sizeLimit: 1
+        });
+        assertSearchable(domain.result);
+        const attrs = (domain.entries[0] && domain.entries[0].attributes) || Object.create(null);
+        const raw = attrs.lockoutthreshold && attrs.lockoutthreshold[0];
+        const n = Number(raw);
+        if (raw === undefined || raw === null || String(raw).trim() === '' || !Number.isInteger(n) || n < 0) {
+            throw new LdapError('ldap_protocol_error', 'the domain object carries no usable lockoutThreshold');
+        }
+        return n;
+    } finally {
+        if (state) closeSession(state);
+    }
+}
+
 /* ---------------------------------------------------------- certificate --- */
 
 /** `{ CN: 'dc01', O: 'Corp' }` -> `CN=dc01, O=Corp`. Readable, not a real DN. */
@@ -1774,6 +1821,7 @@ async function inspectCertificate(config) {
 
 module.exports = {
     verify, lookup, searchUsers, testConnection, inspectCertificate, refreshTrust,
+    readLockoutThreshold,
     escapeFilter, escapeDn, encode, decode, sidToString,
     // Exercised directly by tests/ldap.test.js: the SID arithmetic has no
     // observable effect without a directory that publishes a primary group.

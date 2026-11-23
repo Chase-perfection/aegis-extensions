@@ -908,6 +908,59 @@ unknown code is a fault on Aegis's side of the form, and answering it with
 The backend log keeps the directory's own sentence whatever it says, so a
 sub-code Microsoft adds later is readable there before it is readable here.
 
+### Too many attempts
+
+Two counters stand in front of the directory, and the longer of the two wins.
+While either holds, the form answers 429 with `Retry-After` and "Too many
+attempts. Try again in N seconds.", and no bind is sent.
+
+| Counter | Key | Locks | For |
+|---|---|---|---|
+| Per address | client address and project | after 5 failures | 60 seconds, then the count starts over |
+| Per account | project and account name | at the cap below | 60 seconds, doubled for each further failure, at most 30 minutes |
+
+The account name is compared the way the allow list compares it: lower case,
+without a `DOMAIN\` prefix or an `@suffix`, so `CORP\Alice`, `alice@corp.local`
+and `ALICE` are one counter. A name that is empty once normalised is refused as
+an empty form and counts nowhere.
+
+The per-account cap sits below the directory's own lockout, so guesses spread
+over many addresses are stopped here before they reach Active Directory's
+threshold. Deploy reads `lockoutThreshold` on the domain object (the rootDSE's
+`defaultNamingContext`, base scope, as the service account) and caps at the
+threshold minus two, never below 1. A threshold of 0 (AD never locks) gives 5.
+A threshold that cannot be read, typically because the service account is
+empty and the bind is anonymous, gives 3. The value is cached for 24 hours, an
+unreadable answer for 10 minutes, and a save of the directory settings reads it
+again.
+
+Only a refusal the directory gave about the account counts against it (a wrong
+password, an unknown name, an account that is disabled, expired or locked). An
+unknown name counts exactly like a real one, so the lock reveals nothing about
+which accounts exist. A directory that cannot be reached counts against the
+address only. A request refused because the account is locked changes no
+counter, so hammering a locked account does not lengthen its lock: the wait
+grows only from binds the directory refused, and at most one such bind fits in
+each lock. A successful sign-in clears both counters for that address and that
+account. An account record is forgotten 30 minutes after its last failure or
+lock.
+
+One bind per account is in flight at a time. A second post for the same account
+while the first is with the directory gets the 429 with a one-second wait, so a
+burst of parallel posts cannot all pass the check before the first failure is
+counted.
+
+Each lock that ends lets one more bind through. Whether that bind can reach the
+directory's threshold depends on AD's own observation window (`Reset account
+lockout counter after`): the doubling spaces the binds out, it does not stop
+them. With a threshold of 3 or less the cap is 1, and a person who mistypes
+once waits a minute.
+
+The counters live in memory, at most 10,000 records. When full, records that
+are quiet go first, then the oldest records that hold no lock, and a locked
+record only when nothing else is left, so a spray of invented names cannot
+evict the lock on the account it is aimed at.
+
 ## Filling the directory form
 
 The Authentication page protects a deployed site with the same Active Directory

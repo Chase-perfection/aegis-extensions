@@ -137,6 +137,27 @@ const BODY_LIMIT = 8 * 1024;
 const LOCK_THRESHOLD = 5;
 const LOCK_MS = 60 * 1000;
 
+/**
+ * Per account, the lock has to land before the directory's own. An attacker
+ * spreading guesses over many addresses never trips the address lock, and each
+ * of their binds raises the account's `badPwdCount` on the DC; past AD's
+ * `lockoutThreshold` the real person is locked out of everything, not only of
+ * this site. So the cap sits two below that threshold (floor 1), five when AD
+ * never locks, and three when the threshold cannot be read.
+ *
+ * From the cap on, each further bind failure doubles the wait, up to 30 min.
+ * A record is forgotten 30 min after its last failure or lock, which is AD's
+ * customary observation window.
+ */
+const USER_CAP_NO_LOCKOUT = 5;
+const USER_CAP_FALLBACK = 3;
+const USER_LOCK_MAX_MS = 30 * 60 * 1000;
+const USER_FORGET_MS = 30 * 60 * 1000;
+
+/** The failures map never holds more than this many records. A spray of
+ *  random names fills it with one-failure records, and those go first. */
+const MAX_FAILURE_ENTRIES = 10000;
+
 /** After a revalidation that could not reach a verdict, wait this long rather
  *  than the full interval: a DC that is down comes back, and the session should
  *  be re-checked soon after it does, not an interval later. */
@@ -176,6 +197,15 @@ function verify(config, username, password) {
 function lookup(config, username) {
     if (looker) return Promise.resolve(looker(config, username));
     return require('./ldap').lookup(config, username);
+}
+
+let thresholdReader = null;
+function _setThresholdReader(fn) { thresholdReader = fn; }
+
+/** The directory's `lockoutThreshold`. Rejects when it cannot be read. */
+function readThreshold(config) {
+    if (thresholdReader) return Promise.resolve().then(() => thresholdReader(config));
+    return require('./ldap').readLockoutThreshold(config);
 }
 
 /* ------------------------------------------------------------------ */
@@ -397,8 +427,10 @@ function groupAllowed(allowedGroups, groups) {
  *  the directory's canonical account name; `user` is the display name.
  *  `lastSeen` is the last request on the session, for the idle timeout. */
 const sessions = new Map();
-/** `ip|projectId` -> { fails, until } */
+/** `ip|projectId` and `u|projectId|user` -> { fails, until, last } */
 const failures = new Map();
+/** `u|projectId|user` keys with a bind to the directory in progress. */
+const inFlight = new Set();
 
 function newToken() {
     return crypto.randomBytes(32).toString('base64url');
@@ -504,32 +536,140 @@ function lockKey(ip, projectId) {
     return `${ip}|${projectId}`;
 }
 
-/** Seconds left on the lock, or 0 when the caller may try. */
-function lockRemaining(ip, projectId) {
+/** The per-account key. `user` is already `normalizeUser`d and never empty. */
+function userKey(projectId, user) {
+    return `u|${projectId}|${user}`;
+}
+
+/** True when a record holds no lock and has been quiet for the forget window. */
+function isStale(rec, now) {
+    if (rec.until > now) return false;
+    return now - Math.max(rec.until || 0, rec.last || 0) > USER_FORGET_MS;
+}
+
+/**
+ * Writes a record as the newest entry, keeping the map under its cap.
+ *
+ * Re-inserted on every write, so iteration order is oldest activity first.
+ * When full: drop every stale record, then the oldest records that hold no
+ * lock, and only then the oldest locked one. A spray of invented names must
+ * not be a way to evict the lock on the account it is aimed at.
+ */
+function remember(key, rec) {
+    failures.delete(key);
+    if (failures.size >= MAX_FAILURE_ENTRIES) {
+        const now = Date.now();
+        for (const [k, r] of failures) if (isStale(r, now)) failures.delete(k);
+        for (const [k, r] of failures) {
+            if (failures.size < MAX_FAILURE_ENTRIES) break;
+            if (!(r.until > now)) failures.delete(k);
+        }
+        for (const k of failures.keys()) {
+            if (failures.size < MAX_FAILURE_ENTRIES) break;
+            failures.delete(k);
+        }
+    }
+    failures.set(key, rec);
+}
+
+function ipLockLeft(ip, projectId, now) {
     const rec = failures.get(lockKey(ip, projectId));
     if (!rec || !rec.until) return 0;
-    const left = rec.until - Date.now();
+    const left = rec.until - now;
     if (left <= 0) {
         failures.delete(lockKey(ip, projectId));
         return 0;
     }
-    return Math.ceil(left / 1000);
+    return left;
+}
+
+function userLockLeft(projectId, user, now) {
+    if (!user) return 0;
+    const k = userKey(projectId, user);
+    const rec = failures.get(k);
+    if (!rec) return 0;
+    // An ended lock is kept: the count it carries is what doubles the next
+    // one. Only a record quiet for the whole forget window goes.
+    if (isStale(rec, now)) {
+        failures.delete(k);
+        return 0;
+    }
+    return Math.max(0, rec.until - now);
+}
+
+/**
+ * Seconds left on the lock, or 0 when the caller may try: the longer of the
+ * address lock and, when `user` is given, the account lock. Reading it never
+ * changes a counter, so a request refused here cannot lengthen anything.
+ */
+function lockRemaining(ip, projectId, user) {
+    const now = Date.now();
+    const left = Math.max(ipLockLeft(ip, projectId, now), userLockLeft(projectId, user, now));
+    return left > 0 ? Math.ceil(left / 1000) : 0;
 }
 
 function noteFailure(ip, projectId) {
     const k = lockKey(ip, projectId);
-    const rec = failures.get(k) || { fails: 0, until: 0 };
+    const rec = failures.get(k) || { fails: 0, until: 0, last: 0 };
     rec.fails += 1;
+    rec.last = Date.now();
     if (rec.fails >= LOCK_THRESHOLD) {
         rec.until = Date.now() + LOCK_MS;
         rec.fails = 0;   // the lock replaces the count; the next burst starts over
     }
-    failures.set(k, rec);
+    remember(k, rec);
     return rec;
 }
 
-function clearFailures(ip, projectId) {
+/** The per-account cap for a directory threshold; null means unreadable. */
+function userCap(threshold) {
+    if (!Number.isInteger(threshold) || threshold < 0) return USER_CAP_FALLBACK;
+    return threshold > 0 ? Math.max(1, threshold - 2) : USER_CAP_NO_LOCKOUT;
+}
+
+/**
+ * One more bind the directory refused for `user`. Called only after a bind,
+ * and a locked account never gets one, so `fails` grows by at most one per
+ * lock period and the wait it buys is capped at USER_LOCK_MAX_MS.
+ */
+function noteUserFailure(projectId, user, cap) {
+    if (!user) return null;
+    const k = userKey(projectId, user);
+    const now = Date.now();
+    let rec = failures.get(k);
+    if (rec && isStale(rec, now)) rec = null;
+    rec = rec || { fails: 0, until: 0, last: 0 };
+    rec.fails += 1;
+    rec.last = now;
+    if (rec.fails >= cap) {
+        const doublings = Math.min(rec.fails - cap, 30);
+        rec.until = now + Math.min(LOCK_MS * 2 ** doublings, USER_LOCK_MAX_MS);
+    }
+    remember(k, rec);
+    return rec;
+}
+
+/**
+ * The cap for this tenant's directory. The threshold is read once and cached
+ * in authStore; a read that fails leaves the fallback cap, never no cap.
+ */
+async function userCapFor(ctx, config) {
+    let threshold = authStore.cachedThreshold(ctx.tenantPaths);
+    if (threshold === undefined) {
+        try {
+            const n = await readThreshold(config);
+            threshold = Number.isInteger(n) && n >= 0 ? n : null;
+        } catch (_) {
+            threshold = null;
+        }
+        authStore.rememberThreshold(ctx.tenantPaths, threshold);
+    }
+    return userCap(threshold);
+}
+
+function clearFailures(ip, projectId, user) {
     failures.delete(lockKey(ip, projectId));
+    if (user) failures.delete(userKey(projectId, user));
 }
 
 /**
@@ -542,8 +682,9 @@ function clearFailures(ip, projectId) {
  */
 function dropFailures(projectId) {
     const suffix = `|${projectId}`;
+    const userPrefix = `u|${projectId}|`;
     for (const k of failures.keys()) {
-        if (k.endsWith(suffix)) failures.delete(k);
+        if (k.endsWith(suffix) || k.startsWith(userPrefix)) failures.delete(k);
     }
 }
 
@@ -1239,7 +1380,11 @@ async function handleLogin(req, res, ctx, config) {
     // From here on `password` is only ever passed to verify(). It is not logged,
     // not echoed into the form, and not part of any error.
 
-    const locked = lockRemaining(ip, ctx.projectId);
+    // One counter per account, whatever spelling was typed. Checked here,
+    // before the CSRF check and before any bind: a locked account is never
+    // put to the directory, and this refusal changes no counter.
+    const who = normalizeUser(username);
+    const locked = lockRemaining(ip, ctx.projectId, who);
     if (locked > 0) {
         // Through loginPage, so the form's new token and its cookie travel
         // together. Rendered with a token and no cookie, the first try after
@@ -1260,21 +1405,50 @@ async function handleLogin(req, res, ctx, config) {
         return true;
     }
 
-    if (!username || !password) {
+    if (!username || !who || !password) {
         // Not counted against the lockout: an empty form is a slip, not a guess.
+        // A name that normalises to nothing (`CORP\`) is an empty one too, and
+        // would otherwise be one bucket shared by every such form.
         loginPage(res, 400, ctx, { next, error: tr(ctx.lang, 'errEmpty'), username });
         return true;
     }
 
+    // One bind per account in flight. Without this, a burst of parallel posts
+    // all pass the lock check above before the first failure is noted, and
+    // every one of them is a bad password on the DC. The second post waits a
+    // second, like any lock, and changes no counter.
+    const flightKey = userKey(ctx.projectId, who);
+    if (inFlight.has(flightKey)) {
+        loginPage(res, 429, ctx, {
+            next, error: tr(ctx.lang, 'errLocked', 1), username,
+            headers: { 'Retry-After': '1' }
+        });
+        return true;
+    }
+    inFlight.add(flightKey);
+
     let result;
     try {
-        result = await verify(config, username, password);
-    } catch (e) {
-        // verify() is documented never to throw. If it does anyway, that is an
-        // upstream fault and not a reason to serve the site.
-        result = { ok: false, error: 'ldap_protocol_error' };
+        try {
+            result = await verify(config, username, password);
+        } catch (e) {
+            // verify() is documented never to throw. If it does anyway, that is an
+            // upstream fault and not a reason to serve the site.
+            result = { ok: false, error: 'ldap_protocol_error' };
+        }
+        result = result && typeof result === 'object' ? result : { ok: false, error: 'ldap_protocol_error' };
+
+        // Against the account only when the directory answered about it. A DC
+        // that is down or a TLS fault is no guess, and must not lock people
+        // out. An unknown name counts like a known one, so the lock says
+        // nothing about which accounts exist. Noted before the slot is freed,
+        // so the next post for this account already sees the lock.
+        if (!result.ok && VISITOR_REFUSAL[result.error]) {
+            noteUserFailure(ctx.projectId, who, await userCapFor(ctx, config));
+        }
+    } finally {
+        inFlight.delete(flightKey);
     }
-    result = result && typeof result === 'object' ? result : { ok: false, error: 'ldap_protocol_error' };
 
     if (!result.ok) {
         noteFailure(ip, ctx.projectId);
@@ -1319,7 +1493,7 @@ async function handleLogin(req, res, ctx, config) {
         return true;
     }
 
-    clearFailures(ip, ctx.projectId);
+    clearFailures(ip, ctx.projectId, who);
     const token = newToken();
     const everyMs = Number(config && config.revalidateMinutes) * 60 * 1000;
     const login = String(result.login || username);
@@ -1517,10 +1691,14 @@ module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
     listSessions, dropSessionsFor, normalizeUser, writesRecheckable, IDLE_MS,
     PREFIX, LOGIN_PATH, WHOAMI_PATH, SESSION_COOKIE, LOCK_THRESHOLD, LOCK_MS,
+    USER_LOCK_MAX_MS, MAX_FAILURE_ENTRIES,
     RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, isSitePath, safeNext, readCookie, pickLang,
     // Test seams. Not part of the contract's public surface; nothing outside
     // tests/siteAuth.test.js should reach for them.
-    _setVerifier, _setLookup,
+    _setVerifier, _setLookup, _setThresholdReader,
+    _userCap: userCap,
+    _noteUserFailure: noteUserFailure,
+    _failureCount: () => failures.size,
     _escapeHtml: escapeHtml,
     _safeNext: safeNext,
     _groupAllowed: groupAllowed,

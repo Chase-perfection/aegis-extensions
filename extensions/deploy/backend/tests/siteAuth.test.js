@@ -267,6 +267,229 @@ test('lockout: counters are per ip and per project', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* per-user lockout                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A protected site whose directory reports `threshold` (a number, or a
+ * function that throws for "unreadable"), and a verifier that counts binds.
+ * Every attempt comes from its own address so the per-address lock never
+ * fires: what is measured here is the per-user counter alone.
+ */
+function userLockSite(t, slug, pid, threshold, answer) {
+    const tenantPaths = seed(slug, pid, { name: pid, auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
+    const binds = [];
+    siteAuth._setThresholdReader(typeof threshold === 'function' ? threshold : () => threshold);
+    siteAuth._setVerifier((config, username) => {
+        binds.push(username);
+        return answer ? answer(username, binds.length) : { ok: false, error: 'ldap_invalid_credentials' };
+    });
+    t.after(() => {
+        siteAuth._setVerifier(null);
+        siteAuth._setThresholdReader(null);
+        siteAuth.dropFailures(pid);
+    });
+    let n = 0;
+    const attempt = (username, password) => {
+        n += 1;
+        return login(slug, tenantPaths, pid, { username, password: password || 'wrong', next: '/' },
+            { ip: `192.0.2.${100 + n}` });
+    };
+    return { tenantPaths, binds, attempt };
+}
+
+test('per-user lockout: the cap sits two below the directory threshold, with a floor of one', () => {
+    assert.strictEqual(siteAuth._userCap(5), 3);
+    assert.strictEqual(siteAuth._userCap(10), 8);
+    assert.strictEqual(siteAuth._userCap(2), 1);
+    assert.strictEqual(siteAuth._userCap(1), 1);
+    assert.strictEqual(siteAuth._userCap(0), 5, 'AD never locks: five tries, like the address');
+    assert.strictEqual(siteAuth._userCap(null), 3, 'unreadable: the conservative cap');
+});
+
+test('per-user lockout: failures from several IPs on one user lock that user', async (t) => {
+    const site = userLockSite(t, 'tenant-ulock', 'ulock', 5);
+    for (let i = 1; i <= 3; i++) {
+        const { res } = await site.attempt('alice');
+        assert.strictEqual(res.statusCode, 401, `attempt ${i} is a bind`);
+    }
+    const { res } = await site.attempt('alice');
+    assert.strictEqual(res.statusCode, 429, 'threshold 5 caps the user at 3');
+    assert.ok(Number(res.headers['Retry-After']) > 0);
+    const other = await site.attempt('bob');
+    assert.strictEqual(other.res.statusCode, 401, 'another user on the same site is not locked');
+});
+
+test('per-user lockout: DOMAIN\\Alice, alice@corp.local and ALICE share one counter', async (t) => {
+    const site = userLockSite(t, 'tenant-uspell', 'uspell', 5);
+    for (const name of ['CORP\\Alice', 'alice@corp.local', 'ALICE']) {
+        const { res } = await site.attempt(name);
+        assert.strictEqual(res.statusCode, 401);
+    }
+    const { res } = await site.attempt('Alice');
+    assert.strictEqual(res.statusCode, 429);
+});
+
+test('per-user lockout: a locked user is refused before any bind', async (t) => {
+    const site = userLockSite(t, 'tenant-ubind', 'ubind', 5);
+    for (let i = 0; i < 3; i++) await site.attempt('alice');
+    assert.strictEqual(site.binds.length, 3);
+    const { res } = await site.attempt('alice', SECRET);
+    assert.strictEqual(res.statusCode, 429);
+    assert.strictEqual(site.binds.length, 3, 'the fourth attempt never reached the directory');
+    // The page says what the address lock says, whatever the account.
+    const ghost = userLockSite(t, 'tenant-ughost', 'ughost', 5,
+        () => ({ ok: false, error: 'ldap_user_not_found' }));
+    for (let i = 0; i < 3; i++) await ghost.attempt('nobody');
+    const locked = await ghost.attempt('nobody');
+    assert.strictEqual(locked.res.statusCode, 429, 'an unknown name locks exactly like a real one');
+});
+
+test('per-user lockout: parallel attempts on one account put one bind to the directory at a time', async (t) => {
+    let release;
+    const gateOpen = new Promise((r) => { release = r; });
+    const site = userLockSite(t, 'tenant-upar', 'upar', 5);
+    siteAuth._setVerifier(async (config, username) => {
+        site.binds.push(username);
+        await gateOpen;
+        return { ok: false, error: 'ldap_invalid_credentials' };
+    });
+    // Ten at once: without a guard, all ten pass the lock check before the
+    // first failure is noted, and ten bad passwords reach the directory.
+    const burst = [];
+    for (let i = 0; i < 10; i++) burst.push(site.attempt('CORP\\Alice'));
+    await new Promise((r) => setTimeout(r, 50));
+    release();
+    const codes = (await Promise.all(burst)).map((a) => a.res.statusCode);
+    assert.strictEqual(site.binds.length, 1, `one bind in flight per account, saw ${site.binds.length}`);
+    assert.strictEqual(codes.filter((c) => c === 401).length, 1);
+    assert.strictEqual(codes.filter((c) => c === 429).length, 9);
+});
+
+test('per-user lockout: a refusal while locked does not extend the lock', async (t) => {
+    const site = userLockSite(t, 'tenant-uspray', 'uspray', 5);
+    for (let i = 0; i < 3; i++) await site.attempt('alice');
+    const first = siteAuth._lockRemaining('none', 'uspray', 'alice');
+    for (let i = 0; i < 20; i++) await site.attempt('alice');
+    const later = siteAuth._lockRemaining('none', 'uspray', 'alice');
+    assert.ok(first > 0 && later <= first, `the lock must not grow while locked (${first} then ${later})`);
+    assert.ok(later <= siteAuth.LOCK_MS / 1000);
+    assert.strictEqual(site.binds.length, 3);
+});
+
+test('per-user lockout: delay doubles per extra failure, capped at 30 min', (t) => {
+    const advance = fakeClock(t);
+    const pid = 'udouble';
+    t.after(() => siteAuth.dropFailures(pid));
+    const cap = 3;
+    for (let i = 0; i < cap - 1; i++) siteAuth._noteUserFailure(pid, 'alice', cap);
+    assert.strictEqual(siteAuth._lockRemaining('none', pid, 'alice'), 0, 'below the cap nothing locks');
+
+    let expected = siteAuth.LOCK_MS / 1000;
+    for (let n = cap; n < cap + 8; n++) {
+        siteAuth._noteUserFailure(pid, 'alice', cap);
+        const left = siteAuth._lockRemaining('none', pid, 'alice');
+        const want = Math.min(expected, 30 * 60);
+        assert.strictEqual(left, want, `failure ${n} locks for ${want} s`);
+        expected *= 2;
+        advance(left * 1000 + 1);
+        assert.strictEqual(siteAuth._lockRemaining('none', pid, 'alice'), 0, 'the lock ends on time');
+    }
+});
+
+test('per-user lockout: success clears both ip and user counters', async (t) => {
+    const slug = 'tenant-uclear';
+    const pid = 'uclear';
+    const tenantPaths = seed(slug, pid, { name: pid, auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
+    const ip = '192.0.2.200';
+    siteAuth._setThresholdReader(() => 5);
+    siteAuth._setVerifier((config, username, password) => (password === SECRET
+        ? { ok: true, groups: [], sid: '' }
+        : { ok: false, error: 'ldap_invalid_credentials' }));
+    t.after(() => {
+        siteAuth._setVerifier(null);
+        siteAuth._setThresholdReader(null);
+        siteAuth.dropFailures(pid);
+        siteAuth.dropSessions(slug, pid);
+    });
+    const tryAs = (password) => login(slug, tenantPaths, pid, { username: 'alice', password, next: '/' }, { ip });
+
+    // Two below each cap (user 3, address 5), then a success.
+    for (let i = 0; i < 2; i++) siteAuth._noteFailure(ip, pid);
+    for (let i = 0; i < 2; i++) assert.strictEqual((await tryAs('wrong')).res.statusCode, 401);
+    assert.strictEqual((await tryAs(SECRET)).res.statusCode, 302);
+
+    // Had either counter survived, two more failures would lock it.
+    for (let i = 0; i < 2; i++) assert.strictEqual((await tryAs('wrong')).res.statusCode, 401);
+    assert.strictEqual(siteAuth._lockRemaining(ip, pid, 'alice'), 0);
+});
+
+test('per-user lockout: threshold 0 allows five, an unreadable threshold three', async (t) => {
+    const open = userLockSite(t, 'tenant-uzero', 'uzero', 0);
+    for (let i = 1; i <= 5; i++) assert.strictEqual((await open.attempt('alice')).res.statusCode, 401, `attempt ${i}`);
+    assert.strictEqual((await open.attempt('alice')).res.statusCode, 429);
+
+    const blind = userLockSite(t, 'tenant-ublind', 'ublind', () => { throw new Error('ldap_search_denied'); });
+    for (let i = 1; i <= 3; i++) assert.strictEqual((await blind.attempt('alice')).res.statusCode, 401, `attempt ${i}`);
+    assert.strictEqual((await blind.attempt('alice')).res.statusCode, 429);
+});
+
+test('per-user lockout: empty, blank and prefix-only names are refused before counting', async (t) => {
+    const site = userLockSite(t, 'tenant-uempty', 'uempty', 5);
+    for (const name of ['', '   ', 'CORP\\', '@corp.local', 'CORP\\ ']) {
+        for (let i = 0; i < 4; i++) {
+            const { res } = await site.attempt(name);
+            assert.strictEqual(res.statusCode, 400, `"${name}" is an empty form`);
+        }
+    }
+    assert.strictEqual(site.binds.length, 0, 'nothing reached the directory');
+    assert.strictEqual(siteAuth._lockRemaining('none', 'uempty', ''), 0);
+});
+
+test('per-user lockout: a directory fault does not count against the user', async (t) => {
+    const site = userLockSite(t, 'tenant-ufault', 'ufault', 5, () => ({ ok: false, error: 'ldap_unreachable' }));
+    for (let i = 0; i < 4; i++) assert.strictEqual((await site.attempt('alice')).res.statusCode, 502);
+    assert.strictEqual(site.binds.length, 4, 'every attempt was still put to the directory');
+});
+
+test('per-user lockout: the failures map stays bounded, and a live lock survives a spray', (t) => {
+    const pid = 'ubound';
+    t.after(() => siteAuth.dropFailures(pid));
+    for (let i = 0; i < 3; i++) siteAuth._noteUserFailure(pid, 'victim', 3);
+    assert.ok(siteAuth._lockRemaining('none', pid, 'victim') > 0);
+
+    for (let i = 0; i < siteAuth.MAX_FAILURE_ENTRIES + 50; i++) {
+        siteAuth._noteUserFailure(pid, `spray${i}`, 3);
+    }
+    assert.ok(siteAuth._failureCount() <= siteAuth.MAX_FAILURE_ENTRIES,
+        `the map holds at most ${siteAuth.MAX_FAILURE_ENTRIES}, got ${siteAuth._failureCount()}`);
+    assert.ok(siteAuth._lockRemaining('none', pid, 'victim') > 0, 'eviction drops unlocked entries first');
+});
+
+test('per-user lockout: the threshold is cached, and a config save forgets it', async (t) => {
+    const site = userLockSite(t, 'tenant-ucache', 'ucache', 5);
+    let reads = 0;
+    siteAuth._setThresholdReader(() => { reads += 1; return 5; });
+    await site.attempt('alice');
+    await site.attempt('bob');
+    assert.strictEqual(reads, 1, 'read once, then served from the cache');
+    authStore.writeConfig(site.tenantPaths, { revalidateMinutes: 10 });
+    siteAuth.invalidate('tenant-ucache', 'ucache');
+    await site.attempt('carol');
+    assert.strictEqual(reads, 2, 'a save is a new directory, read again');
+    assert.strictEqual(authStore.cachedThreshold(site.tenantPaths), 5);
+});
+
+test('per-user lockout: a cached threshold expires after 24 h', (t) => {
+    const advance = fakeClock(t);
+    const tenantPaths = newTenant();
+    authStore.rememberThreshold(tenantPaths, 7);
+    assert.strictEqual(authStore.cachedThreshold(tenantPaths), 7);
+    advance(24 * 60 * 60 * 1000 + 1);
+    assert.strictEqual(authStore.cachedThreshold(tenantPaths), undefined);
+});
+
+/* ------------------------------------------------------------------ */
 /* the gate                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -620,13 +843,15 @@ test('login: the sixth attempt from one address is answered with 429', async () 
 
     siteAuth._setVerifier(() => ({ ok: false, error: 'ldap_invalid_credentials' }));
     try {
+        // One name per attempt: the per-user counter would otherwise lock
+        // first, and this test is about the address.
         for (let i = 0; i < siteAuth.LOCK_THRESHOLD; i++) {
             const { res } = await login(slug, tenantPaths, 'brute',
-                { username: 'jdoe', password: 'wrong', next: '/' }, { ip });
+                { username: `jdoe${i}`, password: 'wrong', next: '/' }, { ip });
             assert.strictEqual(res.statusCode, 401, `attempt ${i + 1} should still be answered`);
         }
         const { res } = await login(slug, tenantPaths, 'brute',
-            { username: 'jdoe', password: 'wrong', next: '/' }, { ip });
+            { username: 'someone-else', password: 'wrong', next: '/' }, { ip });
         assert.strictEqual(res.statusCode, 429);
         assert.ok(Number(res.headers['Retry-After']) > 0);
         assert.ok(/\b\d+\b/.test(res.body), 'the page states how long is left');

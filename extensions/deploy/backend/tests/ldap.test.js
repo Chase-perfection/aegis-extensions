@@ -225,7 +225,7 @@ function defaultPair() {
  * reaches the client untouched.
  */
 const DEFAULT_TRUST = new Map();
-for (const name of ['verify', 'lookup', 'searchUsers', 'testConnection', 'inspectCertificate']) {
+for (const name of ['verify', 'lookup', 'searchUsers', 'testConnection', 'inspectCertificate', 'readLockoutThreshold']) {
     const real = ldap[name];
     ldap[name] = function (config, ...rest) {
         const pem = config && DEFAULT_TRUST.get(config.url);
@@ -1166,6 +1166,67 @@ test('testConnection reports the directory diagnostic without the password', asy
 test('testConnection on a broken url never touches the network', async () => {
     assert.deepStrictEqual(await ldap.testConnection({ url: 'https://dc01.corp.local' }),
         { ok: false, error: 'ldap_bad_config', detail: 'url is not ldap or ldaps' });
+});
+
+/* --------------------------------------------------- readLockoutThreshold -- */
+
+/**
+ * A directory whose rootDSE names `DC=corp,DC=local` and whose domain object
+ * answers `domain` (an entry's attrs, or a `{ resultCode }` refusal). Both
+ * reads are base-scope, so the fake is pinned to `scope: 0`.
+ */
+function lockoutFake(domain) {
+    return startFake({
+        scope: 0,
+        onSearch: (seen) => {
+            if (seen.baseDn === '') {
+                return { entries: [{ dn: '', attrs: { defaultNamingContext: ['DC=corp,DC=local'] } }] };
+            }
+            assert.strictEqual(seen.baseDn, 'DC=corp,DC=local', 'the domain object is the one rootDSE names');
+            if (domain && domain.resultCode) return domain;
+            return { entries: [{ dn: 'DC=corp,DC=local', attrs: domain || {} }] };
+        }
+    });
+}
+
+test('readLockoutThreshold reads lockoutThreshold off the defaultNamingContext as the service account', async (t) => {
+    const fake = await lockoutFake({ lockoutThreshold: ['5'] });
+    t.after(() => fake.close());
+
+    const n = await ldap.readLockoutThreshold(Object.assign({ url: fake.url }, SEARCH_CONFIG));
+    assert.strictEqual(n, 5);
+    assert.deepStrictEqual(fake.errors, []);
+    const ops = fake.seen.filter((s) => s.op !== 'unbind');
+    assert.deepStrictEqual(ops.map((s) => s.op), ['bind', 'search', 'search']);
+    assert.strictEqual(ops[0].dn, SEARCH_CONFIG.bindDn, 'the service bind, never a user');
+    assert.deepStrictEqual(ops[2].attributes, ['lockoutThreshold']);
+});
+
+test('readLockoutThreshold returns 0 when AD has no lockout', async (t) => {
+    const fake = await lockoutFake({ lockoutThreshold: ['0'] });
+    t.after(() => fake.close());
+    assert.strictEqual(await ldap.readLockoutThreshold(Object.assign({ url: fake.url }, SEARCH_CONFIG)), 0);
+});
+
+test('readLockoutThreshold rejects when the domain object cannot be read', async (t) => {
+    // What AD answers on an anonymous connection: the rootDSE is readable, the
+    // domain object is not.
+    const fake = await lockoutFake({ resultCode: 1, diagnostic: 'a successful bind must be completed' });
+    t.after(() => fake.close());
+    await assert.rejects(ldap.readLockoutThreshold(Object.assign({ url: fake.url }, SEARCH_CONFIG)),
+        (e) => e.ldapCode === 'ldap_search_denied');
+});
+
+test('readLockoutThreshold rejects a domain object that carries no usable value', async (t) => {
+    const fake = await lockoutFake({ lockoutThreshold: ['-1'] });
+    t.after(() => fake.close());
+    await assert.rejects(ldap.readLockoutThreshold(Object.assign({ url: fake.url }, SEARCH_CONFIG)),
+        (e) => e.ldapCode === 'ldap_protocol_error');
+});
+
+test('readLockoutThreshold on a plain url rejects and opens nothing', async () => {
+    await assert.rejects(ldap.readLockoutThreshold({ url: 'ldap://dc01.corp.local:389' }),
+        (e) => e.ldapCode === 'ldap_requires_tls');
 });
 
 /* ------------------------------------------------------------- AD SIDs ---- */

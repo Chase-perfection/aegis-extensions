@@ -250,6 +250,7 @@ function writeConfig(tenantPaths, next) {
     }
 
     writeRaw(tenantPaths, rec);
+    forgetThreshold(tenantPaths);
     return publicConfig(tenantPaths);
 }
 
@@ -272,8 +273,49 @@ function forgetAuthorities(tenantPaths) {
     return writeConfig(tenantPaths, { trustedCa: [] });
 }
 
+/* ------------------------------------------------------------------ */
+/* the directory's lockout threshold, cached                           */
+/* ------------------------------------------------------------------ */
+
+/** A domain policy changes rarely: read once a day. An unreadable answer is
+ *  retried sooner, because the fallback cap it leaves in place is stricter
+ *  than most directories need. */
+const THRESHOLD_TTL_MS = 24 * 60 * 60 * 1000;
+const THRESHOLD_RETRY_MS = 10 * 60 * 1000;
+
+/** `storeFile` -> { at, value }. `value` is a number, or null for unreadable. */
+const thresholdCache = new Map();
+
+/**
+ * The cached `lockoutThreshold` of this tenant's directory: a number, null when
+ * the last read failed, or undefined when there is nothing fresh to answer.
+ * In memory only: it is a property of the directory, not a setting.
+ */
+function cachedThreshold(tenantPaths) {
+    const key = storeFile(tenantPaths);
+    const hit = thresholdCache.get(key);
+    if (!hit) return undefined;
+    const ttl = hit.value === null ? THRESHOLD_RETRY_MS : THRESHOLD_TTL_MS;
+    if (Date.now() - hit.at >= ttl) {
+        thresholdCache.delete(key);
+        return undefined;
+    }
+    return hit.value;
+}
+
+function rememberThreshold(tenantPaths, value) {
+    const v = Number.isInteger(value) && value >= 0 ? value : null;
+    thresholdCache.set(storeFile(tenantPaths), { at: Date.now(), value: v });
+}
+
+/** A save may point at another directory, so the next failure reads again. */
+function forgetThreshold(tenantPaths) {
+    thresholdCache.delete(storeFile(tenantPaths));
+}
+
 /** Removes the directory entirely. Any protected site then refuses, by design. */
 function clearConfig(tenantPaths) {
+    forgetThreshold(tenantPaths);
     try {
         fs.unlinkSync(storeFile(tenantPaths));
     } catch (e) {
@@ -284,6 +326,7 @@ function clearConfig(tenantPaths) {
 module.exports = {
     readConfig, publicConfig, writeConfig, clearConfig,
     trustAuthority, forgetAuthorities, describePinned, cleanPemList,
+    cachedThreshold, rememberThreshold, forgetThreshold,
     DEFAULT_USER_FILTER, DEFAULT_GROUP_ATTR, DEFAULT_REVALIDATE_MINUTES,
     storeFile
 };

@@ -166,6 +166,16 @@ is refused with 403 once the person is out of the group, and with 503 while the
 directory cannot answer. To get somebody out now, close their sessions from the
 site's Authentication tab, under Signed in now.
 
+Failed sign-ins are counted per address (5, then a minute) and per account,
+whatever spelling of the name was typed. The per-account cap sits two below the
+directory's `lockoutThreshold`, read as the service account (5 when AD never
+locks, 3 when the threshold cannot be read, which is the case without a service
+account), and each failure past it doubles the wait, up to 30 minutes. A locked
+account is refused before its password reaches the directory. This slows
+guesses spread over many addresses down well before AD would lock the person
+out; it does not replace AD's own lockout policy. DEPLOY-CONTRACT.md, "Too many
+attempts", has the details.
+
 Cookies are scoped by host and not by port. Two protected sites on one machine
 share the cookie name, so logging into the second replaces the session of the
 first. The session record carries the slug and project id and is rejected when
