@@ -115,7 +115,8 @@ async function loginToken(slug, tenantPaths, projectId, result) {
     try {
         const get = fakeRes();
         await siteAuth.gate(fakeReq('GET', '/__aegis/login'), get, ctxFor(slug, tenantPaths, projectId));
-        const csrf = cookieValue(get.headers['Set-Cookie'], 'aegis_site_csrf');
+        const names = siteAuth.cookieNames(slug, projectId);
+        const csrf = cookieValue(get.headers['Set-Cookie'], names.csrf);
 
         const body = new URLSearchParams({
             csrf, username: 'alice', password: SECRET, next: '/'
@@ -125,12 +126,12 @@ async function loginToken(slug, tenantPaths, projectId, result) {
             body,
             ip: '10.0.0.9',
             headers: {
-                cookie: `aegis_site_csrf=${csrf}`,
+                cookie: `${names.csrf}=${csrf}`,
                 'content-type': 'application/x-www-form-urlencoded'
             }
         }), res, ctxFor(slug, tenantPaths, projectId));
 
-        const token = cookieValue(res.headers['Set-Cookie'], 'aegis_site');
+        const token = cookieValue(res.headers['Set-Cookie'], names.session);
         assert.ok(token, 'the login should have minted a session');
         return token;
     } finally {
@@ -192,7 +193,7 @@ test('protected site: the three identity headers arrive', async (t) => {
     const app = await upstream();
     t.after(async () => { await app.close(); siteAuth.dropSessions(slug, 'named'); });
 
-    await proxied(fakeReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }),
+    await proxied(fakeReq('GET', '/', { headers: { cookie: `${siteAuth.cookieNames(slug, 'named').session}=${token}` } }),
         app.port, ctxFor(slug, tenantPaths, 'named'));
 
     const seen = app.seen();
@@ -209,7 +210,7 @@ test('protected site: a plain account name is not mangled by the encoding', asyn
     const app = await upstream();
     t.after(async () => { await app.close(); siteAuth.dropSessions(slug, 'plain'); });
 
-    await proxied(fakeReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }),
+    await proxied(fakeReq('GET', '/', { headers: { cookie: `${siteAuth.cookieNames(slug, 'plain').session}=${token}` } }),
         app.port, ctxFor(slug, tenantPaths, 'plain'));
 
     // The common case, and the one an operator reads in a log.
@@ -235,7 +236,7 @@ test('forgery: what the client sent is replaced, not appended to', async (t) => 
 
     await proxied(fakeReq('GET', '/', {
         headers: {
-            cookie: `aegis_site=${token}`,
+            cookie: `${siteAuth.cookieNames(slug, 'forge').session}=${token}`,
             'x-aegis-user': 'administrateur',
             'X-Aegis-Groups': 'CN=Domain Admins,DC=corp,DC=local'
         }
@@ -302,10 +303,9 @@ test('forgery: a session for another project does not name the visitor', async (
         siteAuth.dropSessions(slug, 'second');
     });
 
-    // Cookies are scoped by host and not by port, so this token really does
-    // reach the second site's proxy. It is a valid token and still not a
-    // session here.
-    await proxied(fakeReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }),
+    // A token from the first site, presented under the second site's own cookie
+    // name: a valid token and still not a session here.
+    await proxied(fakeReq('GET', '/', { headers: { cookie: `${siteAuth.cookieNames(slug, 'second').session}=${token}` } }),
         app.port, ctxFor(slug, tenantPaths, 'second'));
 
     assert.strictEqual(app.seen()['x-aegis-user'], undefined);
@@ -324,7 +324,7 @@ test('groups arrive in the order the session carries them', async (t) => {
     const app = await upstream();
     t.after(async () => { await app.close(); siteAuth.dropSessions(slug, 'order'); });
 
-    await proxied(fakeReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }),
+    await proxied(fakeReq('GET', '/', { headers: { cookie: `${siteAuth.cookieNames(slug, 'order').session}=${token}` } }),
         app.port, ctxFor(slug, tenantPaths, 'order'));
 
     const got = String(app.seen()['x-aegis-groups']).split(',').map(decodeURIComponent);
@@ -340,7 +340,7 @@ test('a group holding a comma cannot be read as two groups', async (t) => {
     const app = await upstream();
     t.after(async () => { await app.close(); siteAuth.dropSessions(slug, 'comma'); });
 
-    await proxied(fakeReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }),
+    await proxied(fakeReq('GET', '/', { headers: { cookie: `${siteAuth.cookieNames(slug, 'comma').session}=${token}` } }),
         app.port, ctxFor(slug, tenantPaths, 'comma'));
 
     const got = String(app.seen()['x-aegis-groups']).split(',').map(decodeURIComponent);
@@ -359,7 +359,7 @@ test('an accented display name is carried, and does not fail the request', async
     const app = await upstream();
     t.after(async () => { await app.close(); siteAuth.dropSessions(slug, 'accent'); });
 
-    await proxied(fakeReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }),
+    await proxied(fakeReq('GET', '/', { headers: { cookie: `${siteAuth.cookieNames(slug, 'accent').session}=${token}` } }),
         app.port, ctxFor(slug, tenantPaths, 'accent'));
 
     assert.strictEqual(decodeURIComponent(app.seen()['x-aegis-name']), 'Paul Vué Даниил');
@@ -374,7 +374,7 @@ test('a newline in a directory value cannot inject a header', async (t) => {
     const app = await upstream();
     t.after(async () => { await app.close(); siteAuth.dropSessions(slug, 'inject'); });
 
-    await proxied(fakeReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }),
+    await proxied(fakeReq('GET', '/', { headers: { cookie: `${siteAuth.cookieNames(slug, 'inject').session}=${token}` } }),
         app.port, ctxFor(slug, tenantPaths, 'inject'));
 
     const seen = app.seen();

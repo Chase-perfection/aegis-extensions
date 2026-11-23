@@ -286,6 +286,8 @@ function csrfField(html) {
 // ---------------------------------------------------------------------------
 
 const SLUG = 'acme';
+/** The cookie names of the one project these tests serve (`demo`). */
+const COOKIES = siteAuth.cookieNames(SLUG, 'demo');
 const GROUP_DN = 'CN=Site Viewers,OU=Groups,DC=corp,DC=local';
 const USER_DN = 'CN=Alice,OU=Staff,DC=corp,DC=local';
 
@@ -359,7 +361,7 @@ async function scaffold(t, {
 async function login(port, username, password, next) {
     const page = await request(port, { path: '/__aegis/login?next=' + encodeURIComponent(next || '/') });
     const csrf = csrfField(page.body);
-    const csrfCookie = cookieFrom(page, 'aegis_site_csrf');
+    const csrfCookie = cookieFrom(page, COOKIES.csrf);
     const form = new URLSearchParams({ username, password, csrf, next: next || '/' }).toString();
     const posted = await request(port, {
         method: 'POST',
@@ -367,7 +369,7 @@ async function login(port, username, password, next) {
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Content-Length': Buffer.byteLength(form),
-            Cookie: 'aegis_site_csrf=' + csrfCookie
+            Cookie: COOKIES.csrf + '=' + csrfCookie
         }
     }, form);
     return { page, posted };
@@ -383,10 +385,10 @@ test('the whole chain: an anonymous visitor is stopped, a real directory account
 
     const { posted } = await login(port, 'alice', 'alice-pw', '/');
     assert.strictEqual(posted.status, 302, 'a good password is accepted');
-    const session = cookieFrom(posted, 'aegis_site');
+    const session = cookieFrom(posted, COOKIES.session);
     assert.ok(session, 'and a session cookie is issued');
 
-    const served = await request(port, { path: '/', headers: { Cookie: 'aegis_site=' + session } });
+    const served = await request(port, { path: '/', headers: { Cookie: COOKIES.session + '=' + session } });
     assert.strictEqual(served.status, 200);
     assert.match(served.body, /the private site/, 'the site is served to the session');
 
@@ -404,11 +406,11 @@ test('the site session keeps the exact sAMAccountName returned by the directory'
     });
 
     const { posted } = await login(port, 'paul', 'alice-pw', '/');
-    const session = cookieFrom(posted, 'aegis_site');
+    const session = cookieFrom(posted, COOKIES.session);
     assert.ok(session);
 
     const whoami = await request(port, {
-        path: '/__aegis/whoami', headers: { Cookie: 'aegis_site=' + session }
+        path: '/__aegis/whoami', headers: { Cookie: COOKIES.session + '=' + session }
     });
     assert.strictEqual(whoami.status, 200);
     assert.strictEqual(JSON.parse(whoami.body).login, 'PVue');
@@ -419,7 +421,7 @@ test('revalidation updates a canonical login and preserves it when LDAP later om
         allowedGroups: [], accountName: 'paul', directoryLogin: 'PVue', revalidateMinutes: 1
     });
     const { posted } = await login(port, 'paul', 'alice-pw', '/');
-    const session = cookieFrom(posted, 'aegis_site');
+    const session = cookieFrom(posted, COOKIES.session);
     assert.ok(session);
 
     const realNow = Date.now;
@@ -429,9 +431,9 @@ test('revalidation updates a canonical login and preserves it when LDAP later om
     const settle = async () => {
         for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve));
     };
-    const visit = () => request(port, { path: '/', headers: { Cookie: 'aegis_site=' + session } });
+    const visit = () => request(port, { path: '/', headers: { Cookie: COOKIES.session + '=' + session } });
     const whoami = async () => JSON.parse((await request(port, {
-        path: '/__aegis/whoami', headers: { Cookie: 'aegis_site=' + session }
+        path: '/__aegis/whoami', headers: { Cookie: COOKIES.session + '=' + session }
     })).body);
 
     let lookupUsername = '';
@@ -459,18 +461,18 @@ test('a write the directory refuses to search for is a 503, and the session surv
     // was a 403 and a sign-out on every write.
     const { port, directory } = await scaffold(t, { allowedGroups: [], revalidateMinutes: 10 });
     const { posted } = await login(port, 'alice', 'alice-pw', '/');
-    const session = cookieFrom(posted, 'aegis_site');
+    const session = cookieFrom(posted, COOKIES.session);
     assert.ok(session);
 
     directory.refuseSearch = true;
     const write = await request(port, {
-        method: 'POST', path: '/', headers: { Cookie: 'aegis_site=' + session, 'Content-Length': 0 }
+        method: 'POST', path: '/', headers: { Cookie: COOKIES.session + '=' + session, 'Content-Length': 0 }
     });
     assert.strictEqual(write.status, 503, 'no answer from the directory, so the write waits');
     assert.ok(!write.headers['set-cookie'], 'and no cookie is set or cleared');
 
     directory.refuseSearch = false;
-    const read = await request(port, { path: '/', headers: { Cookie: 'aegis_site=' + session } });
+    const read = await request(port, { path: '/', headers: { Cookie: COOKIES.session + '=' + session } });
     assert.strictEqual(read.status, 200, 'the session is still there');
 });
 
@@ -479,7 +481,7 @@ test('a wrong password never reaches the site and is never echoed back', async (
 
     const { posted } = await login(port, 'alice', 'not-the-password', '/');
     assert.strictEqual(posted.status, 401);
-    assert.ok(!cookieFrom(posted, 'aegis_site'), 'no session is issued');
+    assert.ok(!cookieFrom(posted, COOKIES.session), 'no session is issued');
     assert.ok(!posted.body.includes('not-the-password'), 'the password is not in the page');
     assert.match(posted.body, /alice/, 'the username is kept so the form can be retried');
 });
@@ -489,7 +491,7 @@ test('group membership is enforced against what the directory really returned', 
 
     const { posted } = await login(port, 'alice', 'alice-pw', '/');
     assert.strictEqual(posted.status, 403, 'authenticated but not entitled');
-    assert.ok(!cookieFrom(posted, 'aegis_site'), 'and given no session');
+    assert.ok(!cookieFrom(posted, COOKIES.session), 'and given no session');
 });
 
 test('a bare CN in the allow list matches the DN memberOf returned', async (t) => {
@@ -497,7 +499,7 @@ test('a bare CN in the allow list matches the DN memberOf returned', async (t) =
 
     const { posted } = await login(port, 'alice', 'alice-pw', '/');
     assert.strictEqual(posted.status, 302, 'the shorthand form is accepted');
-    assert.ok(cookieFrom(posted, 'aegis_site'), 'and a session is issued');
+    assert.ok(cookieFrom(posted, COOKIES.session), 'and a session is issued');
 });
 
 test('the validated next is honoured after login', async (t) => {
@@ -586,7 +588,7 @@ test('an expired password is a 401 that says so, not a 502 about the directory',
     assert.strictEqual(posted.status, 401, 'the directory answered, so this is not a 502');
     assert.ok(posted.body.includes('password has expired'), 'the page names the reason');
     assert.ok(!posted.body.includes(DIRECTORY_DOWN), 'and does not blame the directory');
-    assert.ok(!cookieFrom(posted, 'aegis_site'), 'no session is issued');
+    assert.ok(!cookieFrom(posted, COOKIES.session), 'no session is issued');
 });
 
 test('a disabled account is told it is disabled', async (t) => {

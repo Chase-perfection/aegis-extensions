@@ -90,6 +90,11 @@ function cookieValue(setCookie, name) {
     return m ? m[1] : null;
 }
 
+/** The cookie names of one project: `.session` and `.csrf`. */
+function names(slug, projectId) {
+    return siteAuth.cookieNames(slug, projectId);
+}
+
 function seed(slug, projectId, project, config) {
     const tenantPaths = newTenant();
     projectStore.saveProject(tenantPaths, Object.assign({ id: projectId, port: 3081 }, project));
@@ -747,7 +752,7 @@ test('login page: it is read from disk and carries no password field value', asy
     assert.ok(!/\{\{[A-Z_]+\}\}/.test(res.body), 'every placeholder must be substituted');
     assert.ok(/id="password"[^>]*>/.test(res.body));
     assert.ok(!/id="password"[^>]*value=/.test(res.body), 'the password field must never carry a value');
-    assert.ok(String(res.headers['Set-Cookie']).includes('aegis_site_csrf='));
+    assert.ok(String(res.headers['Set-Cookie']).includes(names(slug, 'page').csrf + '='));
 });
 
 test('login page: Accept-Language chooses English when French is not asked for', async () => {
@@ -858,7 +863,7 @@ async function login(slug, tenantPaths, projectId, fields, opts) {
     const get = fakeRes();
     await siteAuth.gate(fakeReq('GET', '/__aegis/login', { secure: o.secure }), get,
         { slug, tenantPaths, project: { id: projectId, name: projectId } });
-    const csrf = cookieValue(get.headers['Set-Cookie'], 'aegis_site_csrf');
+    const csrf = cookieValue(get.headers['Set-Cookie'], names(slug, projectId).csrf);
 
     const body = new URLSearchParams(Object.assign({ csrf }, fields)).toString();
     const res = fakeRes();
@@ -867,7 +872,7 @@ async function login(slug, tenantPaths, projectId, fields, opts) {
         ip: o.ip || '10.0.0.9',
         secure: o.secure,
         headers: {
-            cookie: `aegis_site_csrf=${csrf}`,
+            cookie: `${names(slug, projectId).csrf}=${csrf}`,
             'content-type': 'application/x-www-form-urlencoded'
         }
     }), res, { slug, tenantPaths, project: { id: projectId, name: projectId } });
@@ -905,10 +910,10 @@ test('login: a valid user is given a session and sent to the validated next', as
             'the password must not appear anywhere in the response');
 
         // The session it just minted opens the site.
-        const token = cookieValue(setCookie, 'aegis_site');
+        const token = cookieValue(setCookie, names(slug, 'app').session);
         const res2 = fakeRes();
         const handled2 = await siteAuth.gate(
-            fakeReq('GET', '/a/b', { headers: { cookie: `aegis_site=${token}` } }), res2,
+            fakeReq('GET', '/a/b', { headers: { cookie: `${names(slug, 'app').session}=${token}` } }), res2,
             { slug, tenantPaths, project: { id: 'app', name: 'App' } });
         assert.strictEqual(handled2, false, 'an authenticated request must be served');
 
@@ -917,7 +922,7 @@ test('login: a valid user is given a session and sent to the validated next', as
             { name: 'App', auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
         const res3 = fakeRes();
         const handled3 = await siteAuth.gate(
-            fakeReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }), res3,
+            fakeReq('GET', '/', { headers: { cookie: `${names('tenant-other', 'app').session}=${token}` } }), res3,
             { slug: 'tenant-other', tenantPaths: otherPaths, project: { id: 'app', name: 'App' } });
         assert.strictEqual(handled3, true);
         assert.strictEqual(res3.statusCode, 302);
@@ -940,7 +945,7 @@ test('login: an authenticated user outside the allowed groups is refused', async
             { username: 'temp', password: SECRET, next: '/' }, { ip: '10.0.0.31' });
         assert.strictEqual(res.statusCode, 403);
         assert.ok(!res.body.includes(SECRET));
-        assert.strictEqual(cookieValue(res.headers['Set-Cookie'], 'aegis_site'), null);
+        assert.strictEqual(cookieValue(res.headers['Set-Cookie'], names(slug, 'grp').session), null);
     } finally {
         siteAuth._setVerifier(null);
         siteAuth.dropFailures(slug, 'grp');
@@ -992,7 +997,7 @@ test('login: the sixth attempt from one address is answered with 429', async () 
         // over: its token and its cookie have to be the same pair.
         const field = /name="csrf" value="([^"]+)"/.exec(res.body);
         assert.ok(field, 'the locked page still carries a form');
-        assert.strictEqual(cookieValue(res.headers['Set-Cookie'], 'aegis_site_csrf'), field[1]);
+        assert.strictEqual(cookieValue(res.headers['Set-Cookie'], names(slug, 'brute').csrf), field[1]);
     } finally {
         siteAuth._setVerifier(null);
         siteAuth.dropFailures(slug, 'brute');
@@ -1050,19 +1055,19 @@ test('logout: the session is dropped and the cookie expired', async () => {
     try {
         const { res } = await login(slug, tenantPaths, 'out',
             { username: 'jdoe', password: SECRET, next: '/' }, { ip: '10.0.0.71' });
-        const token = cookieValue(res.headers['Set-Cookie'], 'aegis_site');
+        const token = cookieValue(res.headers['Set-Cookie'], names(slug, 'out').session);
         assert.ok(token);
 
         const out = fakeRes();
         await siteAuth.gate(fakeReq('POST', '/__aegis/logout',
-            { headers: { cookie: `aegis_site=${token}` } }), out,
+            { headers: { cookie: `${names(slug, 'out').session}=${token}` } }), out,
         { slug, tenantPaths, project: { id: 'out', name: 'Out' } });
         assert.strictEqual(out.statusCode, 302);
         assert.ok(String(out.headers['Set-Cookie']).includes('Max-Age=0'));
 
         const after = fakeRes();
         const handled = await siteAuth.gate(
-            fakeReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }), after,
+            fakeReq('GET', '/', { headers: { cookie: `${names(slug, 'out').session}=${token}` } }), after,
             { slug, tenantPaths, project: { id: 'out', name: 'Out' } });
         assert.strictEqual(handled, true);
         assert.strictEqual(after.statusCode, 302);
@@ -1191,7 +1196,7 @@ test('cookies: a login over a TLS socket gets Secure', async (t) => {
         { username: 'jdoe', password: SECRET, next: '/' }, { ip: '10.0.0.92', secure: true });
     const setCookie = String(res.headers['Set-Cookie']);
 
-    assert.ok(setCookie.startsWith('aegis_site='));
+    assert.ok(setCookie.startsWith(names(slug, 'secure').session + '='));
     assert.ok(/;\s*Secure/.test(setCookie), 'an encrypted socket must carry the flag');
     assert.ok(setCookie.includes('HttpOnly'));
     assert.ok(setCookie.includes('SameSite=Lax'));
@@ -1206,7 +1211,7 @@ test('cookies: the login page CSRF cookie is Secure', async () => {
     const encrypted = fakeRes();
     await siteAuth.gate(fakeReq('GET', '/__aegis/login'), encrypted, ctx);
     const secureCookie = String(encrypted.headers['Set-Cookie']);
-    assert.ok(secureCookie.startsWith('aegis_site_csrf='));
+    assert.ok(secureCookie.startsWith(names(slug, 'csrfflag').csrf + '='));
     assert.ok(/;\s*Secure/.test(secureCookie));
 });
 
@@ -1223,10 +1228,10 @@ test('cookies: the logout clear carries the Secure flag too', async (t) => {
     // TLS site, so the expiry has to be written with the same attributes.
     const secureLogin = await login(slug, tenantPaths, 'outflag',
         { username: 'jdoe', password: SECRET, next: '/' }, { ip: '10.0.0.93', secure: true });
-    const secureToken = cookieValue(secureLogin.res.headers['Set-Cookie'], 'aegis_site');
+    const secureToken = cookieValue(secureLogin.res.headers['Set-Cookie'], names(slug, 'outflag').session);
     const secureOut = fakeRes();
     await siteAuth.gate(fakeReq('POST', '/__aegis/logout',
-        { secure: true, headers: { cookie: `aegis_site=${secureToken}` } }), secureOut, ctx);
+        { secure: true, headers: { cookie: `${names(slug, 'outflag').session}=${secureToken}` } }), secureOut, ctx);
     const secureCleared = String(secureOut.headers['Set-Cookie']);
     assert.ok(secureCleared.includes('Max-Age=0'));
     assert.ok(/;\s*Secure/.test(secureCleared));
@@ -1269,7 +1274,7 @@ async function settle() {
 function visit(slug, tenantPaths, projectId, token) {
     const res = fakeRes();
     const handled = siteAuth.gate(
-        fakeReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }), res,
+        fakeReq('GET', '/', { headers: { cookie: `${names(slug, projectId).session}=${token}` } }), res,
         { slug, tenantPaths, project: { id: projectId, name: projectId } });
     return { res, handled };
 }
@@ -1280,7 +1285,7 @@ async function loginToken(slug, tenantPaths, projectId, ip, groups) {
     try {
         const { res } = await login(slug, tenantPaths, projectId,
             { username: 'alice', password: SECRET, next: '/' }, { ip });
-        return cookieValue(res.headers['Set-Cookie'], 'aegis_site');
+        return cookieValue(res.headers['Set-Cookie'], names(slug, projectId).session);
     } finally {
         siteAuth._setVerifier(null);
     }
@@ -1492,7 +1497,7 @@ test('revalidation: concurrent requests start one check, and none of them waits 
 async function send(slug, tenantPaths, projectId, token, method, url) {
     const res = fakeRes();
     const handled = await siteAuth.gate(
-        fakeReq(method, url || '/', { headers: { cookie: `aegis_site=${token}` } }), res,
+        fakeReq(method, url || '/', { headers: { cookie: `${names(slug, projectId).session}=${token}` } }), res,
         { slug, tenantPaths, project: { id: projectId, name: projectId } });
     return { res, handled };
 }
@@ -2210,7 +2215,7 @@ async function loginAs(slug, tenantPaths, id, username, result) {
     try {
         const { res } = await login(slug, tenantPaths, id,
             { username, password: SECRET, next: '/' });
-        return cookieValue(res.headers['Set-Cookie'], 'aegis_site');
+        return cookieValue(res.headers['Set-Cookie'], names(slug, id).session);
     } finally {
         siteAuth._setVerifier(null);
     }
@@ -2219,7 +2224,7 @@ async function loginAs(slug, tenantPaths, id, username, result) {
 /** GETs a path on a site with a session cookie, and returns the fake response. */
 async function getWith(slug, tenantPaths, id, path, token) {
     const res = fakeRes();
-    const headers = token ? { cookie: `aegis_site=${token}` } : {};
+    const headers = token ? { cookie: `${names(slug, id).session}=${token}` } : {};
     const handled = await siteAuth.gate(
         fakeReq('GET', path, { headers }), res,
         { slug, tenantPaths, project: { id, name: id } });
@@ -2392,7 +2397,7 @@ async function sessionFor(slug, tenantPaths, projectId, groups, sid) {
     try {
         const { res } = await login(slug, tenantPaths, projectId,
             { username: 'someone', password: SECRET, next: '/' });
-        return cookieValue(res.headers['Set-Cookie'], 'aegis_site');
+        return cookieValue(res.headers['Set-Cookie'], names(slug, projectId).session);
     } finally {
         siteAuth._setVerifier(null);
     }
@@ -2403,7 +2408,7 @@ async function knockWith(slug, tenantPaths, projectId, url, token) {
     // on the ones that reach the directory, so this awaits either.
     const res = fakeRes();
     const handled = await siteAuth.gate(
-        fakeReq('GET', url, { headers: { cookie: `aegis_site=${token}` } }), res,
+        fakeReq('GET', url, { headers: { cookie: `${names(slug, projectId).session}=${token}` } }), res,
         { slug, tenantPaths, project: { id: projectId, name: projectId } });
     return { handled, res };
 }

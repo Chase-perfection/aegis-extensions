@@ -539,15 +539,16 @@ async function siteLogin(id, username) {
     const ctx = { slug: 'acme', tenantPaths: pathsFor('acme'), project: { id, name: id } };
     const form = siteRes();
     await siteAuth.gate(siteReq('GET', '/__aegis/login'), form, ctx);
-    const csrf = cookieOf(form.headers['Set-Cookie'], 'aegis_site_csrf');
+    const names = siteAuth.cookieNames('acme', id);
+    const csrf = cookieOf(form.headers['Set-Cookie'], names.csrf);
     siteAuth._setVerifier(() => ({ ok: true, groups: [] }));
     try {
         const res = siteRes();
         await siteAuth.gate(siteReq('POST', '/__aegis/login', {
             body: new URLSearchParams({ csrf, username, password: 'pw', next: '/' }).toString(),
-            headers: { cookie: `aegis_site_csrf=${csrf}` }
+            headers: { cookie: `${names.csrf}=${csrf}` }
         }), res, ctx);
-        return cookieOf(res.headers['Set-Cookie'], 'aegis_site');
+        return cookieOf(res.headers['Set-Cookie'], names.session);
     } finally {
         siteAuth._setVerifier(null);
     }
@@ -555,7 +556,7 @@ async function siteLogin(id, username) {
 
 async function siteVisit(id, token) {
     const res = siteRes();
-    const handled = await siteAuth.gate(siteReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }), res,
+    const handled = await siteAuth.gate(siteReq('GET', '/', { headers: { cookie: `${siteAuth.cookieNames('acme', id).session}=${token}` } }), res,
         { slug: 'acme', tenantPaths: pathsFor('acme'), project: { id, name: id } });
     return { handled, res };
 }

@@ -178,11 +178,16 @@ elsewhere (Windows logons, other applications), which AD counts too, nor for
 fine-grained password policies, which are not read. DEPLOY-CONTRACT.md, "Too
 many attempts", has the details.
 
-Cookies are scoped by host and not by port. Two protected sites on one machine
-share the cookie name, so logging into the second replaces the session of the
-first. The session record carries the slug and project id and is rejected when
-they do not match, which makes this a re-login rather than a way into another
-site.
+Cookies are scoped by host and not by port. Every protected project therefore
+has its own cookie names, `aegis_site_<slug>_<projectId>` for the session and
+`aegis_site_csrf_<slug>_<projectId>` for the login form, so logging into one
+site leaves the others signed in. A slug or id with a character outside
+`A-Z a-z 0-9 _ -` is replaced in the name by 16 hex characters of its SHA-256.
+The session record also carries the slug and project id and is rejected when
+they do not match. The shared names `aegis_site` and `aegis_site_csrf` of earlier
+versions are never read; a browser that still holds them gets them cleared on
+its first answer from a protected site, so everyone signs in once more after
+the update.
 
 There is no WebSocket upgrade. The proxy forwards requests, not socket
 upgrades. Anything that needs a live socket needs something else in front.

@@ -45,11 +45,12 @@
  *   project's own host name (`ctx.viaRouterHostName`), never on `host:port`:
  *   HSTS ignores the port, so on a shared host name it would reach every other
  *   site on the machine.
- * - Cookies are scoped by host, not by port. Two protected sites on the same
- *   machine share the `aegis_site` cookie name, so logging into the second one
- *   replaces the session of the first. The session record stores the slug and
- *   project id and is rejected when they do not match, so this is a nuisance
- *   (re-login) and not a way into another site.
+ * - Cookies are scoped by host, not by port, and every site on a machine shares
+ *   one host name. Each protected project therefore has its own cookie names
+ *   (`cookieNames`: slug and project id), so logging into one site leaves the
+ *   others signed in. The session record still stores the slug and project id
+ *   and is rejected when they do not match. The shared names of earlier
+ *   versions (`aegis_site`, `aegis_site_csrf`) are never read and are cleared.
  * - The client address comes from the socket. No `X-Forwarded-For` is trusted,
  *   because nothing forwards to this port; behind a reverse proxy every lockout
  *   counter would collapse onto the proxy's address.
@@ -119,8 +120,30 @@ function isSitePath(pathOnly) {
     return isReleasePath(pathOnly) || pathOnly === siteNotices.DATA_PATH;
 }
 
-const SESSION_COOKIE = 'aegis_site';
-const CSRF_COOKIE = 'aegis_site_csrf';
+/**
+ * The names the two cookies had when every site shared them. Never read for
+ * authentication any more; only cleared, so a browser does not keep sending a
+ * dead session to every protected site on the machine.
+ */
+const LEGACY_COOKIES = ['aegis_site', 'aegis_site_csrf'];
+
+/**
+ * The session and CSRF cookie names of one protected project.
+ *
+ * Cookies are scoped by host and not by port, and every site on a machine
+ * shares one host name, so the name has to tell the sites apart. Tenants number
+ * their projects on their own, which is why the slug is part of it: two tenants
+ * can both have a project `web` on the same host. A value outside
+ * `[A-Za-z0-9_-]` is replaced by the first 16 hex characters of its SHA-256, so
+ * the name stays a valid cookie token whatever a project is called.
+ */
+function cookieNames(slug, projectId) {
+    const joined = `${slug}_${projectId}`;
+    const safe = /^[A-Za-z0-9_-]+$/.test(joined)
+        ? joined
+        : crypto.createHash('sha256').update(joined).digest('hex').slice(0, 16);
+    return { session: `aegis_site_${safe}`, csrf: `aegis_site_csrf_${safe}` };
+}
 const SESSION_MS = 8 * 60 * 60 * 1000;
 /** Thirty minutes without a request closes a session, inside the 8 h cap. An
  *  unattended browser on a shared desk should not stay signed in all day. */
@@ -1025,16 +1048,41 @@ function isSecure(req) {
  * at all: on a plain-HTTP site the browser would never send the cookie back and
  * login would break outright. See the file header.
  */
-function sessionCookie(token, maxAgeSeconds, secure) {
-    return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`
+function sessionCookie(name, token, maxAgeSeconds, secure) {
+    return `${name}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`
         + (secure ? '; Secure' : '');
 }
 
-function csrfCookie(token, secure) {
+function csrfCookie(name, token, secure) {
     // Readable by script is irrelevant here: the page runs no script, and the
     // value only has to be something a cross-site form cannot know.
-    return `${CSRF_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1800`
+    return `${name}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1800`
         + (secure ? '; Secure' : '');
+}
+
+/**
+ * Clears the shared cookie names a browser may still hold, on the first
+ * response it gets from a protected site. They carry no authority any more, so
+ * this is housekeeping: it stops a dead session riding along on every request.
+ * Wraps `writeHead` so it reaches every answer, the proxied ones included.
+ */
+function clearLegacyCookies(req, res) {
+    const stale = LEGACY_COOKIES.filter((n) => readCookie(req, n) !== null);
+    if (stale.length === 0 || typeof res.writeHead !== 'function') return;
+    const clears = stale.map((n) => sessionCookie(n, '', 0, true));
+    const writeHead = res.writeHead;
+    res.writeHead = function (status, ...rest) {
+        const at = rest.findIndex((x) => x && typeof x === 'object' && !Array.isArray(x));
+        if (at >= 0) {
+            const headers = Object.assign({}, rest[at]);
+            headers['Set-Cookie'] = [].concat(headers['Set-Cookie'] || [], clears);
+            rest[at] = headers;
+        } else if (typeof res.setHeader === 'function') {
+            const had = typeof res.getHeader === 'function' ? res.getHeader('Set-Cookie') : undefined;
+            res.setHeader('Set-Cookie', [].concat(had || [], clears));
+        }
+        return writeHead.call(res, status, ...rest);
+    };
 }
 
 /** Equal and non-empty, compared in constant time. */
@@ -1134,7 +1182,7 @@ function loginPage(res, status, ctx, opts) {
             renderError(ctx.lang, tr(ctx.lang, 'errUnavailableTitle'), tr(ctx.lang, 'errUnavailable')));
     }
     return sendHtml(res, status, body,
-        Object.assign({ 'Set-Cookie': csrfCookie(csrf, ctx.secure === true) }, opts.headers));
+        Object.assign({ 'Set-Cookie': csrfCookie(ctx.cookies.csrf, csrf, ctx.secure === true) }, opts.headers));
 }
 
 /**
@@ -1181,7 +1229,11 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
     }
 
     const lang = pickLang(req);
-    const ctx = { slug, tenantPaths, projectId, siteName, lang, secure: isSecure(req) };
+    const ctx = {
+        slug, tenantPaths, projectId, siteName, lang, secure: isSecure(req),
+        cookies: cookieNames(slug, projectId)
+    };
+    if (ctx.secure) clearLegacyCookies(req, res);
 
     // Served before the directory is consulted: they carry nothing secret, and
     // the refusal page below needs them to be legible. The site icon is the one
@@ -1231,12 +1283,12 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
         return true;
     }
 
-    const token = readCookie(req, SESSION_COOKIE);
+    const token = readCookie(req, ctx.cookies.session);
     const session = sessionFor(token, slug, projectId);
 
     if (pathOnly === LOGOUT_PATH) {
         if (token) sessions.delete(token);
-        redirect(res, LOGIN_PATH, { 'Set-Cookie': sessionCookie('', 0, ctx.secure) });
+        redirect(res, LOGIN_PATH, { 'Set-Cookie': sessionCookie(ctx.cookies.session, '', 0, ctx.secure) });
         return true;
     }
 
@@ -1408,7 +1460,7 @@ function identityFor(req, { slug, tenantPaths, project }) {
     if (!projectId) return null;
     if (methodFor(slug, tenantPaths, projectId) === authMethods.NONE) return null;
 
-    const session = sessionFor(readCookie(req, SESSION_COOKIE), slug, projectId);
+    const session = sessionFor(readCookie(req, cookieNames(slug, projectId).session), slug, projectId);
     if (!session) return null;
 
     return {
@@ -1433,7 +1485,7 @@ async function handleLogin(req, res, ctx, config) {
     const username = String(form.get('username') || '').trim();
     const password = String(form.get('password') || '');
     const sentCsrf = String(form.get('csrf') || '');
-    const cookieCsrf = readCookie(req, CSRF_COOKIE) || '';
+    const cookieCsrf = readCookie(req, ctx.cookies.csrf) || '';
 
     // From here on `password` is only ever passed to verify(). It is not logged,
     // not echoed into the form, and not part of any error.
@@ -1588,7 +1640,7 @@ async function handleLogin(req, res, ctx, config) {
         nextCheckAt: everyMs > 0 ? now + everyMs : Infinity
     });
     console.log(`[Deploy] ${ctx.slug}/${ctx.projectId}: site login by ${username}${verdict.admin ? ' (site administrator)' : ''}`);
-    redirect(res, next, { 'Set-Cookie': sessionCookie(token, Math.floor(SESSION_MS / 1000), ctx.secure) });
+    redirect(res, next, { 'Set-Cookie': sessionCookie(ctx.cookies.session, token, Math.floor(SESSION_MS / 1000), ctx.secure) });
     return true;
 }
 
@@ -1761,7 +1813,7 @@ function dropSessions(slug, projectId) {
 module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
     listSessions, dropSessionsFor, normalizeUser, writesRecheckable, IDLE_MS,
-    PREFIX, LOGIN_PATH, WHOAMI_PATH, SESSION_COOKIE, LOCK_THRESHOLD, LOCK_MS,
+    PREFIX, LOGIN_PATH, WHOAMI_PATH, cookieNames, LOCK_THRESHOLD, LOCK_MS,
     USER_LOCK_MAX_MS, MAX_FAILURE_ENTRIES,
     RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, isSitePath, safeNext, readCookie, pickLang,
     // Test seams. Not part of the contract's public surface; nothing outside
