@@ -1364,16 +1364,36 @@ directory first: a user no longer allowed gets 403 and loses the session, and a
 directory that cannot answer gets the write a 503. Neither reaches the
 application, and neither sets a cookie. So the headers on a write are current;
 on a read they can be one interval old. `revalidateMinutes` at 0 turns off the
-read timer only: writes are still checked. An account the directory no longer
-finds is refused on a write, like one taken out of the group.
+read timer only: writes are still checked.
+
+What the re-check of a write can conclude, and what follows:
+
+| The directory says | The write gets | The session |
+|---|---|---|
+| still allowed | proxied | kept, group list refreshed |
+| out of every allowed group | 403 | dropped |
+| the account does not exist | 403 | dropped |
+| the search is refused (operationsError, insufficientAccess) | 503 | kept |
+| nothing, or an error | 503 | kept |
+
+"Does not exist" is only concluded when it is certain. With a service account
+and no template, the subtree search must succeed and find nobody. With a DN
+template (`CN={username},OU=Users,...`), the templated DN is read with a
+base-scope search, and the controller must answer noSuchObject. A refused search
+is read before the empty result it arrives with, so it is never mistaken for a
+missing account. With a non-DN template (`{username}@corp.local`), a filter
+search that finds nobody proves nothing about the account, and the write gets
+503.
 
 The write check is skipped in one case: a directory the client cannot search at
 all, which is a bind DN saved without its password. A service account with its
 password and an anonymous search (no bind DN, base DN and user filter set) both
-count as searchable; an anonymous search the controller refuses is no answer,
-so the write gets 503. Where the check is skipped, writes are let through on the
-login's verdict, and the site's Authentication panel says so: "Writes are not
-rechecked against the group: add a service account or allow anonymous search."
+count as searchable. If the controller refuses the anonymous search, that is no
+answer, and the write gets 503; the panel's Test button says so. Where the check
+is skipped, writes are let through on the login's verdict, and the site's
+Authentication panel says so: "Writes are not rechecked against the group: the
+service account has no saved password. Enter it, or clear the bind DN to search
+anonymously."
 
 A session ends eight hours after login, or after thirty minutes with no
 request, whichever comes first. A tenant administrator can also close the

@@ -173,6 +173,12 @@ function fakeDirectory(users, accounts) {
 
                     if (op.tag === 0x63) {
                         state.searches++;
+                        // What AD answers a search it will not run, for example
+                        // on an anonymous connection: operationsError, no entry.
+                        if (state.refuseSearch) {
+                            sock.write(result(id, 0x65, 1, '000004DC: LdapErr: a successful bind must be completed'));
+                            return;
+                        }
                         // The filter carries the sAMAccountName the client is
                         // after; find it by looking for a known account name in
                         // the raw bytes rather than compiling the filter, which
@@ -442,6 +448,27 @@ test('revalidation updates a canonical login and preserves it when LDAP later om
     await visit();
     await settle();
     assert.strictEqual((await whoami()).login, 'PVUE', 'an omitted attribute does not erase a valid login');
+});
+
+test('a write the directory refuses to search for is a 503, and the session survives', async (t) => {
+    // The real ldap.lookup this time, against a directory that answers the
+    // re-check with operationsError and no entry. Read as "no such user" that
+    // was a 403 and a sign-out on every write.
+    const { port, directory } = await scaffold(t, { allowedGroups: [], revalidateMinutes: 10 });
+    const { posted } = await login(port, 'alice', 'alice-pw', '/');
+    const session = cookieFrom(posted, 'aegis_site');
+    assert.ok(session);
+
+    directory.refuseSearch = true;
+    const write = await request(port, {
+        method: 'POST', path: '/', headers: { Cookie: 'aegis_site=' + session, 'Content-Length': 0 }
+    });
+    assert.strictEqual(write.status, 503, 'no answer from the directory, so the write waits');
+    assert.ok(!write.headers['set-cookie'], 'and no cookie is set or cleared');
+
+    directory.refuseSearch = false;
+    const read = await request(port, { path: '/', headers: { Cookie: 'aegis_site=' + session } });
+    assert.strictEqual(read.status, 200, 'the session is still there');
 });
 
 test('a wrong password never reaches the site and is never echoed back', async (t) => {

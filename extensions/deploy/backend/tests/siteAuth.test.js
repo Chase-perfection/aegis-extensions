@@ -1321,6 +1321,21 @@ test('a write by a user deleted from the directory is refused and drops the sess
     assert.ok(isLoginRedirect(visit('tenant-write-gone', tenantPaths, 'wgone', token)));
 });
 
+test('a refused search or an unconfirmed name on a write is a 503, and the session survives', async (t) => {
+    const tenantPaths = seed('tenant-write-denied', 'wdenied',
+        { name: 'Write', auth: { enabled: true, allowedGroups: ['Site Viewers'] } }, revalConfig(10));
+    t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions('tenant-write-denied', 'wdenied'); });
+    const token = await loginToken('tenant-write-denied', tenantPaths, 'wdenied', '10.0.0.101');
+
+    for (const error of ['ldap_search_denied', 'ldap_user_unconfirmed']) {
+        siteAuth._setLookup(() => ({ ok: false, error }));
+        const write = await send('tenant-write-denied', tenantPaths, 'wdenied', token, 'POST', '/api/items');
+        assert.strictEqual(write.res.statusCode, 503, error);
+        assert.strictEqual(visit('tenant-write-denied', tenantPaths, 'wdenied', token).handled, false,
+            `${error}: the session is kept`);
+    }
+});
+
 test('a refused or unanswered request does not count as activity', async (t) => {
     const tenantPaths = seed('tenant-idle-refused', 'irefused',
         { name: 'Idle', auth: { enabled: true, allowedGroups: ['Site Viewers'] } }, revalConfig(10));

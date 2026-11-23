@@ -69,7 +69,8 @@
             deploy_sessions_confirm: 'Close every session on this site? Whoever is signed in gets the login form at their next request.',
             deploy_sessions_closed: '$1 session(s) closed.',
             deploy_sessions_failed: 'Could not read or close the sessions of this site.',
-            deploy_sessions_no_recheck: 'Writes are not rechecked against the group: add a service account or allow anonymous search.',
+            deploy_sessions_no_recheck: 'Writes are not rechecked against the group: the service account has no saved password. Enter it, or clear the bind DN to search anonymously.',
+            deploy_auth_test_writes_refused: 'Until the directory can be searched, writes on protected sites are refused with 503.',
             deploy_auth_err_requires_tls: 'A site behind a login must be served over HTTPS. Turn HTTPS on for this site first, or give it a host name served by the HTTPS host router, then protect it.',
             deploy_tls_err_required_by_auth: 'This site is behind a login, which needs HTTPS. Switch the protection off first, then turn HTTPS off.',
             deploy_settings_tls_required: 'This site is behind a login served over its host name, so the name cannot be removed. Switch the protection off first, or turn HTTPS on for the site itself.',
@@ -121,7 +122,8 @@
             deploy_sessions_confirm: 'Fermer toutes les sessions de ce site ? Les personnes connectées retrouvent le formulaire de connexion à leur prochaine requête.',
             deploy_sessions_closed: '$1 session(s) fermée(s).',
             deploy_sessions_failed: 'Impossible de lire ou de fermer les sessions de ce site.',
-            deploy_sessions_no_recheck: 'Les écritures ne sont pas revérifiées par rapport au groupe : ajoutez un compte de service ou autorisez la recherche anonyme.',
+            deploy_sessions_no_recheck: 'Les écritures ne sont pas revérifiées auprès de l\'annuaire : le compte de service n\'a pas de mot de passe enregistré. Saisissez-le, ou videz le DN de liaison pour une recherche anonyme.',
+            deploy_auth_test_writes_refused: 'Tant que l\'annuaire ne peut pas être interrogé, les écritures sur les sites protégés sont refusées avec une erreur 503.',
             deploy_auth_err_requires_tls: 'Un site protégé par une connexion doit être servi en HTTPS. Activez d\'abord le HTTPS pour ce site, ou donnez-lui un nom d\'hôte servi par le routeur HTTPS, puis protégez-le.',
             deploy_tls_err_required_by_auth: 'Ce site est protégé par une connexion, qui exige le HTTPS. Désactivez d\'abord la protection, puis le HTTPS.',
             deploy_settings_tls_required: 'Ce site est protégé par une connexion servie via son nom d\'hôte : le nom ne peut pas être retiré. Désactivez d\'abord la protection, ou activez le HTTPS sur le site lui-même.',
@@ -5526,7 +5528,7 @@
         // than refuse them all, and this line is where that is said.
         if (current !== 'none' && writeRecheck === false) {
             var noRecheck = el('p', 'dep-auth-site-warn', tr('deploy_sessions_no_recheck',
-                'Writes are not rechecked against the group: add a service account or allow anonymous search.'));
+                'Writes are not rechecked against the group: the service account has no saved password. Enter it, or clear the bind DN to search anonymously.'));
             noRecheck.setAttribute('data-i18n', 'deploy_sessions_no_recheck');
             wrap.appendChild(noRecheck);
         }
@@ -6751,8 +6753,12 @@
                 // people picker on every site found nobody and blamed the
                 // name being typed into it.
                 if (data.searchable === false) {
+                    // A write on a protected site re-checks the directory
+                    // first, and gets 503 while that search is refused.
                     return authNote(tr('deploy_auth_test_unsearchable',
-                        'The directory answered, and it will not let Aegis read it. People can sign in, because that binds as themselves, but no site can look anybody up: the Allowed people field will find nobody. Fill in the service account and its password above.'));
+                        'The directory answered, and it will not let Aegis read it. People can sign in, because that binds as themselves, but no site can look anybody up: the Allowed people field will find nobody. Fill in the service account and its password above.')
+                        + ' ' + tr('deploy_auth_test_writes_refused',
+                            'Until the directory can be searched, writes on protected sites are refused with 503.'));
                 }
                 return authNote(tr('deploy_auth_test_ok',
                     'The directory answered and the service account bound.'));

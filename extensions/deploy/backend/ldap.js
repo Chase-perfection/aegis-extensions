@@ -271,6 +271,15 @@ function escapeFilter(value) {
  * template shape, a userPrincipalName like `{username}@corp.local`, no character
  * of a legal logon name is escaped and this is the identity function.
  */
+/**
+ * Whether a `userDnTemplate` is a distinguished name (`CN={username},OU=...`)
+ * rather than a UPN or `DOMAIN\{username}`: it starts with `attribute=`. Only
+ * a DN names an entry that can be read directly.
+ */
+function isDnTemplate(template) {
+    return /^\s*[A-Za-z][A-Za-z0-9-]*\s*=/.test(String(template || ''));
+}
+
 function escapeDn(value) {
     const s = String(value === undefined || value === null ? '' : value);
     let out = '';
@@ -420,10 +429,14 @@ function unbindRequest() {
     return encode(OP.UNBIND_REQUEST, Buffer.alloc(0));
 }
 
-function searchRequest({ baseDn, filter, attributes, sizeLimit }) {
+/** SearchRequest scopes (RFC 4511 4.5.1.2). */
+const SCOPE = { BASE: 0, SUBTREE: 2 };
+
+function searchRequest({ baseDn, filter, attributes, sizeLimit, scope }) {
     return encode(OP.SEARCH_REQUEST, [
         berString(baseDn || ''),
-        berEnum(2),                 // wholeSubtree
+        // wholeSubtree unless the caller reads one named entry (baseObject).
+        berEnum(scope === SCOPE.BASE ? SCOPE.BASE : SCOPE.SUBTREE),
         berEnum(0),                 // neverDerefAliases
         berInteger(sizeLimit || 0),
         berInteger(0),              // timeLimit: our own deadline governs instead
@@ -1369,9 +1382,23 @@ async function verify(config, username, password) {
  * `verify` created. Calling it in place of `verify` would let anyone in under
  * any name that exists.
  *
- * Requires the search configuration. A `userDnTemplate`-only setup binds as the
- * user and has no service account to reuse, so there is nothing to ask with;
- * that returns `ldap_bad_config` and the caller keeps the session it has.
+ * It binds as the service account, or anonymously when no bind DN is set. The
+ * caller acts on the error code, so each one says exactly what was learned:
+ *
+ * - `ldap_user_not_found`: the directory answered and the account is not
+ *   there. Only said when it is certain: a subtree search that SUCCEEDED with
+ *   no entry and no template, or a base read of the templated DN answered
+ *   noSuchObject.
+ * - `ldap_search_denied`: the bind went through and the search was refused
+ *   (operationsError on an anonymous connection, insufficientAccess). Read
+ *   before the entry count, because a refusal also arrives with no entry.
+ * - `ldap_user_unconfirmed`: a non-DN template (`{username}@corp.local`) and a
+ *   filter search that found nobody. The name typed at login may simply not be
+ *   what the filter matches, so this proves nothing about the account.
+ * - anything else (`ldap_bad_config`, `ldap_unreachable`, ...): no answer.
+ *
+ * A DN-shaped `userDnTemplate` (`CN={username},OU=Users,...`) names the entry,
+ * so it is read with a base-scope search of that DN rather than the filter.
  */
 async function lookup(config, username) {
     const user = String(username === undefined || username === null ? '' : username);
@@ -1382,20 +1409,42 @@ async function lookup(config, username) {
     let state = null;
     try {
         const cfg = normalizeConfig(config);
-        if (!cfg.baseDn) throw badConfig('no baseDn');
-        if (!cfg.userFilter) throw badConfig('no userFilter');
-        const filter = parseFilterString(cfg.userFilter.split('{username}').join(escapeFilter(user)));
+        const dnTemplate = isDnTemplate(cfg.userDnTemplate);
+        if (dnTemplate && !cfg.userDnTemplate.includes('{username}')) throw badConfig('userDnTemplate has no {username}');
+        if (!dnTemplate && !cfg.baseDn) throw badConfig('no baseDn');
+        if (!dnTemplate && !cfg.userFilter) throw badConfig('no userFilter');
 
         state = await openSession(cfg);
         await bindService(state, cfg);
 
-        const found = await search(state, {
-            baseDn: cfg.baseDn,
-            filter,
-            attributes: attributesFor(cfg),
-            sizeLimit: 2
-        });
-        if (!found.entries.length) throw new LdapError('ldap_user_not_found', 'no entry matched');
+        let found;
+        if (dnTemplate) {
+            found = await search(state, {
+                baseDn: cfg.userDnTemplate.split('{username}').join(escapeDn(user)),
+                scope: SCOPE.BASE,
+                filter: parseFilterString('(objectClass=*)'),
+                attributes: attributesFor(cfg),
+                sizeLimit: 1
+            });
+            if (found.result.resultCode === RESULT.NO_SUCH_OBJECT) {
+                throw new LdapError('ldap_user_not_found', 'the templated DN does not exist');
+            }
+            assertSearchable(found.result);
+            if (!found.entries.length) throw new LdapError('ldap_protocol_error', 'a base read returned no entry');
+        } else {
+            const filter = parseFilterString(cfg.userFilter.split('{username}').join(escapeFilter(user)));
+            found = await search(state, {
+                baseDn: cfg.baseDn,
+                filter,
+                attributes: attributesFor(cfg),
+                sizeLimit: 2
+            });
+            assertSearchable(found.result);
+            if (!found.entries.length) {
+                if (cfg.userDnTemplate) throw new LdapError('ldap_user_unconfirmed', 'no entry matched the filter');
+                throw new LdapError('ldap_user_not_found', 'no entry matched');
+            }
+        }
         if (found.entries.length > 1) throw new LdapError('ldap_ambiguous_user', 'more than one entry matched');
 
         const entry = found.entries[0];

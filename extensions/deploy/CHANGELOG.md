@@ -210,8 +210,8 @@ under 0.2.8 rather than released as 0.2.9.
 
 **A Python site started from a subfolder finds the packages pip installed.**
 The install Deploy proposes, `pip install --target .`, puts packages at the
-root of the site, and `python packaging/api/kpi_api.py` puts only
-`packaging/api/` on `sys.path`. KPI installed openpyxl on every deployment and
+root of the site, and `python packaging/api/reports_api.py` puts only
+`packaging/api/` on `sys.path`. A Python site installed openpyxl on every deployment and
 then died on start with `ModuleNotFoundError: No module named 'openpyxl'`, and
 the previous version was put back. The process now gets the site root first on
 `PYTHONPATH`, ahead of any the project sets. This fix was on `main` after 0.2.7
@@ -227,7 +227,7 @@ one site needs is that site's decision. A project with a start command and no
 install command, whose branch declares packages (the nearest `requirements.txt`
 from the start script up to the root, or `package.json` dependencies), is
 refused with `needs_dependencies` before anything is published, and the card,
-the overview and the console ask: "kpi-briconord needs openpyxl to run. Do you
+the overview and the console ask: "reports needs openpyxl to run. Do you
 want to install it?" Yes saves the install command Deploy worked out
 (`python -m pip install ... --target .`, or the lockfile's install) in the
 project's Settings and deploys again; No changes nothing. Packaging-only
@@ -507,13 +507,13 @@ and the served directory are untouched, and the decision is made again from the
 real files on the next deployment. Packaging tools only: test runners and
 linters stay installed, because a project may run its tests as its build step.
 
-The operator contract now documents the native KPI process path: the `aegis`
+The operator contract now documents the native Python process path: the `aegis`
 branch, the Python install and start commands, SQLite data below
 `AEGIS_DATA_DIR`, and the `migrations` directory. It also records the per-start
 `X-Aegis-Proxy-Key` contract, conditional identity headers, and the existing IIS
-path as a historical alternative in the KPI repository. KPI deploys from `aegis`
-rather than `main`: `main` serves the production install under IIS until the
-switch, and the two run side by side.
+path as a historical alternative in the application repository. Such a site
+deploys from `aegis` rather than `main`: `main` serves the production install
+under IIS until the switch, and the two run side by side.
 
 ## 0.2.0
 

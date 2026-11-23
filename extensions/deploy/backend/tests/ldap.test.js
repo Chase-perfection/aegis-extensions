@@ -171,7 +171,10 @@ function assertSearchRequest(op, seen) {
     assert.strictEqual(parts.length, 8, 'SearchRequest carries eight fields');
     assert.strictEqual(parts[0].tag, 0x04, 'baseObject is an OCTET STRING');
     assert.strictEqual(parts[1].tag, 0x0a, 'scope is an ENUMERATED');
-    assert.strictEqual(readInt(parts[1].value), 2, 'scope is wholeSubtree');
+    // wholeSubtree for every search but one: reading a templated DN is a
+    // baseObject read of that entry, which is what the template names.
+    const scope = readInt(parts[1].value);
+    assert.ok(scope === 2 || scope === 0, 'scope is wholeSubtree or baseObject');
     assert.strictEqual(parts[2].tag, 0x0a, 'derefAliases is an ENUMERATED');
     assert.strictEqual(parts[3].tag, 0x02, 'sizeLimit is an INTEGER');
     assert.strictEqual(parts[4].tag, 0x02, 'timeLimit is an INTEGER');
@@ -180,6 +183,7 @@ function assertSearchRequest(op, seen) {
     seen.push({
         op: 'search',
         baseDn: parts[0].value.toString('utf8'),
+        scope,
         sizeLimit: readInt(parts[3].value),
         filter: readFilter(parts[6]),
         attributes: tlvChildren(parts[7].value).map((a) => a.value.toString('utf8'))
@@ -1523,6 +1527,76 @@ test('lookup without a service account is ldap_bad_config and opens nothing', as
     const config = { url: fake.url, userDnTemplate: '{username}@corp.local', timeoutMs: 3000 };
     assert.deepStrictEqual(await ldap.lookup(config, 'alice'), { ok: false, error: 'ldap_bad_config' });
     assert.strictEqual(fake.connections, 0, 'the caller keeps the session it has, at no cost to the DC');
+});
+
+const TEMPLATE_CONFIG = {
+    // No bind DN: the service bind is anonymous, as on a template-only setup.
+    baseDn: 'DC=corp,DC=local',
+    userFilter: '(&(objectClass=user)(sAMAccountName={username}))',
+    userDnTemplate: 'CN={username},OU=Users,DC=corp,DC=local',
+    groupAttribute: 'memberOf',
+    timeoutMs: 3000
+};
+
+test('lookup: a search the directory refuses is ldap_search_denied, not a missing user', async (t) => {
+    // What AD answers a search on an anonymous connection: operationsError and
+    // no entries. Read as "no such user", it would sign every visitor out.
+    const fake = await startFake({
+        onSearch: () => ({ resultCode: 1, diagnostic: '000004DC: LdapErr: DSID-0C090D5C, a successful bind must be completed' })
+    });
+    t.after(() => fake.close());
+
+    const out = await ldap.lookup(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'alice');
+    assert.deepStrictEqual(out, { ok: false, error: 'ldap_search_denied' });
+});
+
+test('lookup: a DN template is read with a base-scope search of that entry', async (t) => {
+    const fake = await startFake({ entries: [userEntry()] });
+    t.after(() => fake.close());
+
+    const out = await ldap.lookup(Object.assign({ url: fake.url }, TEMPLATE_CONFIG), 'Alice Martin');
+    assert.deepStrictEqual(fake.errors, []);
+    assert.strictEqual(out.ok, true, JSON.stringify(out));
+    assert.strictEqual(out.dn, USER_DN);
+    const search = fake.seen.find((s) => s.op === 'search');
+    assert.strictEqual(search.baseDn, USER_DN, 'the templated DN, not the domain root');
+    assert.strictEqual(search.scope, 0, 'baseObject: the template names the entry');
+});
+
+test('lookup: a DN template whose entry is gone is ldap_user_not_found', async (t) => {
+    const fake = await startFake({ onSearch: () => ({ resultCode: 32, diagnostic: 'no such object' }) });
+    t.after(() => fake.close());
+
+    const out = await ldap.lookup(Object.assign({ url: fake.url }, TEMPLATE_CONFIG), 'Alice Martin');
+    assert.deepStrictEqual(out, { ok: false, error: 'ldap_user_not_found' });
+});
+
+test('lookup: a DN template read the directory refuses is ldap_search_denied', async (t) => {
+    const fake = await startFake({ onSearch: () => ({ resultCode: 1, diagnostic: 'operations error' }) });
+    t.after(() => fake.close());
+
+    const out = await ldap.lookup(Object.assign({ url: fake.url }, TEMPLATE_CONFIG), 'Alice Martin');
+    assert.deepStrictEqual(out, { ok: false, error: 'ldap_search_denied' });
+});
+
+test('lookup: a non-DN template that finds nobody is unconfirmed, not a missing user', async (t) => {
+    // A UPN template is not a DN, so there is no entry to read directly; the
+    // filter search runs, and the name the visitor typed may not be what the
+    // filter matches. Empty here proves nothing about the account.
+    const fake = await startFake({ entries: [] });
+    t.after(() => fake.close());
+
+    const config = Object.assign({ url: fake.url }, TEMPLATE_CONFIG, { userDnTemplate: '{username}@corp.local' });
+    const out = await ldap.lookup(config, 'alice');
+    assert.deepStrictEqual(out, { ok: false, error: 'ldap_user_unconfirmed' });
+});
+
+test('lookup: no template, the search succeeds and finds nobody: ldap_user_not_found', async (t) => {
+    const fake = await startFake({ entries: [] });
+    t.after(() => fake.close());
+
+    const out = await ldap.lookup(Object.assign({ url: fake.url }, SEARCH_CONFIG), 'alice');
+    assert.deepStrictEqual(out, { ok: false, error: 'ldap_user_not_found' });
 });
 
 test('lookup refuses an empty or control-laden username before a socket is opened', async (t) => {
