@@ -1459,13 +1459,11 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // tab, and a repository naming the colleagues who may read the site it
         // produces would be a grant written by whoever can push to it.
         if (body.auth && !draft.auth) {
-            // A new project has no certificate and no host name yet, so it
-            // cannot be created behind a login. Created open, protected from
-            // its Authentication tab once TLS is on.
-            if (authMethods.isKnown(body.auth) && body.auth !== authMethods.NONE
-                && !servesSecurely(draft)) {
-                return refuse(400, { error: 'auth_requires_tls' });
-            }
+            // Not refused for lack of TLS, although a new project has none: the
+            // method usually comes from the repository's manifest, and refusing
+            // would make that repository impossible to import. The record is
+            // stored, and `siteAuth.gate` answers 503 `site_not_tls` until the
+            // operator turns TLS on, so the site is closed in the meantime.
             draft.auth = authMethods.record(body.auth, [], {});
         }
 

@@ -3381,6 +3381,10 @@
             return tr('deploy_settings_preview_fixed',
                 'A preview is built the way the project it branches from is built. Change these on that project.');
         }
+        if (reason === 'tls_required_by_auth') {
+            return tr('deploy_settings_tls_required',
+                'This site is behind a login served over its host name, so the name cannot be removed. Switch the protection off first, or turn HTTPS on for the site itself.');
+        }
         return tr('deploy_settings_failed', 'Aegis could not save those settings.');
     }
 

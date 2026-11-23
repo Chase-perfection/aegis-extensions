@@ -20,7 +20,7 @@
 
 'use strict';
 
-const test = require('node:test');
+const baseTest = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -46,9 +46,17 @@ function selfSignedFiles() {
         '-keyout', keyFile, '-out', certFile, '-days', '1',
         '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1'
     ], { stdio: 'ignore' });
-    if (run.status !== 0) throw new Error('openssl is required to build the test certificate');
+    if (run.status !== 0) return null;
     return { keyFile, certFile };
 }
+
+// Every test here drives a protected site, which is TLS only. Without openssl
+// there is no certificate to serve, so they skip instead of failing, the same
+// way `siteAuth.test.js` does.
+const TLS_PAIR = selfSignedFiles();
+const test = Object.assign(
+    (name, fn) => baseTest(name, { skip: TLS_PAIR ? false : 'openssl is not available to build a test certificate' }, fn),
+    baseTest);
 
 const authStore = require('../authStore');
 const projectStore = require('../projectStore');
@@ -309,7 +317,7 @@ async function scaffold(t, {
     const port = await freePort();
     const project = {
         id: 'demo', name: 'Demo Site', port,
-        tls: Object.assign({ enabled: true }, selfSignedFiles()),
+        tls: Object.assign({ enabled: true }, TLS_PAIR),
         auth: { enabled: protectedSite, allowedGroups: allowedGroups || [] }
     };
     projectStore.saveProject(tenantPaths, project);

@@ -1029,8 +1029,7 @@ the shared machine name it would force HTTPS onto every plain HTTP site too.
 
 **A protected site is served over TLS only.** `POST /api/deploy/projects/:id/auth`
 refuses any method but `none` with `400 auth_requires_tls` unless the project has
-`tls.enabled`, or has a host name while this listener serves TLS. The same rule
-applies to a project created with an `auth` method. `POST .../tls` with
+`tls.enabled`, or has a host name while this listener serves TLS. `POST .../tls` with
 `enabled: false`, and `POST .../settings` clearing the host name that carries the
 TLS, answer `409 tls_required_by_auth` while the site is protected. On every
 request, `siteAuth.gate` answers `503 site_not_tls` on a clear socket for a
@@ -1038,6 +1037,12 @@ protected site, before any form, cookie or directory lookup, so a project
 protected before this rule fails closed until TLS is turned on. A plain-HTTP
 listener asked for a protected site that has its own HTTPS port answers
 `308` to `https://<host>:<port><url>`.
+
+A project created with an `auth` method, for instance from the repository's
+manifest, is stored as sent and stays closed (`503 site_not_tls`) until TLS is on.
+A preview of a parent that is protected only through the router host name has no
+host name of its own (previews cannot hold one) and no certificate of its own, so
+it stays `503` until the operator turns TLS on for it.
 
 `POST /api/deploy/projects/:id/settings` takes `hostname` and `spaFallback`,
 either or both. An empty `hostname` clears it, which frees the name.

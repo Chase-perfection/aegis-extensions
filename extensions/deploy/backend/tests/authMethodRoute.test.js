@@ -402,7 +402,7 @@ const SETTINGS_ROUTE = 'POST /api/deploy/projects/:id/settings';
 test('tls: the auth route refuses a directory login on a project without TLS', async () => {
     for (const [id, tls] of [
         ['tls-absent', null],
-        ['tls-off', { enabled: false, certFile: 'C:\c.pem', keyFile: 'C:\k.pem' }]
+        ['tls-off', { enabled: false, certFile: 'C:\\c.pem', keyFile: 'C:\\k.pem' }]
     ]) {
         makeProject(id, null, tls);
         const answer = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));
@@ -437,8 +437,8 @@ test('tls: a project reached under a host name through the TLS router may be pro
         const without = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));
         assert.equal(without.body.error, 'auth_requires_tls', 'a host name alone is not TLS');
 
-        process.env.AEGIS_SITES_ROUTER_CERT = 'C:\certs\router.pem';
-        process.env.AEGIS_SITES_ROUTER_KEY = 'C:\certs\router.key';
+        process.env.AEGIS_SITES_ROUTER_CERT = 'C:\\certs\\router.pem';
+        process.env.AEGIS_SITES_ROUTER_KEY = 'C:\\certs\\router.key';
         const withRouter = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));
         assert.equal(withRouter.status, 200);
         assert.equal(storedAuth(id).method, 'ldap');
@@ -461,15 +461,4 @@ test('tls: the TLS route refuses to switch TLS off under a protected site', asyn
     assert.equal(answer.status, 409);
     assert.equal(answer.body.error, 'tls_required_by_auth');
     assert.equal(projectStore.getProject(pathsFor('acme'), id).tls.enabled, true, 'TLS is still on');
-});
-
-test('tls: create with a directory login and no TLS is refused', async () => {
-    const answer = await call('POST /api/deploy/projects', request(undefined, {
-        runId: 'authrequirestls01',
-        repoUrl: 'https://github.com/acme/site',
-        branch: 'main',
-        auth: 'ldap'
-    }));
-    assert.equal(answer.status, 400);
-    assert.equal(answer.body.error, 'auth_requires_tls');
 });
