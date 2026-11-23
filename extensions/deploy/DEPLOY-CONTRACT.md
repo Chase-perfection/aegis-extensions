@@ -1135,7 +1135,7 @@ listener asked for a protected site that has its own HTTPS port answers
 `308` to `https://<host>:<port><url>`.
 
 Cookie names are per project: `aegis_site_<slug>_<projectId>` (session) and
-`aegis_site_csrf_<slug>_<projectId>` (login form), from `siteAuth.cookieNames`.
+`aegis_csrf_<slug>_<projectId>` (login form), from `siteAuth.cookieNames`.
 A value outside `[A-Za-z0-9_-]` is replaced by the first 16 hex characters of
 its SHA-256. Every site on a machine shares one host name and cookies ignore
 the port, so a shared name let one login replace another's session. The

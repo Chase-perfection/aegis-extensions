@@ -118,11 +118,18 @@ async function visit(site, cookie, url) {
 test('cookieNames: carries slug and project id, sanitised or hashed', () => {
     const n = siteAuth.cookieNames('corp-a', 'web_1');
     assert.strictEqual(n.session, 'aegis_site_corp-a_web_1');
-    assert.strictEqual(n.csrf, 'aegis_site_csrf_corp-a_web_1');
+    assert.strictEqual(n.csrf, 'aegis_csrf_corp-a_web_1');
 
     const odd = siteAuth.cookieNames('corp-a', 'we b;x=1');
     assert.match(odd.session, /^aegis_site_[0-9a-f]{16}$/);
-    assert.match(odd.csrf, /^aegis_site_csrf_[0-9a-f]{16}$/);
+    assert.match(odd.csrf, /^aegis_csrf_[0-9a-f]{16}$/);
+
+    // A tenant called `csrf` must not make one project's session name another
+    // project's CSRF name: the two prefixes never overlap.
+    const a = siteAuth.cookieNames('csrf', 'x_y');
+    const b = siteAuth.cookieNames('x', 'y');
+    assert.notStrictEqual(a.session, b.csrf);
+    assert.ok(!a.session.startsWith('aegis_csrf_') && !a.csrf.startsWith('aegis_site_'));
 
     assert.notStrictEqual(siteAuth.cookieNames('corp-a', 'web').session,
         siteAuth.cookieNames('corp-b', 'web').session, 'two tenants with one project id differ');
@@ -205,5 +212,64 @@ test('the login POST reads the project CSRF cookie, not the old one', async () =
         assert.ok(!valueOf(setCookies(res), names.session), 'the old CSRF cookie name is not honoured');
     } finally {
         siteAuth._setVerifier(null);
+    }
+});
+
+test('a preview project gets its own cookie names, apart from its parent', async () => {
+    const parent = newSite('cookie-preview', 'web');
+    const preview = newSite('cookie-preview', 'web-preview-1');
+    const nParent = siteAuth.cookieNames(parent.slug, 'web');
+    const nPreview = siteAuth.cookieNames(preview.slug, 'web-preview-1');
+    assert.notStrictEqual(nParent.session, nPreview.session);
+    assert.notStrictEqual(nParent.csrf, nPreview.csrf);
+
+    // Through gate itself: the parent's session does not open the preview, and
+    // the preview's login form carries the preview's CSRF name.
+    const token = await signIn(parent);
+    assert.strictEqual((await visit(parent, `${nParent.session}=${token}`)).handled, false);
+    const other = await visit(preview, `${nParent.session}=${token}`);
+    assert.strictEqual(other.handled, true);
+    assert.strictEqual(other.res.statusCode, 302);
+
+    const form = fakeRes();
+    await run(fakeReq('GET', '/__aegis/login'), form, preview);
+    assert.ok(setCookies(form).some((l) => l.startsWith(nPreview.csrf + '=')));
+});
+
+test('legacy clear keeps every Set-Cookie of the answer, whatever its key case', async () => {
+    const http = require('http');
+    const site = newSite('cookie-merge', 'app');
+    const token = await signIn(site);
+    const names = siteAuth.cookieNames(site.slug, 'app');
+
+    const server = http.createServer((req, res) => {
+        // The gate reads the encryption flag from the socket; this listener is
+        // plain, so declare it encrypted the way a TLS socket would.
+        req.socket.encrypted = true;
+        Promise.resolve(siteAuth.gate(req, res, Object.assign({ viaRouterHostName: 'app.corp.local' }, site)))
+            .then((handled) => {
+                if (handled) return;
+                // What the proxy writes: the application's cookie and the
+                // release affinity cookie under a lowercase key.
+                res.writeHead(200, { 'set-cookie': ['app=1', 'aegis_release=abc; Path=/'], 'Content-Length': 0 });
+                res.end();
+            });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    try {
+        const got = await new Promise((resolve, reject) => {
+            http.get({
+                host: '127.0.0.1', port: server.address().port, path: '/',
+                headers: { cookie: `${names.session}=${token}; aegis_site=old` }
+            }, (res) => { res.resume(); res.on('end', () => resolve(res)); }).on('error', reject);
+        });
+        assert.strictEqual(got.statusCode, 200);
+        assert.strictEqual(got.headers['strict-transport-security'], 'max-age=31536000');
+        const lines = got.headers['set-cookie'] || [];
+        assert.ok(lines.includes('app=1'), `application cookie kept: ${lines}`);
+        assert.ok(lines.some((l) => l.startsWith('aegis_release=abc')), 'affinity cookie kept');
+        assert.ok(lines.some((l) => l.startsWith('aegis_site=;') && l.includes('Max-Age=0')), 'old cookie cleared');
+    } finally {
+        await new Promise((r) => server.close(r));
     }
 });

@@ -142,7 +142,7 @@ function cookieNames(slug, projectId) {
     const safe = /^[A-Za-z0-9_-]+$/.test(joined)
         ? joined
         : crypto.createHash('sha256').update(joined).digest('hex').slice(0, 16);
-    return { session: `aegis_site_${safe}`, csrf: `aegis_site_csrf_${safe}` };
+    return { session: `aegis_site_${safe}`, csrf: `aegis_csrf_${safe}` };
 }
 const SESSION_MS = 8 * 60 * 60 * 1000;
 /** Thirty minutes without a request closes a session, inside the 8 h cap. An
@@ -1074,8 +1074,19 @@ function clearLegacyCookies(req, res) {
     res.writeHead = function (status, ...rest) {
         const at = rest.findIndex((x) => x && typeof x === 'object' && !Array.isArray(x));
         if (at >= 0) {
-            const headers = Object.assign({}, rest[at]);
-            headers['Set-Cookie'] = [].concat(headers['Set-Cookie'] || [], clears);
+            // Upstream headers arrive lowercase, ours capitalised. Node applies
+            // them one key at a time once a header was set with `setHeader`
+            // (HSTS), so two spellings of Set-Cookie replace each other and the
+            // application's cookies would be lost. Fold every spelling, and any
+            // already set on the response, into one key.
+            const headers = {};
+            const cookies = [];
+            for (const key of Object.keys(rest[at])) {
+                if (/^set-cookie$/i.test(key)) cookies.push(...[].concat(rest[at][key]));
+                else headers[key] = rest[at][key];
+            }
+            const had = typeof res.getHeader === 'function' ? res.getHeader('set-cookie') : undefined;
+            headers['Set-Cookie'] = [].concat(had || [], cookies, clears);
             rest[at] = headers;
         } else if (typeof res.setHeader === 'function') {
             const had = typeof res.getHeader === 'function' ? res.getHeader('Set-Cookie') : undefined;

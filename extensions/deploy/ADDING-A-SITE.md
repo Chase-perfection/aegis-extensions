@@ -180,7 +180,7 @@ many attempts", has the details.
 
 Cookies are scoped by host and not by port. Every protected project therefore
 has its own cookie names, `aegis_site_<slug>_<projectId>` for the session and
-`aegis_site_csrf_<slug>_<projectId>` for the login form, so logging into one
+`aegis_csrf_<slug>_<projectId>` for the login form, so logging into one
 site leaves the others signed in. A slug or id with a character outside
 `A-Z a-z 0-9 _ -` is replaced in the name by 16 hex characters of its SHA-256.
 The session record also carries the slug and project id and is rejected when
