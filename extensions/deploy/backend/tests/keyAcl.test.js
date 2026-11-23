@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const keyAcl = require('../keyAcl');
 
@@ -87,7 +88,31 @@ test('real icacls on a temp file works for the current user (Windows)', { skip: 
         fs.writeFileSync(f, 'k');
         keyAcl.protect(f);
         assert.strictEqual(fs.readFileSync(f, 'utf8'), 'k');
+
+        // Read the ACL back. Counted, not matched by principal name: the
+        // names are localised.
+        const sys32 = path.join(process.env.SystemRoot, 'System32');
+        const acl = execFileSync(path.join(sys32, 'icacls.exe'), [f], { encoding: 'utf8' });
+        assert.ok(!acl.includes('(I)'), 'inheritance is off');
+        const who = execFileSync(path.join(sys32, 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' });
+        const expected = who.includes('"S-1-5-18"') ? 1 : 2;
+        assert.strictEqual((acl.match(/:\(/g) || []).length, expected);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('protect refuses to look tools up on PATH when SystemRoot is unset', () => {
+    const saved = { SystemRoot: process.env.SystemRoot, windir: process.env.windir };
+    try {
+        delete process.env.SystemRoot;
+        delete process.env.windir;
+        // On Windows env names are case-insensitive; deleting both is enough.
+        assert.throws(
+            () => keyAcl.protect('C:\\x\\machine.key', { platform: 'win32' }),
+            (e) => e.code === 'key_acl_failed' && /SystemRoot/.test(e.message)
+        );
+    } finally {
+        for (const [k, v] of Object.entries(saved)) if (v !== undefined) process.env[k] = v;
     }
 });

@@ -40,6 +40,10 @@ still only cloned and served, exactly as before.
 | A free port from 3081 up | `AEGIS_SITES_PORT_BASE` moves the range, 100 ports wide |
 | Reachable from other machines | `AEGIS_DEPLOY_FIREWALL=1`, written for you by **Finish setup on this host** on the Deploy card, and the service running elevated. Without it a site binds `0.0.0.0` and answers on the machine itself, while the packets from anywhere else are dropped before they reach it, which a browser reports as a timeout rather than as a refusal. See **Reaching a site from another machine** |
 
+### The secrets key
+
+`machine.key`, beside `machine.json` in the Deploy data folder, decrypts every secret this extension stores. At start it is restricted by SID to SYSTEM and the account the service runs as; if that cannot be done, secret operations fail closed and the log says why. A key created by an earlier release may have been readable by other local users before this. Rotating it (delete the key, restart) means entering again every secret it protects: the directory bind password, project environment values, the storage password and the GitHub App key.
+
 ### Reaching a site from another machine
 
 A site listens on `0.0.0.0`, which is what makes it reachable, and on Windows

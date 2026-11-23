@@ -678,6 +678,14 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
     // gated on the host opt-in: an install that never turns Deploy on never opens
     // the port and never calls GitHub on a timer.
     if (machineStore.isEnabled()) {
+        // Restrict the secrets key now, so a host that cannot is reported at boot.
+        // Not fatal: the backend keeps running and every secret operation of this
+        // extension then fails closed (see `machineStore.machineKey`).
+        try {
+            machineStore.ensureKeyProtected();
+        } catch (e) {
+            console.error(`[Deploy] secrets key not protected: ${e.message}`);
+        }
         // Before anything reads a registration. A GitHub App used to be stored
         // once per machine and is now stored per tenant; this moves an existing
         // one to its owner when the host has a single tenant, and sets it aside

@@ -31,7 +31,8 @@ const SYSTEM_SID = 'S-1-5-18';
  */
 function defaultRun(cmd, args) {
     const root = process.env.SystemRoot || process.env.windir;
-    const exe = root ? path.join(root, 'System32', `${cmd}.exe`) : cmd;
+    if (!root) throw fail(`cannot locate ${cmd}.exe: SystemRoot is not set`);
+    const exe = path.join(root, 'System32', `${cmd}.exe`);
     return execFileSync(exe, args, { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 

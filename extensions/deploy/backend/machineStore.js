@@ -40,8 +40,15 @@ const path = require('path');
 const crypto = require('crypto');
 const keyAcl = require('./keyAcl');
 
-/** Key files whose ACL this process has already restricted. */
+/**
+ * Key files whose ACL this process has already restricted. Keyed by path: a key
+ * deleted and recreated in-process would not be restricted again (nothing does
+ * that today).
+ */
 const aclApplied = new Set();
+/** Failed attempts by key file, so calls fail fast instead of respawning icacls. */
+const aclFailed = new Map();
+const ACL_RETRY_MS = 60000;
 
 const ALGO = 'aes-256-gcm';
 
@@ -84,24 +91,61 @@ function keyFile() { return path.join(storeDir(), 'machine.key'); }
 function machineKey() {
     fs.mkdirSync(storeDir(), { recursive: true });
     const file = keyFile();
-    let created = null;
+    if (aclApplied.has(file)) return readKey(file);
+
+    const failed = aclFailed.get(file);
+    if (failed && Date.now() - failed.at < ACL_RETRY_MS) throw failed.error;
+
+    // A new key is created EMPTY, restricted, and only then filled. Windows
+    // checks access when a handle is opened, so bytes written under the
+    // inherited ACL would stay readable to a local user who opened the file
+    // before the ACL changed. An existing key (an earlier release's) is
+    // restricted the same way, once per process, before the first read.
+    let fresh = false;
     try {
-        const fd = fs.openSync(file, 'wx', 0o600);
-        created = crypto.randomBytes(32);
-        fs.writeSync(fd, created);
-        fs.closeSync(fd);
+        fs.closeSync(fs.openSync(file, 'wx', 0o600));
+        fresh = true;
     } catch (e) {
         if (e.code !== 'EEXIST') throw e;
     }
-    // The ACL is applied once per process and per key file, before the first
-    // read, to a new key and to one written by an earlier release alike. A
-    // failure throws and is not cached, so no caller gets a key that is still
-    // readable by every local user, and the next call tries again.
-    if (!aclApplied.has(file)) {
+    try {
         keyAcl.protect(file);
-        aclApplied.add(file);
+    } catch (e) {
+        // No unprotected key is left behind: an empty file we made is removed.
+        if (fresh) { try { fs.unlinkSync(file); } catch (_) { /* best effort */ } }
+        aclFailed.set(file, { at: Date.now(), error: e });
+        console.error(`[Deploy] cannot restrict ${file} to SYSTEM and the service account, so no secret can be `
+            + `encrypted or read until this is fixed: ${e.stderr ? String(e.stderr).trim() : e.message}`);
+        throw e;
     }
-    return created || fs.readFileSync(file);
+    aclFailed.delete(file);
+    if (fresh) fs.writeFileSync(file, crypto.randomBytes(KEY_BYTES));
+    aclApplied.add(file);
+    return readKey(file);
+}
+
+const KEY_BYTES = 32;
+
+/**
+ * Reads the key. The loser of a first-boot race can see the file between its
+ * creation and the winner's write, so only exactly 32 bytes is accepted; any
+ * other size is waited on briefly (bounded) and then refused.
+ */
+function readKey(file) {
+    for (let i = 0; i < 20; i += 1) {
+        const key = fs.readFileSync(file);
+        if (key.length === KEY_BYTES) return key;
+        if (i < 19) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+    throw new Error(`${file} is not a ${KEY_BYTES}-byte key`);
+}
+
+/**
+ * Creates and restricts the key now, so a host that cannot apply the ACL is
+ * reported at boot and not at the first secret. Throws `key_acl_failed`.
+ */
+function ensureKeyProtected() {
+    machineKey();
 }
 
 /**
@@ -130,9 +174,12 @@ function encrypt(plaintext) {
  * behaviour then is "GitHub is not connected" rather than a boot loop.
  */
 function decrypt(packed) {
+    // The key comes first and outside the catch: a host that cannot restrict
+    // it must say so, not read as "not connected".
+    const key = machineKey();
     try {
         const [ivB64, tagB64, dataB64] = String(packed).split('.');
-        const d = crypto.createDecipheriv(ALGO, machineKey(), Buffer.from(ivB64, 'base64'));
+        const d = crypto.createDecipheriv(ALGO, key, Buffer.from(ivB64, 'base64'));
         d.setAuthTag(Buffer.from(tagB64, 'base64'));
         return Buffer.concat([d.update(Buffer.from(dataB64, 'base64')), d.final()]).toString('utf8');
     } catch (_) {
@@ -426,6 +473,6 @@ module.exports = {
     getGitHubApp, saveGitHubApp, clearGitHubApp, forgottenGitHubApp, migrateLegacyGitHubApp, publicStatus,
     installTag,
     saveBuildAccountSecret, getBuildAccountSecret,
-    encrypt, decrypt,
+    encrypt, decrypt, ensureKeyProtected,
     storeDir, storeFile, SLUG_RE
 };

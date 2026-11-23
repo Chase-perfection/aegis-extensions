@@ -220,9 +220,15 @@ test('machineKey refuses to return a key when protect fails, with no fallback re
         };
         const store = require('../machineStore');
         assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_acl_failed');
-        // Not cached as protected: once protect works the next call succeeds.
+        // Once the failure window has passed and protect works, the next call succeeds.
         keyAcl.protect = () => {};
-        assert.ok(store.decrypt(store.encrypt('x')) === 'x');
+        const realNow = Date.now;
+        Date.now = () => realNow() + 61000;
+        try {
+            assert.ok(store.decrypt(store.encrypt('x')) === 'x');
+        } finally {
+            Date.now = realNow;
+        }
     } finally {
         keyAcl.protect = realProtect;
         cleanupTestContext(ctx);
@@ -246,4 +252,93 @@ test('machineKey protects an existing key once, before the first read', () => {
         keyAcl.protect = realProtect;
         cleanupTestContext(ctx);
     }
+});
+
+function withStubbedProtect(fn, impl) {
+    const keyAcl = require('../keyAcl');
+    const realProtect = keyAcl.protect;
+    const realError = console.error;
+    const ctx = createTestContext();
+    const logged = [];
+    console.error = (...a) => logged.push(a.join(' '));
+    keyAcl.protect = impl;
+    try {
+        return fn(require('../machineStore'), ctx, logged);
+    } finally {
+        keyAcl.protect = realProtect;
+        console.error = realError;
+        cleanupTestContext(ctx);
+    }
+}
+
+function aclFailure(msg = 'Access is denied.') {
+    const e = new Error(`icacls failed: ${msg}`);
+    e.code = 'key_acl_failed';
+    e.stderr = msg;
+    return e;
+}
+
+test('a new key is protected while still empty, then written', () => {
+    const seen = [];
+    withStubbedProtect((store, ctx) => {
+        store.encrypt('x');
+        const keyPath = path.join(ctx.tempDir, 'deploy', 'machine.key');
+        assert.deepStrictEqual(seen, [0]);
+        assert.strictEqual(fs.statSync(keyPath).size, 32);
+    }, (f) => { seen.push(fs.statSync(f).size); });
+});
+
+test('a new key whose protect fails is deleted, not left behind', () => {
+    withStubbedProtect((store, ctx) => {
+        assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_acl_failed');
+        assert.ok(!fs.existsSync(path.join(ctx.tempDir, 'deploy', 'machine.key')));
+    }, () => { throw aclFailure(); });
+});
+
+test('an existing key that is not exactly 32 bytes is refused after a bounded wait', () => {
+    withStubbedProtect((store, ctx) => {
+        fs.mkdirSync(path.join(ctx.tempDir, 'deploy'), { recursive: true });
+        fs.writeFileSync(path.join(ctx.tempDir, 'deploy', 'machine.key'), Buffer.alloc(5));
+        const t0 = Date.now();
+        assert.throws(() => store.encrypt('x'), /machine\.key/);
+        assert.ok(Date.now() - t0 < 5000, 'bounded');
+    }, () => {});
+});
+
+test('decrypt rethrows key_acl_failed instead of answering null', () => {
+    withStubbedProtect((store) => {
+        assert.throws(() => store.decrypt('aaa.bbb.ccc'), (e) => e.code === 'key_acl_failed');
+    }, () => { throw aclFailure(); });
+});
+
+test('a protect failure is cached for 60 s, logged once, and retried after', () => {
+    let calls = 0;
+    const realNow = Date.now;
+    withStubbedProtect((store, ctx, logged) => {
+        const t = realNow();
+        try {
+            Date.now = () => t;
+            assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_acl_failed');
+            Date.now = () => t + 30000;
+            assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_acl_failed');
+            assert.strictEqual(calls, 1, 'no second spawn inside the window');
+            assert.strictEqual(logged.length, 1);
+            assert.ok(/machine\.key/.test(logged[0]) && /Access is denied/.test(logged[0]));
+            Date.now = () => t + 61000;
+            assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_acl_failed');
+            assert.strictEqual(calls, 2, 'retried after the window');
+            assert.strictEqual(logged.length, 2);
+        } finally {
+            Date.now = realNow;
+        }
+    }, () => { calls += 1; throw aclFailure(); });
+});
+
+test('ensureKeyProtected creates and protects the key', () => {
+    const calls = [];
+    withStubbedProtect((store, ctx) => {
+        store.ensureKeyProtected();
+        assert.strictEqual(calls.length, 1);
+        assert.strictEqual(fs.statSync(path.join(ctx.tempDir, 'deploy', 'machine.key')).size, 32);
+    }, (f) => calls.push(f));
 });
