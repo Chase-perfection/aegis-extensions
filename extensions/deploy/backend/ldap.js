@@ -263,15 +263,6 @@ function escapeFilter(value) {
 }
 
 /**
- * RFC 4514 escaping of a relative distinguished name value.
- *
- * Used on the operator's input before it is substituted into `userDnTemplate`,
- * so a template like `CN={username},OU=Users,DC=corp,DC=local` cannot be steered
- * to another subtree by a username containing a comma. For the other common
- * template shape, a userPrincipalName like `{username}@corp.local`, no character
- * of a legal logon name is escaped and this is the identity function.
- */
-/**
  * Whether a `userDnTemplate` is a distinguished name (`CN={username},OU=...`)
  * rather than a UPN or `DOMAIN\{username}`: it starts with `attribute=`. Only
  * a DN names an entry that can be read directly.
@@ -280,6 +271,15 @@ function isDnTemplate(template) {
     return /^\s*[A-Za-z][A-Za-z0-9-]*\s*=/.test(String(template || ''));
 }
 
+/**
+ * RFC 4514 escaping of a relative distinguished name value.
+ *
+ * Used on the operator's input before it is substituted into `userDnTemplate`,
+ * so a template like `CN={username},OU=Users,DC=corp,DC=local` cannot be steered
+ * to another subtree by a username containing a comma. For the other common
+ * template shape, a userPrincipalName like `{username}@corp.local`, no character
+ * of a legal logon name is escaped and this is the identity function.
+ */
 function escapeDn(value) {
     const s = String(value === undefined || value === null ? '' : value);
     let out = '';

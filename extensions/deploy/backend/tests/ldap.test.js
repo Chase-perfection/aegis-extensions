@@ -165,16 +165,18 @@ function assertBindRequest(op, seen) {
     return seen[seen.length - 1];
 }
 
-function assertSearchRequest(op, seen) {
+function assertSearchRequest(op, seen, scopeWanted) {
     assert.strictEqual(op.tag, 0x63, 'SearchRequest is [APPLICATION 3]');
     const parts = tlvChildren(op.value);
     assert.strictEqual(parts.length, 8, 'SearchRequest carries eight fields');
     assert.strictEqual(parts[0].tag, 0x04, 'baseObject is an OCTET STRING');
     assert.strictEqual(parts[1].tag, 0x0a, 'scope is an ENUMERATED');
     // wholeSubtree for every search but one: reading a templated DN is a
-    // baseObject read of that entry, which is what the template names.
+    // baseObject read of that entry, and only a fake started with `scope: 0`
+    // accepts it. Pinned per fake, so a subtree path cannot drift to base.
     const scope = readInt(parts[1].value);
-    assert.ok(scope === 2 || scope === 0, 'scope is wholeSubtree or baseObject');
+    const wanted = scopeWanted === undefined ? 2 : scopeWanted;
+    assert.strictEqual(scope, wanted, wanted === 0 ? 'scope is baseObject' : 'scope is wholeSubtree');
     assert.strictEqual(parts[2].tag, 0x0a, 'derefAliases is an ENUMERATED');
     assert.strictEqual(parts[3].tag, 0x02, 'sizeLimit is an INTEGER');
     assert.strictEqual(parts[4].tag, 0x02, 'timeLimit is an INTEGER');
@@ -306,7 +308,7 @@ function startFake(options) {
         }
 
         if (op.tag === 0x63) {
-            const seenSearch = assertSearchRequest(op, state.seen);
+            const seenSearch = assertSearchRequest(op, state.seen, opts.scope);
             if (opts.silentSearch) return;
             // `onSearch` exists because resolving nested groups issues three
             // searches on one connection -- the user, the group closure, the
@@ -1551,7 +1553,7 @@ test('lookup: a search the directory refuses is ldap_search_denied, not a missin
 });
 
 test('lookup: a DN template is read with a base-scope search of that entry', async (t) => {
-    const fake = await startFake({ entries: [userEntry()] });
+    const fake = await startFake({ scope: 0, entries: [userEntry()] });
     t.after(() => fake.close());
 
     const out = await ldap.lookup(Object.assign({ url: fake.url }, TEMPLATE_CONFIG), 'Alice Martin');
@@ -1564,18 +1566,20 @@ test('lookup: a DN template is read with a base-scope search of that entry', asy
 });
 
 test('lookup: a DN template whose entry is gone is ldap_user_not_found', async (t) => {
-    const fake = await startFake({ onSearch: () => ({ resultCode: 32, diagnostic: 'no such object' }) });
+    const fake = await startFake({ scope: 0, onSearch: () => ({ resultCode: 32, diagnostic: 'no such object' }) });
     t.after(() => fake.close());
 
     const out = await ldap.lookup(Object.assign({ url: fake.url }, TEMPLATE_CONFIG), 'Alice Martin');
+    assert.deepStrictEqual(fake.errors, []);
     assert.deepStrictEqual(out, { ok: false, error: 'ldap_user_not_found' });
 });
 
 test('lookup: a DN template read the directory refuses is ldap_search_denied', async (t) => {
-    const fake = await startFake({ onSearch: () => ({ resultCode: 1, diagnostic: 'operations error' }) });
+    const fake = await startFake({ scope: 0, onSearch: () => ({ resultCode: 1, diagnostic: 'operations error' }) });
     t.after(() => fake.close());
 
     const out = await ldap.lookup(Object.assign({ url: fake.url }, TEMPLATE_CONFIG), 'Alice Martin');
+    assert.deepStrictEqual(fake.errors, []);
     assert.deepStrictEqual(out, { ok: false, error: 'ldap_search_denied' });
 });
 

@@ -1372,18 +1372,24 @@ What the re-check of a write can conclude, and what follows:
 |---|---|---|
 | still allowed | proxied | kept, group list refreshed |
 | out of every allowed group | 403 | dropped |
-| the account does not exist | 403 | dropped |
+| the account is not found | 403 | dropped |
 | the search is refused (operationsError, insufficientAccess) | 503 | kept |
 | nothing, or an error | 503 | kept |
 
-"Does not exist" is only concluded when it is certain. With a service account
-and no template, the subtree search must succeed and find nobody. With a DN
-template (`CN={username},OU=Users,...`), the templated DN is read with a
-base-scope search, and the controller must answer noSuchObject. A refused search
-is read before the empty result it arrives with, so it is never mistaken for a
-missing account. With a non-DN template (`{username}@corp.local`), a filter
-search that finds nobody proves nothing about the account, and the write gets
-503.
+"Not found" means: with a service account and no template, the subtree search
+succeeded and found nobody; with a DN template (`CN={username},OU=Users,...`),
+the templated DN was read with a base-scope search and the controller answered
+noSuchObject. A refused search is read before the empty result it arrives with,
+so a refusal is never taken for a missing account. With a non-DN template
+(`{username}@corp.local`), a filter search that finds nobody proves nothing
+about the account, and the write gets 503.
+
+An account the bind cannot read looks the same as a deleted one. On Active
+Directory, a service account without read rights on user entries gets the same
+empty answer as for an account that no longer exists. Every write is then
+refused with 403 and the session dropped; the person can sign in again, and the
+next write is refused again, until the service account can read user entries.
+The log line says "account not found or not readable by the directory bind".
 
 The write check is skipped in one case: a directory the client cannot search at
 all, which is a bind DN saved without its password. A service account with its

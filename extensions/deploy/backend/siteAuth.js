@@ -1433,7 +1433,7 @@ function recheckWrite(session, token, ctx, config) {
     return revalidate(session, token, ctx, config).then((outcome) => {
         if (outcome === 'missing') {
             sessions.delete(token);
-            console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} (account not found in the directory)`);
+            console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} (account not found or not readable by the directory bind)`);
             return 'refused';
         }
         return sessions.get(token) === session ? outcome : 'refused';
