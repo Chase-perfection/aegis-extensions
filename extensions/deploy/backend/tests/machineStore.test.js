@@ -254,21 +254,29 @@ test('machineKey protects an existing key once, before the first read', () => {
     }
 });
 
-function withStubbedProtect(fn, impl) {
+function withStubbedProtect(fn, impl, dirImpl = () => {}) {
     const keyAcl = require('../keyAcl');
     const realProtect = keyAcl.protect;
+    const realProtectDir = keyAcl.protectDir;
     const realError = console.error;
     const ctx = createTestContext();
     const logged = [];
     console.error = (...a) => logged.push(a.join(' '));
     keyAcl.protect = impl;
+    keyAcl.protectDir = dirImpl;
     try {
         return fn(require('../machineStore'), ctx, logged);
     } finally {
         keyAcl.protect = realProtect;
+        keyAcl.protectDir = realProtectDir;
         console.error = realError;
         cleanupTestContext(ctx);
     }
+}
+
+function stagingDirs(ctx) {
+    const d = path.join(ctx.tempDir, 'deploy');
+    return fs.existsSync(d) ? fs.readdirSync(d).filter((n) => n.startsWith('.machine.key.')) : [];
 }
 
 function aclFailure(msg = 'Access is denied.') {
@@ -278,30 +286,59 @@ function aclFailure(msg = 'Access is denied.') {
     return e;
 }
 
-test('a new key is protected while still empty, then written', () => {
-    const seen = [];
+test('a new key is staged in a restricted directory, protected there, then moved in whole', () => {
+    const events = [];
     withStubbedProtect((store, ctx) => {
         store.encrypt('x');
         const keyPath = path.join(ctx.tempDir, 'deploy', 'machine.key');
-        assert.deepStrictEqual(seen, [0]);
+        assert.deepStrictEqual(events.map((e) => e[0]), ['dir', 'file']);
+        assert.deepStrictEqual(events[0].slice(1), [true, 0], 'dir restricted before any file exists');
+        assert.deepStrictEqual(events[1].slice(1), [true, 32], 'file protected inside the staging dir, with its bytes');
         assert.strictEqual(fs.statSync(keyPath).size, 32);
-    }, (f) => { seen.push(fs.statSync(f).size); });
+        assert.deepStrictEqual(stagingDirs(ctx), [], 'staging removed on success');
+    }, (f) => { events.push(['file', path.basename(path.dirname(f)).startsWith('.machine.key.'), fs.statSync(f).size]); },
+    (d) => { events.push(['dir', path.basename(d).startsWith('.machine.key.'), fs.readdirSync(d).length]); });
 });
 
-test('a new key whose protect fails is deleted, not left behind', () => {
+test('a new key whose protect fails leaves no key and no staging directory', () => {
     withStubbedProtect((store, ctx) => {
         assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_acl_failed');
         assert.ok(!fs.existsSync(path.join(ctx.tempDir, 'deploy', 'machine.key')));
+        assert.deepStrictEqual(stagingDirs(ctx), []);
     }, () => { throw aclFailure(); });
 });
 
-test('an existing key that is not exactly 32 bytes is refused after a bounded wait', () => {
+test('a new key whose directory restriction fails leaves nothing behind', () => {
+    withStubbedProtect((store, ctx) => {
+        assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_acl_failed');
+        assert.ok(!fs.existsSync(path.join(ctx.tempDir, 'deploy', 'machine.key')));
+        assert.deepStrictEqual(stagingDirs(ctx), []);
+    }, () => {}, () => { throw aclFailure(); });
+});
+
+test('a lost race keeps the winner\'s key and does not overwrite it', () => {
+    const winner = Buffer.alloc(32, 9);
+    withStubbedProtect((store, ctx) => {
+        const keyPath = path.join(ctx.tempDir, 'deploy', 'machine.key');
+        const packed = store.encrypt('x');
+        assert.ok(fs.readFileSync(keyPath).equals(winner));
+        assert.strictEqual(store.decrypt(packed), 'x');
+        assert.deepStrictEqual(stagingDirs(ctx), []);
+    }, (f) => {
+        // Another process links its own key in while ours is being protected.
+        const final = path.join(path.dirname(path.dirname(f)), 'machine.key');
+        if (!fs.existsSync(final) && path.basename(path.dirname(f)).startsWith('.machine.key.')) fs.writeFileSync(final, winner);
+    });
+});
+
+test('a final key that is not exactly 32 bytes throws key_invalid at once, without a retry delay', () => {
     withStubbedProtect((store, ctx) => {
         fs.mkdirSync(path.join(ctx.tempDir, 'deploy'), { recursive: true });
         fs.writeFileSync(path.join(ctx.tempDir, 'deploy', 'machine.key'), Buffer.alloc(5));
         const t0 = Date.now();
-        assert.throws(() => store.encrypt('x'), /machine\.key/);
-        assert.ok(Date.now() - t0 < 5000, 'bounded');
+        assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_invalid' && /machine\.key/.test(e.message));
+        assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_invalid');
+        assert.ok(Date.now() - t0 < 200, 'no busy retry');
     }, () => {});
 });
 
@@ -332,6 +369,23 @@ test('a protect failure is cached for 60 s, logged once, and retried after', () 
             Date.now = realNow;
         }
     }, () => { calls += 1; throw aclFailure(); });
+});
+
+test('real icacls: the linked key keeps its own restricted ACL (Windows)', { skip: process.platform !== 'win32' }, () => {
+    const { execFileSync } = require('child_process');
+    const ctx = createTestContext();
+    try {
+        const store = require('../machineStore');
+        store.ensureKeyProtected();
+        const keyPath = path.join(ctx.tempDir, 'deploy', 'machine.key');
+        const acl = execFileSync(path.join(process.env.SystemRoot, 'System32', 'icacls.exe'), [keyPath], { encoding: 'utf8' });
+        assert.ok(!acl.includes('(I)'), 'no inherited entry');
+        assert.ok((acl.match(/:\(/g) || []).length <= 2);
+        assert.strictEqual(fs.statSync(keyPath).size, 32);
+        assert.deepStrictEqual(stagingDirs(ctx), []);
+    } finally {
+        cleanupTestContext(ctx);
+    }
 });
 
 test('ensureKeyProtected creates and protects the key', () => {

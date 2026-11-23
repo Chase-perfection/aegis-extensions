@@ -83,10 +83,27 @@ function storeFile() { return path.join(storeDir(), 'machine.json'); }
 function keyFile() { return path.join(storeDir(), 'machine.key'); }
 
 /**
- * The encryption key, created on first use.
+ * The encryption key, created on first use and restricted before anyone could
+ * read it.
  *
- * `wx` so two workers racing on first boot cannot both write a key and leave
- * one of them unable to read what the other encrypted. The loser re-reads.
+ * A new key never exists under a wider ACL than its final one. Windows checks
+ * access when a handle is opened, so a key written first and restricted after
+ * could be read by a local user who had opened the file in between. Instead it
+ * is built in a staging directory beside it: the directory is restricted before
+ * any file exists, the 32 bytes are written into a file that inherits that ACL,
+ * the file gets its own explicit ACL (no inheritance, so it keeps it after the
+ * move), and it is then hard-linked to `machine.key`. `linkSync` fails with
+ * EEXIST when the target exists, which is the no-clobber step that works on
+ * NTFS (`renameSync` would replace it). So the final name only ever appears
+ * complete, a crash leaves nothing but a staging directory that is removed in
+ * `finally`, and of two processes racing on first boot the loser discards its
+ * key and reads the winner's.
+ *
+ * A key left by an earlier release is restricted in place, once per process,
+ * before the first read.
+ *
+ * A failure to restrict throws `key_acl_failed` and is remembered for a minute
+ * (see `aclFailed`); a final key of the wrong size throws `key_invalid`.
  */
 function machineKey() {
     fs.mkdirSync(storeDir(), { recursive: true });
@@ -96,48 +113,72 @@ function machineKey() {
     const failed = aclFailed.get(file);
     if (failed && Date.now() - failed.at < ACL_RETRY_MS) throw failed.error;
 
-    // A new key is created EMPTY, restricted, and only then filled. Windows
-    // checks access when a handle is opened, so bytes written under the
-    // inherited ACL would stay readable to a local user who opened the file
-    // before the ACL changed. An existing key (an earlier release's) is
-    // restricted the same way, once per process, before the first read.
-    let fresh = false;
+    let raced = false;
     try {
-        fs.closeSync(fs.openSync(file, 'wx', 0o600));
-        fresh = true;
-    } catch (e) {
-        if (e.code !== 'EEXIST') throw e;
-    }
-    try {
+        if (!fs.existsSync(file)) {
+            if (stageNewKey(file)) {
+                aclFailed.delete(file);
+                aclApplied.add(file);
+                return readKey(file);
+            }
+            raced = true;
+        }
         keyAcl.protect(file);
     } catch (e) {
-        // No unprotected key is left behind: an empty file we made is removed.
-        if (fresh) { try { fs.unlinkSync(file); } catch (_) { /* best effort */ } }
-        aclFailed.set(file, { at: Date.now(), error: e });
-        console.error(`[Deploy] cannot restrict ${file} to SYSTEM and the service account, so no secret can be `
-            + `encrypted or read until this is fixed: ${e.stderr ? String(e.stderr).trim() : e.message}`);
+        if (e.code === 'key_acl_failed') {
+            aclFailed.set(file, { at: Date.now(), error: e });
+            console.error(`[Deploy] cannot restrict ${file} to SYSTEM and the service account, so no secret can be `
+                + `encrypted or read until this is fixed: ${e.stderr ? String(e.stderr).trim() : e.message}`);
+        }
         throw e;
     }
     aclFailed.delete(file);
-    if (fresh) fs.writeFileSync(file, crypto.randomBytes(KEY_BYTES));
     aclApplied.add(file);
-    return readKey(file);
+    // Bounded retry only right after losing the race, when the winner may
+    // still be settling; a key already in place is read once.
+    return readKey(file, raced);
+}
+
+/**
+ * Builds a restricted key and links it to `file`. True when this call put it
+ * there, false when `file` appeared first (another process won).
+ */
+function stageNewKey(file) {
+    const stage = fs.mkdtempSync(path.join(path.dirname(file), '.machine.key.'));
+    try {
+        keyAcl.protectDir(stage);
+        const staged = path.join(stage, 'key');
+        fs.writeFileSync(staged, crypto.randomBytes(KEY_BYTES), { flag: 'wx', mode: 0o600 });
+        keyAcl.protect(staged);
+        try {
+            fs.linkSync(staged, file);
+        } catch (e) {
+            if (e.code === 'EEXIST') return false;
+            throw e;
+        }
+        return true;
+    } finally {
+        try { fs.rmSync(stage, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+    }
 }
 
 const KEY_BYTES = 32;
 
 /**
- * Reads the key. The loser of a first-boot race can see the file between its
- * creation and the winner's write, so only exactly 32 bytes is accepted; any
- * other size is waited on briefly (bounded) and then refused.
+ * Reads the key; anything but exactly 32 bytes throws `key_invalid` at once.
+ * With `settle`, a short bounded retry (20 x 25 ms) covers the moment after
+ * losing a first-boot race.
  */
-function readKey(file) {
-    for (let i = 0; i < 20; i += 1) {
+function readKey(file, settle = false) {
+    const tries = settle ? 20 : 1;
+    for (let i = 0; i < tries; i += 1) {
         const key = fs.readFileSync(file);
         if (key.length === KEY_BYTES) return key;
-        if (i < 19) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+        if (i < tries - 1) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
     }
-    throw new Error(`${file} is not a ${KEY_BYTES}-byte key`);
+    const e = new Error(`${file} is not a ${KEY_BYTES}-byte key`);
+    e.code = 'key_invalid';
+    throw e;
 }
 
 /**
@@ -168,14 +209,17 @@ function encrypt(plaintext) {
 }
 
 /**
- * Returns null rather than throwing on a value that will not decrypt.
+ * Returns null on a value that will not decrypt (malformed, or sealed under a
+ * different key). A rotated key file makes every stored secret unreadable, and
+ * the useful behaviour then is "GitHub is not connected" rather than a boot loop.
  *
- * A rotated key file makes every stored secret unreadable, and the useful
- * behaviour then is "GitHub is not connected" rather than a boot loop.
+ * Throws when the key itself is unusable: `key_acl_failed` when it cannot be
+ * restricted, `key_invalid` when the file is not 32 bytes. Those are host faults,
+ * not bad input, and answering null would hide them as "not connected".
  */
 function decrypt(packed) {
-    // The key comes first and outside the catch: a host that cannot restrict
-    // it must say so, not read as "not connected".
+    // The key is fetched before, and outside, the try: its errors must reach the
+    // caller and not be turned into null by the catch below.
     const key = machineKey();
     try {
         const [ivB64, tagB64, dataB64] = String(packed).split('.');

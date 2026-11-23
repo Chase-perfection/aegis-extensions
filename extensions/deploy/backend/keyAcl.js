@@ -66,19 +66,32 @@ function currentSid(run) {
  * Restricts `file` to SYSTEM and the current process user. Throws an Error with
  * `code = 'key_acl_failed'` when it cannot. Off Windows: chmod 0600 only.
  */
-function protect(file, { run = defaultRun, platform = process.platform } = {}) {
+function protect(file, opts = {}) {
+    restrict(file, '', 0o600, opts);
+}
+
+/**
+ * Same for a directory, with the grants inherited by what is created inside it
+ * (`(OI)(CI)`), so a file made there never exists under a wider ACL. Off
+ * Windows: chmod 0700.
+ */
+function protectDir(dir, opts = {}) {
+    restrict(dir, '(OI)(CI)', 0o700, opts);
+}
+
+function restrict(target, inherit, mode, { run = defaultRun, platform = process.platform } = {}) {
     if (platform !== 'win32') {
-        fs.chmodSync(file, 0o600);
+        fs.chmodSync(target, mode);
         return;
     }
     const sid = currentSid(run);
-    const grants = [`*${SYSTEM_SID}:F`];
-    if (sid !== SYSTEM_SID) grants.push(`*${sid}:F`);
+    const grants = [`*${SYSTEM_SID}:${inherit}F`];
+    if (sid !== SYSTEM_SID) grants.push(`*${sid}:${inherit}F`);
     try {
-        run('icacls', [file, '/inheritance:r', '/grant:r', ...grants]);
+        run('icacls', [target, '/inheritance:r', '/grant:r', ...grants]);
     } catch (e) {
-        throw fail(`icacls failed on ${file}`, stderrOf(e));
+        throw fail(`icacls failed on ${target}`, stderrOf(e));
     }
 }
 
-module.exports = { protect, SYSTEM_SID };
+module.exports = { protect, protectDir, SYSTEM_SID };

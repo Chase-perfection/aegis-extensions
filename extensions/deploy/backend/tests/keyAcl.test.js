@@ -67,6 +67,23 @@ test('protect throws key_acl_failed when the SID cannot be read', () => {
     );
 });
 
+test('protectDir grants SYSTEM and the service SID with inheritance to children, inheritance removed', () => {
+    const { run, calls } = fakeRun();
+    keyAcl.protectDir('C:\\x\\.machine.key.ab12', { run, platform: 'win32' });
+    assert.deepStrictEqual(calls.find((c) => c[0] === 'icacls'), ['icacls', [
+        'C:\\x\\.machine.key.ab12', '/inheritance:r', '/grant:r',
+        '*S-1-5-18:(OI)(CI)F', '*S-1-5-21-111-222-333-1001:(OI)(CI)F'
+    ]]);
+});
+
+test('protectDir throws key_acl_failed with the tool stderr on failure', () => {
+    const { run } = fakeRun({ failIcacls: true });
+    assert.throws(
+        () => keyAcl.protectDir('C:\\x\\d', { run, platform: 'win32' }),
+        (e) => e.code === 'key_acl_failed' && /Access is denied/.test(e.message)
+    );
+});
+
 test('protect is skipped off Windows: chmod 0600 only', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-keyacl-'));
     try {
