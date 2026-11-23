@@ -5483,8 +5483,107 @@
         wrap.appendChild(apply);
         wrap.appendChild(note);
 
+        // Saved state, not the form: sessions exist only once a login method
+        // has been applied, and only an administrator may read them.
+        if (isAdmin && current !== 'none') wrap.appendChild(buildSessionsBlock(site));
+
         appendTlsBlock(wrap, site, methodSelect);
         return wrap;
+    }
+
+    /**
+     * Who is signed in to this site right now, and the door to close them.
+     *
+     * The guard keeps sessions in memory, so this list is the only place they
+     * can be seen. Closing one sends that person to the login form at their
+     * next request; it does not change who may sign in, which is the block
+     * above. The previews of the site share its list.
+     */
+    function buildSessionsBlock(site) {
+        var base = '/api/deploy/projects/' + encodeURIComponent(site.id) + '/sessions';
+        var block = el('div', 'dep-auth-sessions');
+        // The same sub-heading as the HTTPS block below: a rule, then a title.
+        var title = el('h5', 'dep-auth-site-sub', tr('deploy_sessions_title', 'Signed in now'));
+        title.setAttribute('data-i18n', 'deploy_sessions_title');
+        block.appendChild(title);
+
+        var rows = el('div', 'dep-rows');
+        var empty = el('p', 'dep-empty', tr('deploy_sessions_none', 'Nobody is signed in to this site.'));
+        empty.hidden = true;
+        var closeAll = el('button', 'dep-btn dep-btn-ghost dep-btn-small dep-btn-danger',
+            tr('deploy_sessions_close_all', 'Close sessions'));
+        closeAll.type = 'button';
+        closeAll.hidden = true;
+        var note = el('p', 'dep-note', '');
+        note.hidden = true;
+        block.appendChild(rows);
+        block.appendChild(empty);
+        block.appendChild(closeAll);
+        block.appendChild(note);
+
+        function paint(list) {
+            rows.textContent = '';
+            empty.hidden = list.length > 0;
+            closeAll.hidden = list.length === 0;
+            list.forEach(function (s) {
+                var line = el('div', 'dep-listrow');
+                var main = el('div', 'dep-listrow-main');
+                main.appendChild(el('span', 'dep-listrow-name', s.username));
+                main.appendChild(el('span', 'dep-listrow-sub', [
+                    s.projectId && s.projectId !== site.id ? s.projectId : null,
+                    s.login ? tr('deploy_sessions_login', 'signed in $1').replace('$1', ago(s.login)) : null,
+                    s.ip || null,
+                    s.lastSeen ? tr('deploy_sessions_seen', 'last seen $1').replace('$1', ago(s.lastSeen)) : null
+                ].filter(Boolean).join(' · ')));
+                line.appendChild(main);
+                var drop = el('button', 'dep-btn dep-btn-ghost dep-btn-small dep-btn-danger',
+                    tr('deploy_sessions_close', 'Close'));
+                drop.type = 'button';
+                drop.setAttribute('aria-label',
+                    tr('deploy_sessions_close_user', 'Close the sessions of $1').replace('$1', s.username));
+                drop.addEventListener('click', function () { close(s.username, drop); });
+                line.appendChild(drop);
+                rows.appendChild(line);
+            });
+        }
+
+        function failed(e) {
+            note.textContent = tr('deploy_sessions_failed', 'Could not read or close the sessions of this site.');
+            note.hidden = false;
+            console.error('[Deploy] site sessions failed:', e);
+        }
+
+        function load() {
+            return window.api(base)
+                .then(function (r) { return readJson(r, base); })
+                .then(function (data) {
+                    if (!data || !data.success || !Array.isArray(data.sessions)) throw new Error('sessions payload not usable');
+                    paint(data.sessions);
+                })
+                .catch(failed);
+        }
+
+        function close(username, btn) {
+            if (!username && !window.confirm(tr('deploy_sessions_confirm',
+                'Close every session on this site? Whoever is signed in gets the login form at their next request.'))) return;
+            btn.disabled = true;
+            note.hidden = true;
+            var url = base + (username ? '?username=' + encodeURIComponent(username) : '');
+            window.api(url, { method: 'DELETE' })
+                .then(function (r) { return readJson(r, base); })
+                .then(function (data) {
+                    btn.disabled = false;
+                    if (!data || !data.success) throw new Error((data && data.error) || 'close refused');
+                    note.textContent = tr('deploy_sessions_closed', '$1 session(s) closed.').replace('$1', data.closed);
+                    note.hidden = false;
+                    return load();
+                })
+                .catch(function (e) { btn.disabled = false; failed(e); });
+        }
+
+        closeAll.addEventListener('click', function () { close(null, closeAll); });
+        load();
+        return block;
     }
 
     /**

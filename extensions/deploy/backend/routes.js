@@ -3309,6 +3309,68 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             }
         });
     });
+
+    /**
+     * Who is signed in to a protected site, and closing those sessions by hand.
+     *
+     * Sessions live in the guard's memory, so this is the only place an
+     * administrator can see them. The list carries the account, the login time,
+     * the address and the last request; never a session or CSRF token, which
+     * would be a way to become that person. A project's previews share its
+     * protection, so they share its list and are closed with it.
+     *
+     * `?username=` closes one person, compared as `siteAuth.normalizeUser`
+     * spells it, so `CORP\alice` and `alice@corp.local` reach the same
+     * sessions. A blank name is refused rather than read as everyone.
+     */
+    function sitesOf(tenantPaths, project) {
+        return [project.id].concat(previews.listFor(tenantPaths, project.id).map((p) => p.id));
+    }
+
+    function sessionProject(req, res) {
+        if (!projectStore.PROJECT_ID_RE.test(req.params.id || '')) {
+            res.status(404).json({ success: false, error: 'unknown_project' });
+            return null;
+        }
+        const project = projectStore.getProject(req.tenantPaths, req.params.id);
+        if (!project) {
+            res.status(404).json({ success: false, error: 'unknown_project' });
+            return null;
+        }
+        return project;
+    }
+
+    router.get('/api/deploy/projects/:id/sessions', requireOptIn, requireRole('admin'), (req, res) => {
+        const project = sessionProject(req, res);
+        if (!project) return undefined;
+        const sessions = [];
+        for (const id of sitesOf(req.tenantPaths, project)) {
+            for (const row of siteAuth.listSessions(req.tenant.slug, id)) {
+                sessions.push(Object.assign({ projectId: id }, row));
+            }
+        }
+        return res.json({ success: true, sessions });
+    });
+
+    router.delete('/api/deploy/projects/:id/sessions', requireOptIn, requireRole('admin'), (req, res) => {
+        const project = sessionProject(req, res);
+        if (!project) return undefined;
+        const raw = req.query ? req.query.username : undefined;
+        let username;
+        if (raw !== undefined) {
+            if (typeof raw !== 'string' || !siteAuth.normalizeUser(raw)) {
+                return res.status(400).json({ success: false, error: 'bad_username' });
+            }
+            username = raw;
+        }
+        let closed = 0;
+        for (const id of sitesOf(req.tenantPaths, project)) {
+            closed += siteAuth.dropSessionsFor(req.tenant.slug, id, username);
+        }
+        console.log(`[Deploy] ${req.tenant.slug}: ${project.id} ${closed} site session(s) closed`
+            + `${username === undefined ? '' : ` for ${siteAuth.normalizeUser(username)}`}, by ${req.user.email}`);
+        return res.json({ success: true, closed });
+    });
 }
 
 module.exports = { register, registerPublic };

@@ -1080,10 +1080,13 @@ test('revalidation: revalidateMinutes 0 never consults the directory', async (t)
     siteAuth._setLookup(() => { calls += 1; return { ok: true, groups: [VIEWERS_DN] }; });
     t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions(slug, 'revaloff'); });
 
-    // Six hours, comfortably inside the eight-hour session and far past any
-    // interval the setting could otherwise have produced.
-    advance(6 * 60 * 60 * 1000);
-    assert.strictEqual(visit(slug, tenantPaths, 'revaloff', token).handled, false);
+    // Almost six hours, comfortably inside the eight-hour session and far past
+    // any interval the setting could otherwise have produced. In steps of 25
+    // minutes, because a session idle for 30 closes on its own.
+    for (let i = 0; i < 14; i++) {
+        advance(25 * 60 * 1000);
+        assert.strictEqual(visit(slug, tenantPaths, 'revaloff', token).handled, false);
+    }
     await settle();
     assert.strictEqual(calls, 0, 'off means off, which is the behaviour before this existed');
 });
@@ -1121,6 +1124,191 @@ test('revalidation: concurrent requests start one check, and none of them waits 
     assert.strictEqual(visit(slug, tenantPaths, 'revalonce', token).handled, false);
     await settle();
     assert.strictEqual(calls, 1, 'the answer pushed the next check a full interval away');
+});
+
+/* ------------------------------------------------------------------ */
+/* idle timeout, writes, and closing sessions by hand                  */
+/* ------------------------------------------------------------------ */
+
+/** A request with a session cookie and any method, awaited either way. */
+async function send(slug, tenantPaths, projectId, token, method, url) {
+    const res = fakeRes();
+    const handled = await siteAuth.gate(
+        fakeReq(method, url || '/', { headers: { cookie: `aegis_site=${token}` } }), res,
+        { slug, tenantPaths, project: { id: projectId, name: projectId } });
+    return { res, handled };
+}
+
+function isLoginRedirect(answer) {
+    return answer.handled === true && answer.res.statusCode === 302
+        && String(answer.res.headers.Location).startsWith('/__aegis/login');
+}
+
+test('session closes after 30 min idle, and activity slides it', async (t) => {
+    const slug = 'tenant-idle';
+    const tenantPaths = seed(slug, 'idle',
+        { name: 'Idle', auth: { enabled: true, allowedGroups: ['Site Viewers'] } },
+        revalConfig(0));
+    const token = await loginToken(slug, tenantPaths, 'idle', '10.0.0.91');
+    t.after(() => siteAuth.dropSessions(slug, 'idle'));
+    assert.strictEqual(siteAuth.IDLE_MS, 30 * 60 * 1000);
+
+    const advance = fakeClock(t);
+    advance(29 * 60 * 1000);
+    assert.strictEqual(visit(slug, tenantPaths, 'idle', token).handled, false,
+        'twenty-nine minutes of silence is inside the window');
+    advance(29 * 60 * 1000);
+    assert.strictEqual(visit(slug, tenantPaths, 'idle', token).handled, false,
+        'the visit at 29 minutes slid the window, so 58 minutes after login still opens');
+
+    advance(siteAuth.IDLE_MS + 1);
+    assert.ok(isLoginRedirect(visit(slug, tenantPaths, 'idle', token)),
+        'one millisecond past the idle window lands on the login form');
+});
+
+test('absolute 8 h cap still holds despite activity', async (t) => {
+    const slug = 'tenant-cap';
+    const tenantPaths = seed(slug, 'cap',
+        { name: 'Cap', auth: { enabled: true, allowedGroups: ['Site Viewers'] } },
+        revalConfig(0));
+    const token = await loginToken(slug, tenantPaths, 'cap', '10.0.0.92');
+    t.after(() => siteAuth.dropSessions(slug, 'cap'));
+
+    const advance = fakeClock(t);
+    // A visit every 25 minutes keeps the idle window open forever. 19 of them
+    // is 475 minutes, inside eight hours; the 20th is at 500.
+    for (let i = 1; i <= 19; i++) {
+        advance(25 * 60 * 1000);
+        assert.strictEqual(visit(slug, tenantPaths, 'cap', token).handled, false, `visit ${i}`);
+    }
+    advance(25 * 60 * 1000);
+    assert.ok(isLoginRedirect(visit(slug, tenantPaths, 'cap', token)),
+        'activity never carries a session past eight hours from login');
+});
+
+test('mutating request rechecks group synchronously', async (t) => {
+    const slug = 'tenant-write-drop';
+    const tenantPaths = seed(slug, 'wdrop',
+        { name: 'Write', auth: { enabled: true, allowedGroups: ['Site Viewers'] } },
+        revalConfig(10));
+    t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions(slug, 'wdrop'); });
+
+    let calls = 0;
+    let groups = [VIEWERS_DN];
+    siteAuth._setLookup(() => { calls += 1; return { ok: true, groups }; });
+
+    // Still entitled: the write goes through, and the directory was asked even
+    // though the ten-minute window has not elapsed.
+    const kept = await loginToken(slug, tenantPaths, 'wdrop', '10.0.0.93');
+    const ok = await send(slug, tenantPaths, 'wdrop', kept, 'POST', '/api/items');
+    assert.strictEqual(ok.handled, false, 'an entitled write reaches the application');
+    assert.strictEqual(calls, 1, 'the write asked the directory inside the window');
+
+    groups = [HELPDESK_DN];
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        const token = await loginToken(slug, tenantPaths, 'wdrop', '10.0.0.94');
+        const before = calls;
+        // A read inside the window keeps the non-blocking behaviour.
+        assert.strictEqual(visit(slug, tenantPaths, 'wdrop', token).handled, false,
+            `${method}: a GET inside the window is still served from the list it has`);
+        await settle();
+        assert.strictEqual(calls, before, `${method}: the GET did not ask the directory`);
+
+        const write = await send(slug, tenantPaths, 'wdrop', token, method, '/api/items/1');
+        assert.strictEqual(write.handled, true, `${method}: never reaches the application`);
+        assert.strictEqual(write.res.statusCode, 403, `${method}: refused`);
+        assert.strictEqual(write.res.headers['Set-Cookie'], undefined,
+            `${method}: the refusal sets no cookie`);
+        assert.strictEqual(calls, before + 1);
+        assert.ok(isLoginRedirect(visit(slug, tenantPaths, 'wdrop', token)),
+            `${method}: the session was dropped with the refusal`);
+    }
+});
+
+test('mutating request with directory unreachable answers 503 and is not proxied', async (t) => {
+    const slug = 'tenant-write-down';
+    const tenantPaths = seed(slug, 'wdown',
+        { name: 'Write', auth: { enabled: true, allowedGroups: ['Site Viewers'] } },
+        revalConfig(10));
+    t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions(slug, 'wdown'); });
+    const token = await loginToken(slug, tenantPaths, 'wdown', '10.0.0.95');
+
+    siteAuth._setLookup(() => ({ ok: false, error: 'ldap_unreachable' }));
+    const down = await send(slug, tenantPaths, 'wdown', token, 'POST', '/api/items');
+    assert.strictEqual(down.handled, true, 'no verdict means the write is not proxied');
+    assert.strictEqual(down.res.statusCode, 503);
+    assert.strictEqual(down.res.headers['Set-Cookie'], undefined);
+
+    siteAuth._setLookup(() => Promise.reject(new Error('socket hang up')));
+    const thrown = await send(slug, tenantPaths, 'wdown', token, 'PUT', '/api/items/1');
+    assert.strictEqual(thrown.handled, true);
+    assert.strictEqual(thrown.res.statusCode, 503, 'a rejected lookup fails closed on a write');
+
+    // The session itself is kept, as on the read path: no answer is not a no.
+    assert.strictEqual(visit(slug, tenantPaths, 'wdown', token).handled, false);
+});
+
+test('a write is not rechecked where no check can ever run', async (t) => {
+    // Revalidation off, and a directory with no service account to search
+    // with: failing closed there would forbid every write on the site for good.
+    // Two tenants: the directory is read once per tenant, and cached by slug.
+    const off = seed('tenant-write-off', 'wskipoff',
+        { name: 'Write', auth: { enabled: true, allowedGroups: ['Site Viewers'] } }, revalConfig(0));
+    const nosvc = seed('tenant-write-nosvc', 'wskipsvc',
+        { name: 'Write', auth: { enabled: true, allowedGroups: ['Site Viewers'] } },
+        { url: 'ldaps://dc01.corp.local:636', baseDn: 'DC=corp,DC=local',
+          userDnTemplate: 'CN={username},OU=Users,DC=corp,DC=local', revalidateMinutes: 10 });
+    t.after(() => {
+        siteAuth._setLookup(null);
+        siteAuth.dropSessions('tenant-write-off', 'wskipoff');
+        siteAuth.dropSessions('tenant-write-nosvc', 'wskipsvc');
+    });
+    let calls = 0;
+    siteAuth._setLookup(() => { calls += 1; return { ok: false, error: 'ldap_bad_config' }; });
+
+    const a = await loginToken('tenant-write-off', off, 'wskipoff', '10.0.0.96');
+    assert.strictEqual((await send('tenant-write-off', off, 'wskipoff', a, 'POST', '/api/items')).handled, false);
+    const b = await loginToken('tenant-write-nosvc', nosvc, 'wskipsvc', '10.0.0.97');
+    assert.ok(b, 'the template-only directory signs in');
+    assert.strictEqual((await send('tenant-write-nosvc', nosvc, 'wskipsvc', b, 'POST', '/api/items')).handled, false);
+    assert.strictEqual(calls, 0, 'nothing was asked of a directory that cannot answer');
+});
+
+test('normalizeUser: case, a DOMAIN\\ prefix and an @suffix all reduce to one name', () => {
+    assert.strictEqual(siteAuth.normalizeUser('Alice'), 'alice');
+    assert.strictEqual(siteAuth.normalizeUser('CORP\\Alice'), 'alice');
+    assert.strictEqual(siteAuth.normalizeUser('alice@corp.local'), 'alice');
+    assert.strictEqual(siteAuth.normalizeUser('  ALICE  '), 'alice');
+    assert.strictEqual(siteAuth.normalizeUser(''), '');
+    assert.strictEqual(siteAuth.normalizeUser(null), '');
+});
+
+test('dropSessionsFor closes only the named user, and listSessions never shows a token', async (t) => {
+    const slug = 'tenant-close';
+    const tenantPaths = seed(slug, 'close',
+        { name: 'Close', auth: { enabled: true, audience: 'directory' } },
+        revalConfig(0));
+    t.after(() => siteAuth.dropSessions(slug, 'close'));
+    const ok = { ok: true, groups: [VIEWERS_DN] };
+    const alice = await loginAs(slug, tenantPaths, 'close', 'alice', ok);
+    const bob = await loginAs(slug, tenantPaths, 'close', 'bob', ok);
+    assert.ok(alice && bob);
+
+    const listed = siteAuth.listSessions(slug, 'close');
+    assert.strictEqual(listed.length, 2);
+    for (const row of listed) {
+        assert.deepStrictEqual(Object.keys(row).sort(),
+            ['expiresAt', 'ip', 'lastSeen', 'login', 'username']);
+    }
+    const text = JSON.stringify(listed);
+    assert.ok(!text.includes(alice) && !text.includes(bob), 'no session token in the list');
+
+    assert.strictEqual(siteAuth.dropSessionsFor(slug, 'close', 'CORP\\Alice'), 1);
+    assert.ok(isLoginRedirect(visit(slug, tenantPaths, 'close', alice)));
+    assert.strictEqual(visit(slug, tenantPaths, 'close', bob).handled, false, 'bob is untouched');
+
+    assert.strictEqual(siteAuth.dropSessionsFor(slug, 'close'), 1, 'no name closes the rest');
+    assert.ok(isLoginRedirect(visit(slug, tenantPaths, 'close', bob)));
 });
 
 /* ------------------------------------------------------------------ */

@@ -1357,10 +1357,20 @@ const groups = (req.headers['x-aegis-groups'] || '')
     .split(',').filter(Boolean).map(decodeURIComponent);
 ```
 
-Group membership is re-checked on a timer and not on every request, so these
-values can lag a directory change by up to the revalidation interval. An
-application making an authorisation decision that must be immediate has to ask
-the directory itself.
+For a read (GET, HEAD, OPTIONS), group membership is re-checked on a timer and
+not on every request, so these values can lag a directory change by up to the
+revalidation interval. Every other method is a write, and a write waits for the
+directory first: a user no longer allowed gets 403 and loses the session, and a
+directory that cannot answer gets the write a 503. Neither reaches the
+application, and neither sets a cookie. So the headers on a write are current;
+on a read they can be one interval old. The write check is skipped where it can
+never run: `revalidateMinutes` at 0, or a directory with no service account to
+search with.
+
+A session ends eight hours after login, or after thirty minutes with no
+request, whichever comes first. A tenant administrator can also close the
+sessions of a site, or of one person on it, from the Authentication tab
+(`GET` and `DELETE /api/deploy/projects/:id/sessions`).
 
 These three names are the proxy's public interface. Changing one breaks every
 deployed application reading it, so they are fixed here rather than in the code
@@ -1433,9 +1443,9 @@ in both directions: every spelling that must be caught, and every near miss
 
 A site with no manifest has no rules, which is every site deployed before this
 existed. Group membership reaches a live session on the revalidation timer like
-everything else here, except after a save: changing a binding drops that site's
-sessions, so a revoked access is gone on the next request rather than within
-`revalidateMinutes`.
+everything else here, except on a write, which re-checks first, and after a
+save: changing a binding drops that site's sessions, so a revoked access is gone
+on the next request rather than within `revalidateMinutes`.
 
 ### What it does not do
 

@@ -53,10 +53,14 @@
  * - The client address comes from the socket. No `X-Forwarded-For` is trusted,
  *   because nothing forwards to this port; behind a reverse proxy every lockout
  *   counter would collapse onto the proxy's address.
- * - Group membership is re-checked on a timer, not on every request, so a user
- *   removed from the allowed group keeps access for up to `revalidateMinutes`.
- *   See `maybeRevalidate` for why the check does not block the request, and for
- *   the one configuration shape it cannot run under.
+ * - A session ends eight hours after login whatever happens, and sooner after
+ *   thirty minutes with no request (`IDLE_MS`). A tenant administrator can
+ *   close them by hand from the dashboard (`dropSessionsFor`).
+ * - Group membership is re-checked on a timer for reads, so a user removed from
+ *   the allowed group keeps READ access for up to `revalidateMinutes`. A write
+ *   (any method but GET, HEAD, OPTIONS) waits for the directory's answer first
+ *   and is refused when there is none. See `maybeRevalidate` and `recheckWrite`
+ *   for both, and for the one configuration shape neither can run under.
  */
 
 'use strict';
@@ -118,6 +122,12 @@ function isSitePath(pathOnly) {
 const SESSION_COOKIE = 'aegis_site';
 const CSRF_COOKIE = 'aegis_site_csrf';
 const SESSION_MS = 8 * 60 * 60 * 1000;
+/** Thirty minutes without a request closes a session, inside the 8 h cap. An
+ *  unattended browser on a shared desk should not stay signed in all day. */
+const IDLE_MS = 30 * 60 * 1000;
+/** The methods that read. Every other one is a write and re-checks the
+ *  directory before it reaches the application. */
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /** A login form is a few hundred bytes. Anything larger is not a login form. */
 const BODY_LIMIT = 8 * 1024;
@@ -381,9 +391,11 @@ function groupAllowed(allowedGroups, groups) {
 /* sessions and lockout                                                */
 /* ------------------------------------------------------------------ */
 
-/** token -> { slug, projectId, username, login, user, groups, expiresAt, nextCheckAt }
+/** token -> { slug, projectId, username, login, user, groups, sid, admin, ip,
+ *  loginAt, lastSeen, expiresAt, nextCheckAt }
  *  `username` is the submitted identifier used for later lookups; `login` is
- *  the directory's canonical account name; `user` is the display name. */
+ *  the directory's canonical account name; `user` is the display name.
+ *  `lastSeen` is the last request on the session, for the idle timeout. */
 const sessions = new Map();
 /** `ip|projectId` -> { fails, until } */
 const failures = new Map();
@@ -392,12 +404,23 @@ function newToken() {
     return crypto.randomBytes(32).toString('base64url');
 }
 
+function isOver(s, now) {
+    if (s.expiresAt <= now) return true;
+    return now - (s.lastSeen || now) > IDLE_MS;
+}
+
 function purgeSessions(now) {
     for (const [token, s] of sessions) {
-        if (s.expiresAt <= now) sessions.delete(token);
+        if (isOver(s, now)) sessions.delete(token);
     }
 }
 
+/**
+ * The live session a cookie names on this site, or null.
+ *
+ * Every hit counts as activity and slides the idle window. The eight-hour cap
+ * in `expiresAt` does not move: a visitor active all day still signs in again.
+ */
 function sessionFor(token, slug, projectId) {
     if (!token) return null;
     const now = Date.now();
@@ -407,7 +430,63 @@ function sessionFor(token, slug, projectId) {
     // Same host, different port: the browser sends a cookie minted for another
     // site. It is a valid token and still not a session here.
     if (s.slug !== slug || s.projectId !== projectId) return null;
+    s.lastSeen = now;
     return s;
+}
+
+/**
+ * One spelling per account, for comparing names an operator types with names a
+ * visitor typed. Lower case, without a leading `DOMAIN\` and without a trailing
+ * `@suffix`: `CORP\Alice`, `alice@corp.local` and `ALICE` are one person.
+ */
+function normalizeUser(name) {
+    let s = String(name === undefined || name === null ? '' : name).trim().toLowerCase();
+    const slash = s.indexOf('\\');
+    if (slash >= 0) s = s.slice(slash + 1);
+    const at = s.indexOf('@');
+    if (at >= 0) s = s.slice(0, at);
+    return s.trim();
+}
+
+/**
+ * Who is signed in to one site, for the dashboard. Never the session token,
+ * never the CSRF token: a row is something an administrator reads, and a token
+ * in it would be a way to become that person.
+ */
+function listSessions(slug, projectId) {
+    const now = Date.now();
+    purgeSessions(now);
+    const rows = [];
+    for (const s of sessions.values()) {
+        if (s.slug !== slug || s.projectId !== projectId) continue;
+        rows.push({
+            username: s.login || s.username || '',
+            login: s.loginAt || 0,
+            ip: s.ip || '',
+            lastSeen: s.lastSeen || 0,
+            expiresAt: s.expiresAt
+        });
+    }
+    return rows.sort((a, b) => b.lastSeen - a.lastSeen);
+}
+
+/**
+ * Closes the sessions of one site, or only those of one person on it. Returns
+ * how many were closed. A name that normalises to nothing closes nothing: an
+ * empty match must never read as "everyone".
+ */
+function dropSessionsFor(slug, projectId, username) {
+    const named = username !== undefined && username !== null;
+    const wanted = named ? normalizeUser(username) : '';
+    if (named && !wanted) return 0;
+    let closed = 0;
+    for (const [token, s] of sessions) {
+        if (s.slug !== slug || s.projectId !== projectId) continue;
+        if (named && normalizeUser(s.username) !== wanted && normalizeUser(s.login) !== wanted) continue;
+        sessions.delete(token);
+        closed += 1;
+    }
+    return closed;
 }
 
 function clientIp(req) {
@@ -496,6 +575,7 @@ const STRINGS = {
         errNoGrantTitle: 'Access denied',
         errNoGrant: 'You are signed in, and this page needs an access that has not been granted to you. Ask whoever administers this site for it.',
         errDirectory: 'The directory could not be reached. Try again later.',
+        errDirectoryTitle: 'Directory unavailable',
         errEmpty: 'Enter a username and a password.',
         errSession: 'Your session expired. Sign in again.',
         errLocked: 'Too many attempts. Try again in $1 seconds.'
@@ -523,6 +603,7 @@ const STRINGS = {
         errNoGrantTitle: 'Accès refusé',
         errNoGrant: 'Vous êtes connecté, et cette page exige un accès qui ne vous a pas été accordé. Demandez-le à qui administre ce site.',
         errDirectory: 'L\'annuaire est injoignable. Réessayez plus tard.',
+        errDirectoryTitle: 'Annuaire injoignable',
         errEmpty: 'Saisissez un identifiant et un mot de passe.',
         errSession: 'Votre session a expiré. Reconnectez-vous.',
         errLocked: 'Trop de tentatives. Réessayez dans $1 secondes.'
@@ -855,7 +936,8 @@ function loginPage(res, status, ctx, opts) {
  *
  * Returns true when the request is finished and the caller must not serve
  * anything, false when it is authenticated and the file server should proceed.
- * Returns a promise on the POST path only; the caller handles both.
+ * Returns a promise on the login POST and on a signed-in write (any method but
+ * GET, HEAD, OPTIONS), which waits for the directory; the caller handles both.
  */
 function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName }) {
     const projectId = project && project.id;
@@ -1005,6 +1087,25 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
     // Past the door only: which commits a protected site runs, and what it
     // says to its visitors, is not for somebody who has not signed in. Without
     // a session it is a reserved path like any other, and answers 404.
+    const write = !READ_METHODS.has(req.method);
+
+    // A write waits for the directory before it goes anywhere, the site's own
+    // reserved routes included: see recheckWrite. A read keeps the timer.
+    if (session && write && (isSitePath(pathOnly) || !reserved)) {
+        return recheckWrite(session, token, ctx, config).then((outcome) => {
+            if (outcome === 'refused') {
+                sendHtml(res, 403, renderError(lang, tr(lang, 'errNoGrantTitle'), tr(lang, 'errForbidden')));
+                return true;
+            }
+            if (outcome === 'unanswered') {
+                sendHtml(res, 503, renderError(lang, tr(lang, 'errDirectoryTitle'), tr(lang, 'errDirectory')));
+                return true;
+            }
+            if (isSitePath(pathOnly)) return false;
+            return admit(req, res, session, ctx, pathOnly);
+        });
+    }
+
     if (session && isSitePath(pathOnly)) return false;
 
     if (reserved) { notFound(res); return true; }
@@ -1012,56 +1113,64 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
     if (session) {
         // Fires at most once per interval and never blocks: see maybeRevalidate.
         maybeRevalidate(session, token, ctx, config);
-
-        // The site's own rules, after the door and before the files. The
-        // visitor is past the gate here, so this answers the second question:
-        // not "may you be in this building" but "may you have this room".
-        //
-        // Answered here rather than handed to the application, because an
-        // application that forgets the check serves the data and the omission
-        // is invisible. This one cannot be forgotten: the request never
-        // reaches the application at all.
-        const policy = policyFor(slug, tenantPaths, projectId);
-        // The site administrator holds every resource the site declares. The
-        // tick is carried by a named person and never by a group (`a group can
-        // never confer admin`), so this is a decision taken about one person,
-        // not a door a group membership opens. Without it, the person Aegis
-        // names to run the site would have to be named again under each
-        // resource, and would find a room locked the day the site added one.
-        // A demotion lands with the revalidation that clears `session.admin`.
-        if (policy.rules.length && session.admin !== true) {
-            const auth = authRecordFor(slug, tenantPaths, projectId) || {};
-            const seen = accessPolicy.verdict({
-                rules: policy.rules,
-                grants: auth.grants || {},
-                groups: session.groups,
-                sid: session.sid,
-                rawUrl: req.url,
-                // The same matcher the site door uses, handed in rather than
-                // reimplemented: a directory answers full distinguished names
-                // and an operator types a plain one, and the two questions must
-                // never disagree about what counts as being in a group.
-                groupMatches: groupAllowed
-            });
-            if (!seen.allowed) {
-                // Named in the log and not on the page. The visitor is told
-                // which access they lack, because asking an administrator for
-                // it is their next move; the log carries who they are, which
-                // is the half the page has no business repeating back.
-                console.warn(`[Deploy] ${slug}/${projectId}: ${session.username} refused `
-                    + `${pathOnly} (needs ${seen.resource || 'an unreadable path'})`);
-                sendHtml(res, 403, renderError(lang,
-                    tr(lang, 'errNoGrantTitle'), tr(lang, 'errNoGrant')));
-                return true;
-            }
-        }
-        return false;            // authenticated and entitled: the file server takes over
+        return admit(req, res, session, ctx, pathOnly);
     }
 
     // Everything else on a protected site: send them to the form, remembering
     // where they were headed.
     redirect(res, `${LOGIN_PATH}?next=${encodeURIComponent(safeNext(req.url || '/'))}`);
     return true;
+}
+
+/**
+ * The last question for a visitor past the door: the site's own rules. True
+ * when the request was refused here, false when the file server takes over.
+ */
+function admit(req, res, session, ctx, pathOnly) {
+    const { slug, tenantPaths, projectId, lang } = ctx;
+    // The site's own rules, after the door and before the files. The visitor
+    // is past the gate here, so this answers the second question: not "may you
+    // be in this building" but "may you have this room".
+    //
+    // Answered here rather than handed to the application, because an
+    // application that forgets the check serves the data and the omission is
+    // invisible. This one cannot be forgotten: the request never reaches the
+    // application at all.
+    const policy = policyFor(slug, tenantPaths, projectId);
+    // The site administrator holds every resource the site declares. The tick
+    // is carried by a named person and never by a group (`a group can never
+    // confer admin`), so this is a decision taken about one person, not a door
+    // a group membership opens. Without it, the person Aegis names to run the
+    // site would have to be named again under each resource, and would find a
+    // room locked the day the site added one. A demotion lands with the
+    // revalidation that clears `session.admin`.
+    if (policy.rules.length && session.admin !== true) {
+        const auth = authRecordFor(slug, tenantPaths, projectId) || {};
+        const seen = accessPolicy.verdict({
+            rules: policy.rules,
+            grants: auth.grants || {},
+            groups: session.groups,
+            sid: session.sid,
+            rawUrl: req.url,
+            // The same matcher the site door uses, handed in rather than
+            // reimplemented: a directory answers full distinguished names and
+            // an operator types a plain one, and the two questions must never
+            // disagree about what counts as being in a group.
+            groupMatches: groupAllowed
+        });
+        if (!seen.allowed) {
+            // Named in the log and not on the page. The visitor is told which
+            // access they lack, because asking an administrator for it is
+            // their next move; the log carries who they are, which is the half
+            // the page has no business repeating back.
+            console.warn(`[Deploy] ${slug}/${projectId}: ${session.username} refused `
+                + `${pathOnly} (needs ${seen.resource || 'an unreadable path'})`);
+            sendHtml(res, 403, renderError(lang,
+                tr(lang, 'errNoGrantTitle'), tr(lang, 'errNoGrant')));
+            return true;
+        }
+    }
+    return false;            // authenticated and entitled: the file server takes over
 }
 
 /**
@@ -1206,6 +1315,7 @@ async function handleLogin(req, res, ctx, config) {
     const token = newToken();
     const everyMs = Number(config && config.revalidateMinutes) * 60 * 1000;
     const login = String(result.login || username);
+    const now = Date.now();
     sessions.set(token, {
         slug: ctx.slug,
         projectId: ctx.projectId,
@@ -1215,10 +1325,14 @@ async function handleLogin(req, res, ctx, config) {
         groups,
         sid,
         admin: verdict.admin,
-        expiresAt: Date.now() + SESSION_MS,
+        // For the dashboard's session list only; never a key for anything.
+        ip,
+        loginAt: now,
+        lastSeen: now,
+        expiresAt: now + SESSION_MS,
         // Just checked, by the login itself. The first re-check is a full
         // interval away rather than on the next request.
-        nextCheckAt: everyMs > 0 ? Date.now() + everyMs : Infinity
+        nextCheckAt: everyMs > 0 ? now + everyMs : Infinity
     });
     console.log(`[Deploy] ${ctx.slug}/${ctx.projectId}: site login by ${username}${verdict.admin ? ' (site administrator)' : ''}`);
     redirect(res, next, { 'Set-Cookie': sessionCookie(token, Math.floor(SESSION_MS / 1000), ctx.secure) });
@@ -1256,21 +1370,74 @@ async function handleLogin(req, res, ctx, config) {
  * `revalidateMinutes: 0` turns this off. A `userDnTemplate`-only directory has
  * no service account to ask with, so `ldap.lookup` refuses and every attempt
  * takes the third branch; that configuration keeps the old behaviour.
+ *
+ * Reads only. A write does not wait for the timer: see `recheckWrite`.
  */
 function maybeRevalidate(session, token, ctx, config) {
-    const everyMs = Number(config && config.revalidateMinutes) * 60 * 1000;
-    if (!Number.isFinite(everyMs) || everyMs <= 0) return;
-    // A session minted before this code existed has no username to ask about.
-    if (!session.username || session.revalidating) return;
+    if (!recheckable(session, config)) return;
+    if (session.revalidating) return;
     if (Date.now() < (session.nextCheckAt || 0)) return;
+    revalidate(session, token, ctx, config);
+}
 
-    session.revalidating = true;
-    Promise.resolve()
+function revalidateEveryMs(config) {
+    const everyMs = Number(config && config.revalidateMinutes) * 60 * 1000;
+    return Number.isFinite(everyMs) && everyMs > 0 ? everyMs : 0;
+}
+
+/**
+ * Whether the directory can be asked about this session at all. Off when the
+ * operator set `revalidateMinutes: 0`; off for a session minted before
+ * usernames were stored, which has nobody to ask about.
+ */
+function recheckable(session, config) {
+    return revalidateEveryMs(config) > 0 && !!session.username;
+}
+
+/**
+ * Whether a write waits for the directory before it is let through.
+ *
+ * A read trusts the group list for up to one interval, because blocking every
+ * page load on a domain controller is too high a price for a rare change. A
+ * write is the other way round: it is what a removed user could still do harm
+ * with, and it is rare enough that one directory round trip on it costs little.
+ * So a write asks first, whatever `nextCheckAt` says, and three answers follow:
+ *
+ * - `kept`: still entitled, the write goes on with the refreshed list.
+ * - `refused`: no longer entitled, or closed meanwhile by an administrator.
+ *   The session is dropped and the write answers 403.
+ * - `unanswered`: the directory could not say. The write answers 503 and is
+ *   not proxied; the session is KEPT, so reads go on as `maybeRevalidate`
+ *   describes and the write can be tried again.
+ *
+ * Skipped, and the write treated as a read, where no check could ever run:
+ * `revalidateMinutes: 0`, or a directory with no service account to search
+ * with (`userDnTemplate` only). Failing closed there would forbid every write
+ * on the site for good, which is a configuration fault and not a verdict.
+ */
+function recheckWrite(session, token, ctx, config) {
+    const searchable = !!(config && config.bindDn && config.bindPassword);
+    if (!recheckable(session, config) || !searchable) return Promise.resolve('kept');
+    return revalidate(session, token, ctx, config).then((outcome) =>
+        (sessions.get(token) === session ? outcome : 'refused'));
+}
+
+/**
+ * One question to the directory about one session. Resolves `kept`, `refused`
+ * or `unanswered` and never rejects. At most one is in flight per session: a
+ * second caller gets the promise already running.
+ */
+function revalidate(session, token, ctx, config) {
+    if (session.revalidating) return session.revalidating;
+    const everyMs = revalidateEveryMs(config);
+    const retryMs = Math.min(everyMs, REVALIDATE_RETRY_MS);
+
+    const running = Promise.resolve()
         .then(() => lookup(config, session.username))
         .then((result) => {
             if (!result || result.ok !== true) {
-                session.nextCheckAt = Date.now() + Math.min(everyMs, REVALIDATE_RETRY_MS);
-                return;
+                session.nextCheckAt = Date.now() + retryMs;
+                return 'unanswered';
             }
             const groups = Array.isArray(result.groups) ? result.groups : [];
             // `lookup` searches rather than binding, so it reads the entry and
@@ -1286,7 +1453,7 @@ function maybeRevalidate(session, token, ctx, config) {
             if (!verdict.allowed) {
                 sessions.delete(token);
                 console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} (no longer allowed)`);
-                return;
+                return 'refused';
             }
             session.groups = groups;
             session.sid = sid;
@@ -1296,11 +1463,15 @@ function maybeRevalidate(session, token, ctx, config) {
             // the next eight hours.
             session.admin = verdict.admin;
             session.nextCheckAt = Date.now() + everyMs;
+            return 'kept';
         })
         .catch(() => {
-            session.nextCheckAt = Date.now() + Math.min(everyMs, REVALIDATE_RETRY_MS);
+            session.nextCheckAt = Date.now() + retryMs;
+            return 'unanswered';
         })
-        .then(() => { session.revalidating = false; });
+        .then((outcome) => { session.revalidating = null; return outcome; });
+    session.revalidating = running;
+    return running;
 }
 
 /** Drops every session of a project, or of a whole tenant. Used on delete. */
@@ -1312,6 +1483,7 @@ function dropSessions(slug, projectId) {
 
 module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
+    listSessions, dropSessionsFor, normalizeUser, IDLE_MS,
     PREFIX, LOGIN_PATH, WHOAMI_PATH, SESSION_COOKIE, LOCK_THRESHOLD, LOCK_MS,
     RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, isSitePath, safeNext, readCookie, pickLang,
     // Test seams. Not part of the contract's public surface; nothing outside

@@ -591,7 +591,8 @@ function serve(req, res, ctx) {
  * `resolveFile` would let a repository that happens to contain `__aegis/`
  * answer on the path the browser is about to trust with a password.
  *
- * `gate` returns a promise only on the form submission, so the synchronous case
+ * `gate` returns a promise only on the form submission and on a signed-in
+ * write, which waits for the directory, so the synchronous case
  * stays synchronous and the static path is unchanged for every unprotected
  * site. Either way a guard that fails is a request that is refused: an error
  * here means we do not know whether this site is protected, and serving it

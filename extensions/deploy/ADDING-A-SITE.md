@@ -158,8 +158,13 @@ rule and has no TLS is not changed for you: it stays closed until you turn TLS
 on.
 
 Sessions live in memory, so a backend restart logs everyone out of every
-protected site. Group membership is re-checked on a timer, not per request, so
-somebody removed from an allowed group keeps access until the next check.
+protected site. A session ends eight hours after login, or after thirty minutes
+with no request. For reads, group membership is re-checked on a timer, not per
+request, so somebody removed from an allowed group can still read pages until
+the next check. A write (any method but GET, HEAD, OPTIONS) re-checks first: it
+is refused with 403 once the person is out of the group, and with 503 while the
+directory cannot answer. To get somebody out now, close their sessions from the
+site's Authentication tab, under Signed in now.
 
 Cookies are scoped by host and not by port. Two protected sites on one machine
 share the cookie name, so logging into the second replaces the session of the

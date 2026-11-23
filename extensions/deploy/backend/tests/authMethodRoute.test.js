@@ -55,7 +55,11 @@ function collect() {
         patch: add('PATCH')
     };
     routes.register(router, {
-        requireRole: () => (req, res, next) => next(),
+        // Holds the line core's does: the named role passes, anything else is
+        // refused. Every request below is an admin unless a test says not.
+        requireRole: (role) => (req, res, next) => (req.user && req.user.role === role
+            ? next()
+            : res.status(403).json({ success: false, error: 'forbidden' })),
         pathsFor,
         tenantsRoot: () => TENANTS_ROOT
     });
@@ -495,4 +499,132 @@ test('directory form: rejectUnauthorized false is refused as ldap_requires_valid
         Object.assign({}, DIRECTORY_BODY, { rejectUnauthorized: false })));
     assert.equal(answer.status, 400);
     assert.equal(answer.body.error, 'ldap_requires_validation');
+});
+
+/* ------------------------------------------------------------------ */
+/* closing site sessions by hand                                       */
+/* ------------------------------------------------------------------ */
+
+const { Readable } = require('stream');
+const siteAuth = require('../siteAuth');
+const authStore = require('../authStore');
+
+function siteReq(method, url, opts) {
+    const o = opts || {};
+    const req = Readable.from(o.body === undefined ? [] : [Buffer.from(o.body, 'utf8')]);
+    req.method = method;
+    req.url = url;
+    req.headers = Object.assign({}, o.headers);
+    req.socket = { remoteAddress: o.ip || '10.0.0.7', encrypted: true };
+    return req;
+}
+
+function siteRes() {
+    const res = { statusCode: 0, headers: {}, body: '', headersSent: false };
+    res.writeHead = (status, headers) => {
+        res.statusCode = status; Object.assign(res.headers, headers || {}); res.headersSent = true; return res;
+    };
+    res.setHeader = (name, value) => { res.headers[name] = value; };
+    res.end = (chunk) => { if (chunk) res.body += String(chunk); };
+    return res;
+}
+
+function cookieOf(setCookie, name) {
+    const m = new RegExp(`(?:^|; )?${name}=([^;]*)`).exec(String(setCookie || ''));
+    return m ? m[1] : null;
+}
+
+/** Signs `username` into a site through the real form and returns the token. */
+async function siteLogin(id, username) {
+    const ctx = { slug: 'acme', tenantPaths: pathsFor('acme'), project: { id, name: id } };
+    const form = siteRes();
+    await siteAuth.gate(siteReq('GET', '/__aegis/login'), form, ctx);
+    const csrf = cookieOf(form.headers['Set-Cookie'], 'aegis_site_csrf');
+    siteAuth._setVerifier(() => ({ ok: true, groups: [] }));
+    try {
+        const res = siteRes();
+        await siteAuth.gate(siteReq('POST', '/__aegis/login', {
+            body: new URLSearchParams({ csrf, username, password: 'pw', next: '/' }).toString(),
+            headers: { cookie: `aegis_site_csrf=${csrf}` }
+        }), res, ctx);
+        return cookieOf(res.headers['Set-Cookie'], 'aegis_site');
+    } finally {
+        siteAuth._setVerifier(null);
+    }
+}
+
+async function siteVisit(id, token) {
+    const res = siteRes();
+    const handled = await siteAuth.gate(siteReq('GET', '/', { headers: { cookie: `aegis_site=${token}` } }), res,
+        { slug: 'acme', tenantPaths: pathsFor('acme'), project: { id, name: id } });
+    return { handled, res };
+}
+
+function protectedSite(id) {
+    makeProject(id, authMethods.record(authMethods.LDAP, [], { audience: 'directory' }));
+    authStore.writeConfig(pathsFor('acme'), Object.assign({}, DIRECTORY_BODY, { revalidateMinutes: 0 }));
+    siteAuth.invalidate('acme', id);
+    return id;
+}
+
+test('sessions route: GET lists who is signed in, without any token', async (t) => {
+    const id = protectedSite('sess-list');
+    t.after(() => siteAuth.dropSessions('acme', id));
+    const token = await siteLogin(id, 'alice');
+    assert.ok(token);
+
+    const answer = await call('GET /api/deploy/projects/:id/sessions', request(id));
+    assert.equal(answer.status, 200, JSON.stringify(answer.body));
+    assert.equal(answer.body.success, true);
+    assert.equal(answer.body.sessions.length, 1);
+    assert.equal(answer.body.sessions[0].username, 'alice');
+    assert.equal(answer.body.sessions[0].ip, '10.0.0.7');
+    assert.ok(!JSON.stringify(answer.body).includes(token), 'the session token never leaves the guard');
+});
+
+test('admin DELETE sessions?username=x closes only x\'s sessions', async (t) => {
+    const id = protectedSite('sess-drop');
+    t.after(() => siteAuth.dropSessions('acme', id));
+    const alice = await siteLogin(id, 'alice');
+    const bob = await siteLogin(id, 'bob');
+
+    const req = request(id);
+    req.query = { username: 'CORP\\Alice' };
+    const answer = await call('DELETE /api/deploy/projects/:id/sessions', req);
+    assert.equal(answer.status, 200, JSON.stringify(answer.body));
+    assert.deepEqual(answer.body, { success: true, closed: 1 });
+
+    const next = await siteVisit(id, alice);
+    assert.equal(next.handled, true);
+    assert.equal(next.res.statusCode, 302);
+    assert.ok(String(next.res.headers.Location).startsWith('/__aegis/login'), 'x lands on the login form');
+    assert.equal((await siteVisit(id, bob)).handled, false, 'the other user is still signed in');
+
+    const all = await call('DELETE /api/deploy/projects/:id/sessions', request(id));
+    assert.deepEqual(all.body, { success: true, closed: 1 });
+    assert.equal((await siteVisit(id, bob)).res.statusCode, 302);
+});
+
+test('sessions route: a blank username is refused rather than read as everyone', async () => {
+    const id = protectedSite('sess-blank');
+    const req = request(id);
+    req.query = { username: '  ' };
+    const answer = await call('DELETE /api/deploy/projects/:id/sessions', req);
+    assert.equal(answer.status, 400);
+    assert.equal(answer.body.error, 'bad_username');
+});
+
+test('sessions route: an unknown project is 404', async () => {
+    const answer = await call('GET /api/deploy/projects/:id/sessions', request('no-such-site'));
+    assert.equal(answer.status, 404);
+});
+
+test('sessions route: non-admin gets 403 on both routes', async () => {
+    const id = protectedSite('sess-role');
+    for (const key of ['GET /api/deploy/projects/:id/sessions', 'DELETE /api/deploy/projects/:id/sessions']) {
+        const req = request(id);
+        req.user = { email: 'viewer@acme.test', role: 'viewer' };
+        const answer = await call(key, req);
+        assert.equal(answer.status, 403, key);
+    }
 });
