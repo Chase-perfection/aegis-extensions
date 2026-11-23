@@ -5165,6 +5165,8 @@
         ldap_tls_name_mismatch: ['deploy_auth_err_tls_name', 'The certificate is valid, but it was issued for another name than the address above. The name it carries is below.'],
         ldap_tls_expired: ['deploy_auth_err_tls_expired', 'The controller certificate is expired or not yet valid. Renew it on the controller, or check this server clock. Nothing on this page can repair it.'],
         ldap_not_tls: ['deploy_auth_err_not_tls', 'This directory is configured without encryption, so there is no certificate to look at. Switch the address to ldaps:// or tick StartTLS.'],
+        ldap_requires_tls: ['deploy_auth_err_requires_tls_ldap', 'The directory password is never sent in clear. Use an ldaps:// address, or keep ldap:// and tick StartTLS.'],
+        ldap_requires_validation: ['deploy_auth_err_requires_validation', 'The directory certificate is always checked. If the controller uses a certificate Aegis does not know, use "Trust this authority" on the certificate shown after the test, then save again.'],
         bad_fingerprint: ['deploy_auth_err_bad_fingerprint', 'That fingerprint is not readable. Reload the page and look at the certificate again.'],
         certificate_changed: ['deploy_auth_err_cert_changed', 'The controller is now presenting a different certificate than the one shown, so nothing was trusted. Look at it again before deciding.'],
         bad_certificate: ['deploy_auth_err_bad_cert', 'Aegis could not read that certificate and stored nothing.'],
@@ -5280,10 +5282,6 @@
         var cfg = ldap || {};
         authField('deploy-auth-url').value = cfg.url || '';
         authField('deploy-auth-starttls').checked = !!cfg.startTls;
-        // Certificate validation defaults to on, including on a fresh install
-        // where the server sent nothing back: a first visit that quietly starts
-        // with the check off is the wrong default to inherit.
-        authField('deploy-auth-verify').checked = cfg.configured ? !!cfg.rejectUnauthorized : true;
         authField('deploy-auth-binddn').value = cfg.bindDn || '';
         authField('deploy-auth-basedn').value = cfg.baseDn || '';
         authField('deploy-auth-filter').value = cfg.userFilter || '';
@@ -5319,7 +5317,7 @@
     /** The refusals that are about a field the advanced block holds. */
     var ADVANCED_ERRORS = [
         'bad_base_dn', 'bad_user_filter', 'bad_user_dn_template',
-        'bad_group_attribute', 'bad_revalidate_minutes'
+        'bad_group_attribute', 'bad_revalidate_minutes', 'ldap_requires_tls'
     ];
 
     function showTestGroups(groups) {
@@ -6478,7 +6476,6 @@
         var payload = {
             url: authField('deploy-auth-url').value.trim(),
             startTls: authField('deploy-auth-starttls').checked,
-            rejectUnauthorized: authField('deploy-auth-verify').checked,
             bindDn: authField('deploy-auth-binddn').value.trim(),
             baseDn: authField('deploy-auth-basedn').value.trim(),
             userFilter: authField('deploy-auth-filter').value.trim(),

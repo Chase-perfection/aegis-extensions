@@ -205,6 +205,29 @@ function resultMessage(id, tag, code, diagnostic) {
     return ber(0x30, int(id), ber(tag, enumr(code), str(''), str(diagnostic || '')));
 }
 
+let DEFAULT_PAIR;
+function defaultPair() {
+    if (DEFAULT_PAIR === undefined) DEFAULT_PAIR = selfSignedPair();
+    return DEFAULT_PAIR;
+}
+
+/**
+ * The certificate of each default fake, by URL. The client validates and has no
+ * switch to stop, so a test that does not care about trust would otherwise have
+ * to pin it by hand in fifty places. The wrappers add the pin to a config that
+ * names a default fake and sets no `trustedCa` of its own; everything else
+ * reaches the client untouched.
+ */
+const DEFAULT_TRUST = new Map();
+for (const name of ['verify', 'lookup', 'searchUsers', 'testConnection', 'inspectCertificate']) {
+    const real = ldap[name];
+    ldap[name] = function (config, ...rest) {
+        const pem = config && DEFAULT_TRUST.get(config.url);
+        const pinned = pem && config.trustedCa === undefined ? Object.assign({}, config, { trustedCa: [pem] }) : config;
+        return real.call(this, pinned, ...rest);
+    };
+}
+
 /**
  * A directory that answers in BER and checks what it is asked.
  *
@@ -213,7 +236,13 @@ function resultMessage(id, tag, code, diagnostic) {
  * response arrives whole.
  */
 function startFake(options) {
-    const opts = options || {};
+    const opts = Object.assign({}, options || {});
+    // The client refuses a plain bind, so a fake is an ldaps server unless a test
+    // asks for `plain` (the StartTLS refusal). One shared certificate serves every
+    // default fake and is pinned by the wrapper below; `tls:` keeps its own
+    // certificate and its own trust, which is what the TLS tests are about.
+    const sharedPair = (opts.tls || opts.plain) ? null : defaultPair();
+    if (sharedPair) opts.tls = sharedPair;
     const state = { seen: [], errors: [], connections: 0, closed: 0, sockets: [], queues: new Map() };
 
     /**
@@ -333,6 +362,7 @@ function startFake(options) {
         server.listen(0, '127.0.0.1', () => {
             state.port = server.address().port;
             state.url = (opts.tls ? 'ldaps' : 'ldap') + '://127.0.0.1:' + state.port;
+            if (sharedPair) DEFAULT_TRUST.set(state.url, sharedPair.cert.toString('utf8'));
             state.close = () => new Promise((done) => {
                 for (const s of state.sockets) s.destroy();
                 server.close(() => done());
@@ -525,10 +555,10 @@ test('a broken configuration is ldap_bad_config and opens nothing', async () => 
         {},
         { url: 'http://dc01.corp.local' },
         { url: 'not a url' },
-        { url: 'ldap://dc01.corp.local', baseDn: '', userFilter: '(cn={username})' },
-        { url: 'ldap://dc01.corp.local', baseDn: 'DC=corp', userFilter: '' },
-        { url: 'ldap://dc01.corp.local', baseDn: 'DC=corp', userFilter: '(&(cn={username})' },
-        { url: 'ldap://dc01.corp.local', baseDn: 'DC=corp', userFilter: '(cn={username})', bindDn: 'CN=svc', bindPassword: '' }
+        { url: 'ldap://dc01.corp.local', startTls: true, baseDn: '', userFilter: '(cn={username})' },
+        { url: 'ldap://dc01.corp.local', startTls: true, baseDn: 'DC=corp', userFilter: '' },
+        { url: 'ldap://dc01.corp.local', startTls: true, baseDn: 'DC=corp', userFilter: '(&(cn={username})' },
+        { url: 'ldap://dc01.corp.local', startTls: true, baseDn: 'DC=corp', userFilter: '(cn={username})', bindDn: 'CN=svc', bindPassword: '' }
     ];
     for (const config of cases) {
         const out = await ldap.verify(config, 'alice', 'right-password');
@@ -829,18 +859,19 @@ test('a search that never completes is ldap_timeout', async (t) => {
 });
 
 test('nothing listening is ldap_unreachable', async () => {
-    const fake = await startFake({});
+    const fake = await startFake({ plain: true });
     const url = fake.url;
     await fake.close();
 
-    const out = await ldap.verify(Object.assign({}, SEARCH_CONFIG, { url, timeoutMs: 2000 }), 'alice', 'her-password');
+    // Plain socket plus StartTLS: the refusal happens on connect, before any TLS.
+    const out = await ldap.verify(Object.assign({}, SEARCH_CONFIG, { url, startTls: true, timeoutMs: 2000 }), 'alice', 'her-password');
     assert.deepStrictEqual(out, { ok: false, error: 'ldap_unreachable' });
 });
 
 /* ---------------------------------------------------------------- StartTLS - */
 
 test('StartTLS sends the right extended request and a refusal is fatal', async (t) => {
-    const fake = await startFake({ startTlsResult: 1 });
+    const fake = await startFake({ plain: true, startTlsResult: 1 });
     t.after(() => fake.close());
 
     const config = Object.assign({ url: fake.url }, SEARCH_CONFIG, { startTls: true, timeoutMs: 2000 });
@@ -889,12 +920,57 @@ test('ldaps carries a whole verify over TLS', async (t) => {
     const fake = await startFake({ tls: pair, entries: [userEntry()] });
     t.after(() => fake.close());
 
-    const config = Object.assign({ url: fake.url }, SEARCH_CONFIG, { rejectUnauthorized: false });
+    const config = Object.assign({ url: fake.url }, SEARCH_CONFIG, { trustedCa: [pair.cert.toString('utf8')] });
     const out = await ldap.verify(config, 'alice', 'her-password');
     assert.deepStrictEqual(fake.errors, []);
     assert.strictEqual(out.ok, true);
     assert.strictEqual(out.groups.length, 3);
     assert.deepStrictEqual(fake.seen.filter((s) => s.op !== 'unbind').map((s) => s.op), ['bind', 'search', 'bind']);
+});
+
+test('a stored plain config is refused at use and no bind is sent', async (t) => {
+    const fake = await startFake({ plain: true, entries: [userEntry()] });
+    t.after(() => fake.close());
+
+    // Written by hand to the store, as an older release would have left it.
+    const config = Object.assign({ url: fake.url }, SEARCH_CONFIG);
+    for (const call of [
+        () => ldap.verify(config, 'alice', 'her-password'),
+        () => ldap.lookup(config, 'alice'),
+        () => ldap.testConnection(config)
+    ]) {
+        const out = await call();
+        assert.strictEqual(out.ok, false);
+        assert.strictEqual(out.error, 'ldap_requires_tls');
+    }
+    assert.strictEqual(fake.connections, 0, 'nothing was even connected');
+    assert.deepStrictEqual(fake.seen.filter((s) => s.op === 'bind'), [], 'no bind request was recorded');
+});
+
+test('a stored rejectUnauthorized false is refused at use, even over ldaps', async (t) => {
+    const pair = selfSignedPair();
+    if (!pair) return t.skip('openssl is not available to build a test certificate');
+
+    const fake = await startFake({ tls: pair, entries: [userEntry()] });
+    t.after(() => fake.close());
+
+    const config = Object.assign({ url: fake.url }, SEARCH_CONFIG,
+        { rejectUnauthorized: false, trustedCa: [pair.cert.toString('utf8')] });
+    const out = await ldap.verify(config, 'alice', 'her-password');
+    assert.deepStrictEqual(out, { ok: false, error: 'ldap_requires_validation' });
+    assert.strictEqual(fake.connections, 0);
+});
+
+test('the certificate probe still reads a chain when the stored flag is false', async (t) => {
+    const pair = selfSignedPair();
+    if (!pair) return t.skip('openssl is not available to build a test certificate');
+
+    const fake = await startFake({ tls: pair, entries: [userEntry()] });
+    t.after(() => fake.close());
+
+    const out = await ldap.inspectCertificate(Object.assign({ url: fake.url }, SEARCH_CONFIG, { rejectUnauthorized: false }));
+    assert.strictEqual(out.ok, true);
+    assert.deepStrictEqual(fake.seen.filter((s) => s.op === 'bind'), [], 'the probe never binds');
 });
 
 test('rejectUnauthorized is honoured and an untrusted DC is ldap_tls_untrusted', async (t) => {
@@ -1027,7 +1103,7 @@ test('the pem inspectCertificate hands back is one a later connection can trust'
 });
 
 test('inspectCertificate refuses a plaintext directory instead of pretending', async (t) => {
-    const fake = await startFake({});
+    const fake = await startFake({ plain: true });
     t.after(() => fake.close());
 
     const out = await ldap.inspectCertificate(Object.assign({ url: fake.url }, SEARCH_CONFIG));

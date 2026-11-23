@@ -932,16 +932,23 @@ typed survives it. A first visit to an unconfigured page runs the same thing on
 load, which is why the form opens with a proposal rather than blank. Nothing is
 saved until you save.
 
-Three things it never guesses: the service account, its password, and the two
+Three things it never guesses: the service account, its password, and the
 checkboxes. `ldaps://` is the suggestion rather than `ldap://` because a bind
-password crosses that connection; a controller without a certificate is a
-downgrade you make on purpose, after the check says so. And nested group
-resolution decides who gets in, so a scan that quietly widened an access rule
-would be the wrong kind of helpful.
+password crosses that connection. And nested group resolution decides who gets
+in, so a scan that quietly widened an access rule would be the wrong kind of
+helpful.
+
+The connection is always encrypted and its certificate is always validated.
+Saving refuses an `ldap://` address without StartTLS (`ldap_requires_tls`) and
+a body that sets `rejectUnauthorized` to false (`ldap_requires_validation`),
+both with a 400. The same two codes come back at use, from the LDAP client
+itself, so a configuration stored by an earlier release fails closed: no
+connection is opened and no bind is sent. A controller with a self-signed
+certificate is reached by trusting that certificate (see below), never by
+turning the check off.
 
 Only three fields stay on screen: the address, the service account and its
-password. The other five, and the certificate validation box, sit under
-Advanced, folded. They follow from the domain name and the scan fills them, so
+password. The other five sit under Advanced, folded. They follow from the domain name and the scan fills them, so
 showing eight fields at once asked an operator to audit a form instead of
 reading three answers. The page unfolds the block by itself when the search
 base is empty, and when a refusal names a field inside it, because a refusal
@@ -974,6 +981,8 @@ two.
 | `ldap_tls_name_mismatch` | The chain is good, the certificate names another host | The name it carries, and a button that corrects the address to it |
 | `ldap_tls_expired` | Expired, or not valid yet | The dates. Nothing on this page renews a certificate |
 | `ldap_tls_failed` | Anything else | The address and the port, to check by hand |
+| `ldap_requires_tls` | `ldap://` without StartTLS, at save or at use | Use `ldaps://`, or keep `ldap://` and tick StartTLS |
+| `ldap_requires_validation` | `rejectUnauthorized` false, at save or at use | Trust the certificate shown after the test, then save again |
 
 Two mechanisms sit behind the first row. The trust store is re-read on an
 untrusted handshake and the connection retried once, rate-limited to one read
@@ -991,10 +1000,10 @@ are stored per tenant next to the directory, capped at 8, and every field shown
 about one is derived from its bytes on each read rather than stored beside it.
 
 This is a narrowing, not a widening: `rejectUnauthorized` stays true and one
-named authority is added for one tenant's one directory. The old last resort,
-unticking certificate validation on the connection that carries the bind
-password, is still in the Advanced block and is still the wrong answer.
-`DELETE /api/deploy/auth/trust` removes the pins without touching the address,
+named authority is added for one tenant's one directory. There is no switch to
+turn validation off: the old last resort is gone from the form and refused by
+the route and the client. The certificate probe is the one exception, and only
+on its own socket: it never binds. `DELETE /api/deploy/auth/trust` removes the pins without touching the address,
 the base DN or the service account.
 
 ## Host names

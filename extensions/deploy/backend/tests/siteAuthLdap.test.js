@@ -26,6 +26,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const net = require('net');
+const tls = require('tls');
 const https = require('https');
 const { spawnSync } = require('node:child_process');
 
@@ -130,7 +131,12 @@ function children(buf) {
 function fakeDirectory(users, accounts) {
     const state = { binds: [], searches: 0, errors: [], sockets: [] };
 
-    const server = net.createServer((sock) => {
+    // ldaps: the directory is only ever reached encrypted, and the site's own
+    // test certificate is pinned in the stored config below.
+    const server = tls.createServer({
+        key: fs.readFileSync(TLS_PAIR.keyFile),
+        cert: fs.readFileSync(TLS_PAIR.certFile)
+    }, (sock) => {
         state.sockets.push(sock);
         let buf = Buffer.alloc(0);
         sock.on('error', () => { /* the client destroys the socket on its way out */ });
@@ -200,7 +206,7 @@ function fakeDirectory(users, accounts) {
 
     return new Promise((resolve) => {
         server.listen(0, '127.0.0.1', () => {
-            state.url = 'ldap://127.0.0.1:' + server.address().port;
+            state.url = 'ldaps://127.0.0.1:' + server.address().port;
             state.close = () => new Promise((done) => {
                 for (const s of state.sockets) s.destroy();
                 server.close(() => done());
@@ -305,6 +311,7 @@ async function scaffold(t, {
     if (configure) {
         authStore.writeConfig(tenantPaths, {
             url: directory.url,
+            trustedCa: [fs.readFileSync(TLS_PAIR.certFile, 'utf8')],
             bindDn: 'CN=svc,OU=Service,DC=corp,DC=local',
             bindPassword: 'svc-pw',
             baseDn: 'DC=corp,DC=local',

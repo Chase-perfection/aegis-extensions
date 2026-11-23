@@ -891,8 +891,11 @@ function cleanPemList(value) {
     return out;
 }
 
-function normalizeConfig(config) {
+function normalizeConfig(config, opts) {
     const c = (config && typeof config === 'object') ? config : {};
+    // Only the certificate probe may skip the validation rule: it connects to
+    // show a chain, never binds, and forces validation off on its own socket.
+    const probe = !!(opts && opts.probe);
 
     const rawUrl = String(c.url || '').trim();
     if (!rawUrl) throw badConfig('no url');
@@ -915,6 +918,18 @@ function normalizeConfig(config) {
         ? Math.min(Number(c.timeoutMs), MAX_TIMEOUT_MS)
         : DEFAULT_TIMEOUT_MS;
 
+    // The service account password crosses this connection, so it is encrypted
+    // and the peer is authenticated, with no option to relax either. Checked
+    // here as well as at save time so a config written by an older release
+    // fails closed instead of sending a password in clear. A self-signed
+    // controller is reached by pinning its certificate, not by skipping the check.
+    if (!probe && !secure && c.startTls !== true) {
+        throw new LdapError('ldap_requires_tls', 'the directory must be reached over ldaps or StartTLS');
+    }
+    if (!probe && c.rejectUnauthorized === false) {
+        throw new LdapError('ldap_requires_validation', 'certificate validation cannot be turned off');
+    }
+
     return {
         host: u.hostname,
         port: Number(u.port) || (secure ? 636 : 389),
@@ -922,7 +937,7 @@ function normalizeConfig(config) {
         // StartTLS on an ldaps:// connection would be a second handshake inside
         // the first, so the flag is ignored rather than honoured there.
         startTls: !secure && c.startTls === true,
-        rejectUnauthorized: c.rejectUnauthorized === false ? false : true,
+        rejectUnauthorized: true,
         trustedCa: cleanPemList(c.trustedCa),
         bindDn,
         bindPassword,
@@ -1654,7 +1669,7 @@ function dnsNamesOf(cert) {
 async function inspectCertificate(config) {
     let state = null;
     try {
-        const cfg = normalizeConfig(config);
+        const cfg = normalizeConfig(config, { probe: true });
         if (!cfg.secure && !cfg.startTls) return { ok: false, error: 'ldap_not_tls' };
 
         state = await openOnce(Object.assign({}, cfg, { rejectUnauthorized: false, trustedCa: [] }));

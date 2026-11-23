@@ -142,6 +142,14 @@ function parseLdapBody(body) {
         return { error: 'bad_ldap_url' };
     }
 
+    // The service account password crosses this connection: it is encrypted
+    // (ldaps, or StartTLS on ldap) and the certificate is validated, always.
+    // A self-signed controller is reached with "Trust this certificate".
+    if (parsed.protocol === 'ldap:' && !(body && body.startTls === true)) {
+        return { error: 'ldap_requires_tls' };
+    }
+    if (body && body.rejectUnauthorized === false) return { error: 'ldap_requires_validation' };
+
     const baseDn = String((body && body.baseDn) || '').trim();
     if (!baseDn || baseDn.length > 1024 || CTRL_RE.test(baseDn)) return { error: 'bad_base_dn' };
 
@@ -181,10 +189,10 @@ function parseLdapBody(body) {
     return {
         config: {
             url,
-            // StartTLS is opt-in and certificate validation is opt-out: the safe
-            // value of each is the one an absent field should produce.
+            // Encryption and certificate validation are not options: the checks
+            // above refuse anything else, so what is stored is always the safe value.
             startTls: !!(body && body.startTls),
-            rejectUnauthorized: !(body && body.rejectUnauthorized === false),
+            rejectUnauthorized: true,
             bindDn,
             baseDn,
             userFilter,
@@ -480,7 +488,11 @@ const LDAP_STATUS = {
     ldap_tls_untrusted: 400,
     ldap_tls_name_mismatch: 400,
     ldap_tls_expired: 400,
-    ldap_not_tls: 400
+    ldap_not_tls: 400,
+    // The configuration would send the service account password in clear, or
+    // without checking who answers. Refused at save and again at use.
+    ldap_requires_tls: 400,
+    ldap_requires_validation: 400
 };
 
 /**

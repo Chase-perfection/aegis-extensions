@@ -462,3 +462,37 @@ test('tls: the TLS route refuses to switch TLS off under a protected site', asyn
     assert.equal(answer.body.error, 'tls_required_by_auth');
     assert.equal(projectStore.getProject(pathsFor('acme'), id).tls.enabled, true, 'TLS is still on');
 });
+
+/* ------------------------------------------------------------------ */
+/* the directory form: encrypted bind, validated certificate           */
+/* ------------------------------------------------------------------ */
+
+const DIRECTORY_ROUTE = 'POST /api/deploy/auth';
+const DIRECTORY_BODY = {
+    url: 'ldaps://dc01.corp.local:636',
+    baseDn: 'DC=corp,DC=local',
+    bindDn: 'CN=svc,DC=corp,DC=local',
+    bindPassword: 'service-secret'
+};
+
+test('directory form: ldap:// without StartTLS is refused as ldap_requires_tls', async () => {
+    const answer = await call(DIRECTORY_ROUTE, request(null,
+        Object.assign({}, DIRECTORY_BODY, { url: 'ldap://dc01.corp.local:389' })));
+    assert.equal(answer.status, 400);
+    assert.equal(answer.body.error, 'ldap_requires_tls');
+});
+
+test('directory form: ldap:// with StartTLS and ldaps:// are accepted', async () => {
+    const starttls = await call(DIRECTORY_ROUTE, request(null,
+        Object.assign({}, DIRECTORY_BODY, { url: 'ldap://dc01.corp.local:389', startTls: true })));
+    assert.equal(starttls.status, 200, JSON.stringify(starttls.body));
+    const ldaps = await call(DIRECTORY_ROUTE, request(null, DIRECTORY_BODY));
+    assert.equal(ldaps.status, 200, JSON.stringify(ldaps.body));
+});
+
+test('directory form: rejectUnauthorized false is refused as ldap_requires_validation', async () => {
+    const answer = await call(DIRECTORY_ROUTE, request(null,
+        Object.assign({}, DIRECTORY_BODY, { rejectUnauthorized: false })));
+    assert.equal(answer.status, 400);
+    assert.equal(answer.body.error, 'ldap_requires_validation');
+});
