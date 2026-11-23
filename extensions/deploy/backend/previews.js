@@ -99,7 +99,7 @@ function remove({ slug, tenantPaths, projectId }) {
 
     siteAuth.invalidate(slug, projectId);
     siteAuth.dropSessions(slug, projectId);
-    siteAuth.dropFailures(projectId);
+    siteAuth.dropFailures(slug, projectId);
     siteConfig.invalidate(slug, projectId);
     siteConfig.forgetRoot(projectStore.currentDir(tenantPaths, projectId));
     runs.dropProject(slug, projectId);

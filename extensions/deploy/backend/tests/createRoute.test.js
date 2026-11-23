@@ -229,7 +229,7 @@ function plant(id) {
 
     const run = runs.start({ slug: 'acme', projectId: id, projectName: id, trigger: 'manual' });
     // Three bad passwords from one address is what leaves a lockout behind.
-    for (let i = 0; i < siteAuth.LOCK_THRESHOLD; i++) siteAuth._noteFailure('10.0.0.9', id);
+    for (let i = 0; i < siteAuth.LOCK_THRESHOLD; i++) siteAuth._noteFailure('acme', id, '10.0.0.9');
 
     return { paths, dir, run };
 }
@@ -240,7 +240,7 @@ test('removing a project takes its files, its runs and its lockouts with it', as
 
     assert.ok(fs.existsSync(dir));
     assert.ok(runs.get('acme', run.id));
-    assert.ok(siteAuth._lockRemaining('10.0.0.9', id) > 0, 'the lockout is there to begin with');
+    assert.ok(siteAuth._lockRemaining('acme', id, '10.0.0.9') > 0, 'the lockout is there to begin with');
 
     const answer = await call('DELETE /api/deploy/projects/:id', Object.assign(
         request({}), { params: { id } }));
@@ -254,7 +254,7 @@ test('removing a project takes its files, its runs and its lockouts with it', as
     assert.equal(runs.get('acme', run.id), null, 'its build consoles are gone');
     // The freed id goes back to the next project of the same name, so a lockout
     // left behind would meet a visitor who never typed a password here.
-    assert.equal(siteAuth._lockRemaining('10.0.0.9', id), 0, 'its lockouts are gone');
+    assert.equal(siteAuth._lockRemaining('acme', id, '10.0.0.9'), 0, 'its lockouts are gone');
 });
 
 test('removing an unknown project is a 404, not a silent success', async () => {

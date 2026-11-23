@@ -225,7 +225,7 @@ function defaultPair() {
  * reaches the client untouched.
  */
 const DEFAULT_TRUST = new Map();
-for (const name of ['verify', 'lookup', 'searchUsers', 'testConnection', 'inspectCertificate', 'readLockoutThreshold']) {
+for (const name of ['verify', 'lookup', 'searchUsers', 'testConnection', 'inspectCertificate', 'readLockoutPolicy']) {
     const real = ldap[name];
     ldap[name] = function (config, ...rest) {
         const pem = config && DEFAULT_TRUST.get(config.url);
@@ -1168,7 +1168,7 @@ test('testConnection on a broken url never touches the network', async () => {
         { ok: false, error: 'ldap_bad_config', detail: 'url is not ldap or ldaps' });
 });
 
-/* --------------------------------------------------- readLockoutThreshold -- */
+/* ------------------------------------------------------ readLockoutPolicy -- */
 
 /**
  * A directory whose rootDSE names `DC=corp,DC=local` and whose domain object
@@ -1189,43 +1189,61 @@ function lockoutFake(domain) {
     });
 }
 
-test('readLockoutThreshold reads lockoutThreshold off the defaultNamingContext as the service account', async (t) => {
-    const fake = await lockoutFake({ lockoutThreshold: ['5'] });
+/** AD stores the observation window as a negative count of 100 ns ticks. */
+const THIRTY_MIN_TICKS = String(-30 * 60 * 1000 * 10000);
+
+test('readLockoutPolicy reads threshold and observation window off the defaultNamingContext as the service account', async (t) => {
+    const fake = await lockoutFake({ lockoutThreshold: ['5'], lockOutObservationWindow: [THIRTY_MIN_TICKS] });
     t.after(() => fake.close());
 
-    const n = await ldap.readLockoutThreshold(Object.assign({ url: fake.url }, SEARCH_CONFIG));
-    assert.strictEqual(n, 5);
+    const policy = await ldap.readLockoutPolicy(Object.assign({ url: fake.url }, SEARCH_CONFIG));
+    assert.deepStrictEqual(policy, { threshold: 5, windowMs: 30 * 60 * 1000 });
     assert.deepStrictEqual(fake.errors, []);
     const ops = fake.seen.filter((s) => s.op !== 'unbind');
     assert.deepStrictEqual(ops.map((s) => s.op), ['bind', 'search', 'search']);
     assert.strictEqual(ops[0].dn, SEARCH_CONFIG.bindDn, 'the service bind, never a user');
-    assert.deepStrictEqual(ops[2].attributes, ['lockoutThreshold']);
+    assert.deepStrictEqual(ops[2].attributes, ['lockoutThreshold', 'lockOutObservationWindow']);
 });
 
-test('readLockoutThreshold returns 0 when AD has no lockout', async (t) => {
+test('readLockoutPolicy returns threshold 0 when AD has no lockout, whatever the window says', async (t) => {
     const fake = await lockoutFake({ lockoutThreshold: ['0'] });
     t.after(() => fake.close());
-    assert.strictEqual(await ldap.readLockoutThreshold(Object.assign({ url: fake.url }, SEARCH_CONFIG)), 0);
+    assert.deepStrictEqual(await ldap.readLockoutPolicy(Object.assign({ url: fake.url }, SEARCH_CONFIG)),
+        { threshold: 0, windowMs: null });
 });
 
-test('readLockoutThreshold rejects when the domain object cannot be read', async (t) => {
+test('readLockoutPolicy rejects when the domain object cannot be read', async (t) => {
     // What AD answers on an anonymous connection: the rootDSE is readable, the
     // domain object is not.
     const fake = await lockoutFake({ resultCode: 1, diagnostic: 'a successful bind must be completed' });
     t.after(() => fake.close());
-    await assert.rejects(ldap.readLockoutThreshold(Object.assign({ url: fake.url }, SEARCH_CONFIG)),
+    await assert.rejects(ldap.readLockoutPolicy(Object.assign({ url: fake.url }, SEARCH_CONFIG)),
         (e) => e.ldapCode === 'ldap_search_denied');
 });
 
-test('readLockoutThreshold rejects a domain object that carries no usable value', async (t) => {
-    const fake = await lockoutFake({ lockoutThreshold: ['-1'] });
+test('readLockoutPolicy rejects a threshold that is not a count', async (t) => {
+    const fake = await lockoutFake({ lockoutThreshold: ['-1'], lockOutObservationWindow: [THIRTY_MIN_TICKS] });
     t.after(() => fake.close());
-    await assert.rejects(ldap.readLockoutThreshold(Object.assign({ url: fake.url }, SEARCH_CONFIG)),
+    await assert.rejects(ldap.readLockoutPolicy(Object.assign({ url: fake.url }, SEARCH_CONFIG)),
         (e) => e.ldapCode === 'ldap_protocol_error');
 });
 
-test('readLockoutThreshold on a plain url rejects and opens nothing', async () => {
-    await assert.rejects(ldap.readLockoutThreshold({ url: 'ldap://dc01.corp.local:389' }),
+test('readLockoutPolicy rejects a lockout with no usable observation window', async (t) => {
+    for (const window of [undefined, '0', '600000000', 'soon']) {
+        const attrs = { lockoutThreshold: ['5'] };
+        if (window !== undefined) attrs.lockOutObservationWindow = [window];
+        const fake = await lockoutFake(attrs);
+        try {
+            await assert.rejects(ldap.readLockoutPolicy(Object.assign({ url: fake.url }, SEARCH_CONFIG)),
+                (e) => e.ldapCode === 'ldap_protocol_error', `window ${window}`);
+        } finally {
+            await fake.close();
+        }
+    }
+});
+
+test('readLockoutPolicy on a plain url rejects and opens nothing', async () => {
+    await assert.rejects(ldap.readLockoutPolicy({ url: 'ldap://dc01.corp.local:389' }),
         (e) => e.ldapCode === 'ldap_requires_tls');
 });
 

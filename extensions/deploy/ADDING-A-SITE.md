@@ -35,7 +35,8 @@ Optional, in rough order of how often you will want it: environment variables,
 encrypted at rest; a hostname so the site answers by name through one shared
 listener; a TLS certificate, given as paths so a renewal is picked up by a
 restart; a `vercel.json` for redirects, rewrites, headers and a single-page
-fallback; a login form backed by your directory; a SQLite file and a migrations
+fallback; a login form backed by your directory, which keeps its own failed
+attempts under the domain's lockout threshold; a SQLite file and a migrations
 directory.
 
 ## What it does well
@@ -167,14 +168,15 @@ directory cannot answer. To get somebody out now, close their sessions from the
 site's Authentication tab, under Signed in now.
 
 Failed sign-ins are counted per address (5, then a minute) and per account,
-whatever spelling of the name was typed. The per-account cap sits two below the
-directory's `lockoutThreshold`, read as the service account (5 when AD never
-locks, 3 when the threshold cannot be read, which is the case without a service
-account), and each failure past it doubles the wait, up to 30 minutes. A locked
-account is refused before its password reaches the directory. This slows
-guesses spread over many addresses down well before AD would lock the person
-out; it does not replace AD's own lockout policy. DEPLOY-CONTRACT.md, "Too many
-attempts", has the details.
+whatever spelling of the name was typed. Deploy reads the domain's
+`lockoutThreshold` and `lockOutObservationWindow` as the service account and
+sends at most the threshold minus two refused binds per account per window (5
+per 15 minutes when AD never locks, 2 per 30 minutes when the policy cannot be
+read, which is the case without a service account). So this form alone never
+locks anyone out of the domain. It cannot account for bad passwords typed
+elsewhere (Windows logons, other applications), which AD counts too, nor for
+fine-grained password policies, which are not read. DEPLOY-CONTRACT.md, "Too
+many attempts", has the details.
 
 Cookies are scoped by host and not by port. Two protected sites on one machine
 share the cookie name, so logging into the second replaces the session of the

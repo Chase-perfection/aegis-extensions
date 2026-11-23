@@ -610,7 +610,7 @@ session open on the site.
 deletes the whole project folder, `current/` and every kept release with it. It also
 drops the tenant's cached auth rule for the site, its cached serving config and
 fallback switch, every session anyone holds on it, its build consoles, and the
-login lockouts recorded against its id. That
+login lockouts recorded against its tenant and id. That
 last one matters because `idFor` hands a freed id straight to the next project
 of the same name, and an inherited lockout would refuse a visitor who never
 typed a password there.
@@ -910,56 +910,86 @@ sub-code Microsoft adds later is readable there before it is readable here.
 
 ### Too many attempts
 
-Two counters stand in front of the directory, and the longer of the two wins.
-While either holds, the form answers 429 with `Retry-After` and "Too many
+Two counters stand in front of the directory, and the longer wait of the two
+wins. While either holds, the form answers 429 with `Retry-After` and "Too many
 attempts. Try again in N seconds.", and no bind is sent.
 
-| Counter | Key | Locks | For |
-|---|---|---|---|
-| Per address | client address and project | after 5 failures | 60 seconds, then the count starts over |
-| Per account | project and account name | at the cap below | 60 seconds, doubled for each further failure, at most 30 minutes |
+| Counter | Key | Rule |
+|---|---|---|
+| Per address | tenant, project, client address | 5 failures, then 60 seconds; the count starts over |
+| Per account | tenant, project, account name | at most `cap` refused binds per observation window (below) |
+
+Both are keyed on the tenant as well as the project: two tenants with a project
+of the same name never lock or clear each other.
 
 The account name is compared the way the allow list compares it: lower case,
 without a `DOMAIN\` prefix or an `@suffix`, so `CORP\Alice`, `alice@corp.local`
 and `ALICE` are one counter. A name that is empty once normalised is refused as
 an empty form and counts nowhere.
 
-The per-account cap sits below the directory's own lockout, so guesses spread
-over many addresses are stopped here before they reach Active Directory's
-threshold. Deploy reads `lockoutThreshold` on the domain object (the rootDSE's
-`defaultNamingContext`, base scope, as the service account) and caps at the
-threshold minus two, never below 1. A threshold of 0 (AD never locks) gives 5.
-A threshold that cannot be read, typically because the service account is
-empty and the bind is anonymous, gives 3. The value is cached for 24 hours, an
-unreadable answer for 10 minutes, and a save of the directory settings reads it
-again.
+#### The guarantee, and where it stops
 
-Only a refusal the directory gave about the account counts against it (a wrong
-password, an unknown name, an account that is disabled, expired or locked). An
-unknown name counts exactly like a real one, so the lock reveals nothing about
-which accounts exist. A directory that cannot be reached counts against the
-address only. A request refused because the account is locked changes no
-counter, so hammering a locked account does not lengthen its lock: the wait
-grows only from binds the directory refused, and at most one such bind fits in
-each lock. A successful sign-in clears both counters for that address and that
-account. An account record is forgotten 30 minutes after its last failure or
-lock.
+Active Directory counts bad passwords per account in `badPwdCount`, locks the
+account at `lockoutThreshold`, and starts the count over once
+`lockOutObservationWindow` has passed since the previous bad password. Deploy
+reads both attributes from the domain object (the rootDSE's
+`defaultNamingContext`, base scope, as the service account) and keeps the same
+books per account:
+
+| Domain policy | Cap per window | Window |
+|---|---|---|
+| `lockoutThreshold` > 0 | threshold minus 2, at least 1 | `lockOutObservationWindow` |
+| `lockoutThreshold` = 0 (AD never locks) | 5 | 15 minutes |
+| unreadable (anonymous bind, refusal, error) | 2 | 30 minutes |
+
+The first refused bind is free. Each further one under the cap waits 60
+seconds, doubled per failure, at most 30 minutes. Once the cap is reached, no
+bind is sent for that account until a whole window (plus 5 seconds) has passed
+since the last counted failure, and only then does the count start over. So
+within any observation window this site never sends AD as many bad passwords as
+its threshold, and no attacker, from any number of addresses, can lock an
+account out through this form alone. After the window the right password opens
+the site again.
+
+The guarantee is about the binds Deploy sends, and it has limits:
+
+- AD counts every bad password, not only these. Windows logons, other
+  applications, a phone with an old password: each raises `badPwdCount` too,
+  and together with this site's binds they can still reach the threshold.
+- Fine-grained password policies are not read. An account under a
+  `msDS-ResultantPSO` with a stricter threshold or a longer window than the
+  domain default may still be locked by AD.
+- With a threshold of 1 or 2 the cap is 1, and a threshold of 1 cannot be
+  protected at all: the first bad password locks the account.
+- When the policy is unreadable, the guarantee holds only if the real threshold
+  is 3 or more and the real window is 30 minutes or less.
+- The counters live in memory, per backend process. A restart forgets them.
+
+Only a refusal that is a bad password on the DC counts against the account: a
+wrong password, an unknown name, an account that is disabled, expired, locked
+or not allowed to sign in now. An expired password or one that must be changed
+was the right password and does not count. An unknown name counts exactly like
+a real one, so the lock reveals nothing about which accounts exist. A directory
+that cannot be reached counts against the address only. A request refused
+because the account is locked changes no counter, so hammering a locked account
+does not lengthen its lock. A successful sign-in clears both counters for that
+address and that account.
 
 One bind per account is in flight at a time. A second post for the same account
 while the first is with the directory gets the 429 with a one-second wait, so a
 burst of parallel posts cannot all pass the check before the first failure is
 counted.
 
-Each lock that ends lets one more bind through. Whether that bind can reach the
-directory's threshold depends on AD's own observation window (`Reset account
-lockout counter after`): the doubling spaces the binds out, it does not stop
-them. With a threshold of 3 or less the cap is 1, and a person who mistypes
-once waits a minute.
+The policy is cached for 24 hours, an unreadable answer for 10 minutes, and a
+save of the directory settings reads it again. Concurrent first failures share
+one read.
 
-The counters live in memory, at most 10,000 records. When full, records that
-are quiet go first, then the oldest records that hold no lock, and a locked
-record only when nothing else is left, so a spray of invented names cannot
-evict the lock on the account it is aimed at.
+The counters hold at most 10,000 records. When full, records nothing depends on
+go first, then address records. An account record still inside its window is
+never evicted, because dropping it would hand an attacker a fresh count on an
+account AD is still counting. If the map is full of such records, a sign-in for
+an account not yet tracked is refused with the 429 and no bind: the guard fails
+closed rather than send a bind it cannot count.
 
 ## Filling the directory form
 

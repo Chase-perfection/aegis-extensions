@@ -1626,19 +1626,26 @@ async function testConnection(config) {
 }
 
 /**
- * How many bad passwords the directory allows before it locks an account,
- * read from `lockoutThreshold` on the domain object. 0 means AD never locks.
+ * The domain's account lockout policy: `{ threshold, windowMs }`.
  *
- * The domain object is the one the rootDSE names as `defaultNamingContext`,
- * read by base scope, as the service account (or anonymously when no service
- * account is set, which is how `lookup` runs too). The rootDSE is readable by
- * anyone; the domain object usually is not, so an anonymous connection gets
- * `ldap_search_denied` here.
+ * `threshold` is `lockoutThreshold`, how many bad passwords AD allows before it
+ * locks an account; 0 means AD never locks, and `windowMs` is then null.
+ * `windowMs` is `lockOutObservationWindow`, how long after a bad password AD
+ * keeps counting it. AD stores that as a negative count of 100 ns ticks.
  *
- * Rejects with an LdapError whenever the number cannot be read. The caller
- * picks a conservative cap on rejection; this function never guesses one.
+ * Both are read from the domain object, the one the rootDSE names as
+ * `defaultNamingContext`, by base scope, as the service account (or
+ * anonymously when no service account is set, which is how `lookup` runs too).
+ * The rootDSE is readable by anyone; the domain object usually is not, so an
+ * anonymous connection gets `ldap_search_denied` here.
+ *
+ * Fine-grained password policies (msDS-ResultantPSO) are not read: this is the
+ * domain default only.
+ *
+ * Rejects with an LdapError whenever the policy cannot be read whole. The
+ * caller picks conservative values on rejection; this function never guesses.
  */
-async function readLockoutThreshold(config) {
+async function readLockoutPolicy(config) {
     let state = null;
     try {
         const cfg = normalizeConfig(config);
@@ -1657,16 +1664,29 @@ async function readLockoutThreshold(config) {
 
         const domain = await search(state, {
             baseDn: nc, scope: SCOPE.BASE, filter: everything,
-            attributes: ['lockoutThreshold'], sizeLimit: 1
+            attributes: ['lockoutThreshold', 'lockOutObservationWindow'], sizeLimit: 1
         });
         assertSearchable(domain.result);
         const attrs = (domain.entries[0] && domain.entries[0].attributes) || Object.create(null);
         const raw = attrs.lockoutthreshold && attrs.lockoutthreshold[0];
-        const n = Number(raw);
-        if (raw === undefined || raw === null || String(raw).trim() === '' || !Number.isInteger(n) || n < 0) {
+        const threshold = Number(raw);
+        if (raw === undefined || raw === null || !/^\s*\d+\s*$/.test(String(raw)) || !Number.isSafeInteger(threshold)) {
             throw new LdapError('ldap_protocol_error', 'the domain object carries no usable lockoutThreshold');
         }
-        return n;
+        if (threshold === 0) return { threshold: 0, windowMs: null };
+
+        // A large integer, beyond what a Number holds exactly: parsed as a
+        // BigInt. Negative and non-zero, or it is not a window.
+        const rawWindow = attrs.lockoutobservationwindow && attrs.lockoutobservationwindow[0];
+        const text = String(rawWindow === undefined || rawWindow === null ? '' : rawWindow).trim();
+        if (!/^-\d+$/.test(text)) {
+            throw new LdapError('ldap_protocol_error', 'the domain object carries no usable lockOutObservationWindow');
+        }
+        const windowMs = Number(-BigInt(text) / 10000n);
+        if (!Number.isSafeInteger(windowMs) || windowMs <= 0) {
+            throw new LdapError('ldap_protocol_error', 'the domain object carries no usable lockOutObservationWindow');
+        }
+        return { threshold, windowMs };
     } finally {
         if (state) closeSession(state);
     }
@@ -1821,7 +1841,7 @@ async function inspectCertificate(config) {
 
 module.exports = {
     verify, lookup, searchUsers, testConnection, inspectCertificate, refreshTrust,
-    readLockoutThreshold,
+    readLockoutPolicy,
     escapeFilter, escapeDn, encode, decode, sidToString,
     // Exercised directly by tests/ldap.test.js: the SID arithmetic has no
     // observable effect without a directory that publishes a primary group.

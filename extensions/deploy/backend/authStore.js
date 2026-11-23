@@ -250,7 +250,7 @@ function writeConfig(tenantPaths, next) {
     }
 
     writeRaw(tenantPaths, rec);
-    forgetThreshold(tenantPaths);
+    forgetLockoutPolicy(tenantPaths);
     return publicConfig(tenantPaths);
 }
 
@@ -274,48 +274,88 @@ function forgetAuthorities(tenantPaths) {
 }
 
 /* ------------------------------------------------------------------ */
-/* the directory's lockout threshold, cached                           */
+/* the directory's lockout policy, cached                              */
 /* ------------------------------------------------------------------ */
 
 /** A domain policy changes rarely: read once a day. An unreadable answer is
- *  retried sooner, because the fallback cap it leaves in place is stricter
- *  than most directories need. */
-const THRESHOLD_TTL_MS = 24 * 60 * 60 * 1000;
-const THRESHOLD_RETRY_MS = 10 * 60 * 1000;
+ *  retried sooner, because the fallback it leaves in place is stricter than
+ *  most directories need. */
+const POLICY_TTL_MS = 24 * 60 * 60 * 1000;
+const POLICY_RETRY_MS = 10 * 60 * 1000;
 
-/** `storeFile` -> { at, value }. `value` is a number, or null for unreadable. */
-const thresholdCache = new Map();
+/** `storeFile` -> { at, value }. `value` is `{ threshold, windowMs }`, or null
+ *  for unreadable. */
+const policyCache = new Map();
+/** `storeFile` -> the read in progress, so concurrent failures share one. */
+const policyReads = new Map();
+
+/** A policy as ldap.readLockoutPolicy returns it, or null when it is not one. */
+function cleanPolicy(p) {
+    if (!p || typeof p !== 'object' || !Number.isInteger(p.threshold) || p.threshold < 0) return null;
+    if (p.threshold === 0) return { threshold: 0, windowMs: null };
+    if (!Number.isSafeInteger(p.windowMs) || p.windowMs <= 0) return null;
+    return { threshold: p.threshold, windowMs: p.windowMs };
+}
 
 /**
- * The cached `lockoutThreshold` of this tenant's directory: a number, null when
- * the last read failed, or undefined when there is nothing fresh to answer.
- * In memory only: it is a property of the directory, not a setting.
+ * The cached lockout policy of this tenant's directory: `{ threshold,
+ * windowMs }`, null when the last read failed, or undefined when there is
+ * nothing fresh to answer. In memory only: it is a property of the directory,
+ * not a setting.
  */
-function cachedThreshold(tenantPaths) {
+function cachedLockoutPolicy(tenantPaths) {
     const key = storeFile(tenantPaths);
-    const hit = thresholdCache.get(key);
+    const hit = policyCache.get(key);
     if (!hit) return undefined;
-    const ttl = hit.value === null ? THRESHOLD_RETRY_MS : THRESHOLD_TTL_MS;
+    const ttl = hit.value === null ? POLICY_RETRY_MS : POLICY_TTL_MS;
     if (Date.now() - hit.at >= ttl) {
-        thresholdCache.delete(key);
+        policyCache.delete(key);
         return undefined;
     }
     return hit.value;
 }
 
-function rememberThreshold(tenantPaths, value) {
-    const v = Number.isInteger(value) && value >= 0 ? value : null;
-    thresholdCache.set(storeFile(tenantPaths), { at: Date.now(), value: v });
+function rememberLockoutPolicy(tenantPaths, value) {
+    policyCache.set(storeFile(tenantPaths), { at: Date.now(), value: cleanPolicy(value) });
+}
+
+/**
+ * The policy, from cache or from `reader(config)` (which rejects when it
+ * cannot read). One read per tenant at a time: concurrent callers share it.
+ * Never rejects: an unreadable policy resolves to null.
+ */
+function lockoutPolicy(tenantPaths, config, reader) {
+    const cached = cachedLockoutPolicy(tenantPaths);
+    if (cached !== undefined) return Promise.resolve(cached);
+    const key = storeFile(tenantPaths);
+    const pending = policyReads.get(key);
+    if (pending) return pending;
+    const read = Promise.resolve()
+        .then(() => reader(config))
+        .then(cleanPolicy, () => null)
+        .then((value) => {
+            // A save while the read was out forgot it: this answer is about
+            // the directory that was there before, so it is not kept.
+            if (policyReads.get(key) === read) {
+                policyReads.delete(key);
+                policyCache.set(key, { at: Date.now(), value });
+            }
+            return value;
+        });
+    policyReads.set(key, read);
+    return read;
 }
 
 /** A save may point at another directory, so the next failure reads again. */
-function forgetThreshold(tenantPaths) {
-    thresholdCache.delete(storeFile(tenantPaths));
+function forgetLockoutPolicy(tenantPaths) {
+    const key = storeFile(tenantPaths);
+    policyCache.delete(key);
+    policyReads.delete(key);
 }
 
 /** Removes the directory entirely. Any protected site then refuses, by design. */
 function clearConfig(tenantPaths) {
-    forgetThreshold(tenantPaths);
+    forgetLockoutPolicy(tenantPaths);
     try {
         fs.unlinkSync(storeFile(tenantPaths));
     } catch (e) {
@@ -326,7 +366,7 @@ function clearConfig(tenantPaths) {
 module.exports = {
     readConfig, publicConfig, writeConfig, clearConfig,
     trustAuthority, forgetAuthorities, describePinned, cleanPemList,
-    cachedThreshold, rememberThreshold, forgetThreshold,
+    lockoutPolicy, cachedLockoutPolicy, rememberLockoutPolicy, forgetLockoutPolicy,
     DEFAULT_USER_FILTER, DEFAULT_GROUP_ATTR, DEFAULT_REVALIDATE_MINUTES,
     storeFile
 };
