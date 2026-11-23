@@ -49,7 +49,7 @@ const runStore = require('./runStore');
 const { startPoller, SAME_SHA_ATTEMPTS } = require('./poller');
 const {
     startSiteFor, restartSiteFor, startAllSites, allocatePort, isServing,
-    startRouter, routerPort, routerIsTls, invalidateHostIndex, normaliseHostname
+    startRouter, routerPort, routerIsTls, invalidateHostIndex, normaliseHostname, servesSecurely
 } = require('./siteServer');
 const authStore = require('./authStore');
 const authMethods = require('./authMethods');
@@ -1459,6 +1459,13 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // tab, and a repository naming the colleagues who may read the site it
         // produces would be a grant written by whoever can push to it.
         if (body.auth && !draft.auth) {
+            // A new project has no certificate and no host name yet, so it
+            // cannot be created behind a login. Created open, protected from
+            // its Authentication tab once TLS is on.
+            if (authMethods.isKnown(body.auth) && body.auth !== authMethods.NONE
+                && !servesSecurely(draft)) {
+                return refuse(400, { error: 'auth_requires_tls' });
+            }
             draft.auth = authMethods.record(body.auth, [], {});
         }
 
@@ -1946,6 +1953,9 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             // the site being served, and a preview of a protected site must be
             // protected from its first request.
             auth: parent.auth || undefined,
+            // Same certificate as the parent: a protected parent means a
+            // protected preview, and that is refused on a clear socket.
+            tls: parent.tls || undefined,
             spaFallback: !!parent.spaFallback,
             port,
             createdAt: Date.now(),
@@ -2044,6 +2054,13 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                     return res.status(409).json({ success: false, error: 'hostname_taken' });
                 }
             }
+        }
+
+        // A protected site that reaches TLS only through its host name cannot
+        // lose the name: it would be left behind a login served in clear.
+        if (wantsHostname && isProtectedRecord(project) && !hostname
+            && servesSecurely(project) && !servesSecurely(Object.assign({}, project, { hostname: null }))) {
+            return res.status(409).json({ success: false, error: 'tls_required_by_auth' });
         }
 
         // Mutated on the record that was read: `saveProject` replaces the row
@@ -2693,6 +2710,14 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             return res.status(400).json({ success: false, error: 'bad_enabled' });
         }
 
+        // Switching TLS off under a login would serve the form in clear. The
+        // operator turns the protection off first, then TLS. Unless the router
+        // still carries the site over TLS under its host name.
+        if (!body.enabled && isProtectedRecord(project)
+            && !servesSecurely(Object.assign({}, project, { tls: null }))) {
+            return res.status(409).json({ success: false, error: 'tls_required_by_auth' });
+        }
+
         let tls;
         if (body.enabled) {
             const certFile = parseCertPath(body.certFile);
@@ -3185,6 +3210,14 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             // A strict boolean, not a truthiness test: a value this route did
             // not expect must not quietly resolve to "unprotected".
             return res.status(400).json({ success: false, error: 'bad_enabled' });
+        }
+
+        // A login is only worth having over TLS: the password and the session
+        // cookie would otherwise cross the network in clear. `none` is always
+        // allowed, so a site can still be opened up. The gate holds the same
+        // line on every request (`site_not_tls`).
+        if (method !== authMethods.NONE && !servesSecurely(project)) {
+            return res.status(400).json({ success: false, error: 'auth_requires_tls' });
         }
 
         const allowedGroups = parseAllowedGroups(body.allowedGroups);

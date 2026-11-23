@@ -1022,9 +1022,22 @@ first site in the list. A project with no port is not routed either: it has
 nothing published, and a 404 from the site reads as a deployment problem rather
 than a configuration one.
 
-Still no HSTS, for the reason in `siteServer.js`'s header: the header is scoped
-to a host name and ignores the port, and these sites still share a machine with
-plain HTTP ones.
+`Strict-Transport-Security: max-age=31536000` is sent only on a secure request
+that reached the site through this listener under the project's host name, never
+on `host:port`: the header is scoped to a host name and ignores the port, so on
+the shared machine name it would force HTTPS onto every plain HTTP site too.
+
+**A protected site is served over TLS only.** `POST /api/deploy/projects/:id/auth`
+refuses any method but `none` with `400 auth_requires_tls` unless the project has
+`tls.enabled`, or has a host name while this listener serves TLS. The same rule
+applies to a project created with an `auth` method. `POST .../tls` with
+`enabled: false`, and `POST .../settings` clearing the host name that carries the
+TLS, answer `409 tls_required_by_auth` while the site is protected. On every
+request, `siteAuth.gate` answers `503 site_not_tls` on a clear socket for a
+protected site, before any form, cookie or directory lookup, so a project
+protected before this rule fails closed until TLS is turned on. A plain-HTTP
+listener asked for a protected site that has its own HTTPS port answers
+`308` to `https://<host>:<port><url>`.
 
 `POST /api/deploy/projects/:id/settings` takes `hostname` and `spaFallback`,
 either or both. An empty `hostname` clears it, which frees the name.

@@ -5145,6 +5145,8 @@
     }
 
     var AUTH_ERRORS = {
+        auth_requires_tls: ['deploy_auth_err_requires_tls', 'A site behind a login must be served over HTTPS. Turn HTTPS on for this site first, or give it a host name served by the HTTPS host router, then protect it.'],
+        tls_required_by_auth: ['deploy_tls_err_required_by_auth', 'This site is behind a login, which needs HTTPS. Switch the protection off first, then turn HTTPS off.'],
         bad_auth_method: ['deploy_auth_err_bad_method', 'Aegis does not know that authentication method. Reload the page and pick one from the list.'],
         ldap_not_configured: ['deploy_auth_err_not_configured', 'No directory is configured yet. Fill in the address and the search base, then save.'],
         bad_ldap_url: ['deploy_auth_err_bad_url', 'The directory address must start with ldap:// or ldaps://, for example ldaps://dc01.corp.local:636.'],

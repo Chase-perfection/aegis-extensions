@@ -25,12 +25,18 @@
  * `tlsOptionsFor` for why paths and not stored PEM, and `startSiteFor` for why
  * a certificate that will not load stops the site instead of downgrading it.
  *
- * No `Strict-Transport-Security`, and this is not an oversight to correct.
- * HSTS is scoped to a host name and ignores the port (RFC 6797 section 8.1).
- * Every site on this machine shares one host name and differs only by port, so
- * a single HTTPS site sending that header would force HTTPS onto all of them,
- * including the plain-HTTP ones, and take those down in every browser that had
- * seen it. It only becomes safe once each site has a host name of its own.
+ * A site behind a login is served over TLS only: `siteAuth.gate` answers 503
+ * `site_not_tls` on a clear socket, and the routes refuse to protect a site that
+ * has no TLS (see `servesSecurely`).
+ *
+ * `Strict-Transport-Security` is sent only on a secure request that reached the
+ * site through the host router under the project's own host name, never on
+ * `host:port`. HSTS is scoped to a host name and ignores the port (RFC 6797
+ * section 8.1). Every site on this machine shares one host name and differs only
+ * by port, so one HTTPS site sending that header on its port URL would force
+ * HTTPS onto all of them, including the plain-HTTP ones, and take those down in
+ * every browser that had seen it. A name of its own is the one place where the
+ * header cannot reach anything else.
  */
 
 'use strict';
@@ -44,6 +50,7 @@ const zlib = require('zlib');
 
 const projectStore = require('./projectStore');
 const siteAuth = require('./siteAuth');
+const authMethods = require('./authMethods');
 const siteConfig = require('./siteConfig');
 const siteNotices = require('./siteNotices');
 const runtime = require('./runtime');
@@ -1029,10 +1036,27 @@ function startRouter({ pathsFor, tenantsRoot }) {
                 // nobody claimed has no right answer.
                 return send(res, 404, 'No site is published under this name');
             }
+            // A clear listener that is asked for a protected site sends the
+            // visitor to the site's own HTTPS port when it has one, before any
+            // login form can be served in clear. With no HTTPS to go to, the
+            // request falls through and the gate answers 503 `site_not_tls`.
+            if (!tlsOptions && authMethods.isGated(hit.project.auth)
+                && hit.project.tls && hit.project.tls.enabled === true
+                && hit.project.port && String(req.url || '').startsWith('/')) {
+                res.writeHead(308, {
+                    Location: `https://${host}:${hit.project.port}${req.url}`,
+                    'Content-Length': 0,
+                    'Cache-Control': 'no-store'
+                });
+                return res.end();
+            }
             handle(req, res, {
                 slug: hit.slug,
                 tenantPaths: hit.tenantPaths,
                 project: { id: hit.project.id, name: hit.project.name || hit.project.id },
+                // The name this request was routed by. Read by `siteAuth.gate`,
+                // which sends HSTS only for a secure request that carries it.
+                viaRouterHostName: host,
                 runtime: hit.project.runtime === 'node' ? 'node' : 'static',
                 root: projectStore.currentDir(hit.tenantPaths, hit.project.id)
             });
@@ -1068,9 +1092,23 @@ function routerIsTls() {
     return !!(process.env.AEGIS_SITES_ROUTER_CERT && process.env.AEGIS_SITES_ROUTER_KEY);
 }
 
+/**
+ * Whether a project can be reached over TLS, which is what lets it sit behind a
+ * login.
+ *
+ * Two ways: its own certificate (`project.tls.enabled`), or a host name routed
+ * by the shared listener while that listener serves TLS. The name alone is not
+ * enough, since a plain router would serve it in clear.
+ */
+function servesSecurely(project) {
+    if (!project) return false;
+    if (project.tls && project.tls.enabled === true) return true;
+    return routerIsTls() && !!project.port && !!normaliseHostname(project.hostname);
+}
+
 module.exports = {
     startSiteFor, stopSiteFor, restartSiteFor, startAllSites, allocatePort,
-    resolveFile, tlsOptionsFor,
+    resolveFile, tlsOptionsFor, servesSecurely,
     startRouter, routerPort, routerIsTls, invalidateHostIndex,
     touchSite, lastTouch, proxyTo, withoutHopByHop,
     IDENTITY_HEADERS, stripIdentity, stripProxyKey, encodeIdentity,

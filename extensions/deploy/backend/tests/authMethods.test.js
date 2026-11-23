@@ -46,7 +46,8 @@ function fakeReq(method, url) {
     req.method = method;
     req.url = url;
     req.headers = {};
-    req.socket = { remoteAddress: '10.0.0.1' };
+    // Encrypted: a protected site is served over TLS only.
+    req.socket = { remoteAddress: '10.0.0.1', encrypted: true };
     return req;
 }
 

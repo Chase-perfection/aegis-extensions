@@ -149,11 +149,13 @@ a phishing target that Kerberos removes by construction. KPI Usine keeps IIS in
 front for exactly this reason. If your users expect silent sign-on, Deploy's
 grid is not the answer.
 
-Without TLS, the honest description is "keeps colleagues out". The session
-cookie is `Secure` only on a site actually served over HTTPS, because setting
-the flag on a plain-HTTP site would stop login working rather than harden
-anything. A site without TLS sends its credentials and its session token in
-clear.
+A protected site is served over HTTPS only. Aegis refuses to protect a site
+that has no TLS (turn HTTPS on first, or give the site a host name served by the
+HTTPS host router), refuses to turn TLS off under a protected site, and answers
+503 on a plain connection to a protected site, so a password and a session
+cookie never cross the network in clear. A site that was protected before this
+rule and has no TLS is not changed for you: it stays closed until you turn TLS
+on.
 
 Sessions live in memory, so a backend restart logs everyone out of every
 protected site. Group membership is re-checked on a timer, not per request, so

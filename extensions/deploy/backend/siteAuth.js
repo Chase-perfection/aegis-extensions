@@ -34,13 +34,17 @@
  * Known limits an operator has to be told about, stated plainly rather than
  * papered over:
  *
- * - The session cookie is `Secure` only on a site that is actually served over
- *   TLS, and the flag is read from the socket rather than from configuration.
- *   Setting it on a plain-HTTP site would not harden anything: the browser
- *   would never send the cookie back and login would stop working. A site
- *   without TLS therefore still sends its credentials and its session token in
- *   clear, and the honest description of it is "keeps colleagues out", not
- *   "secure". `project.tls` in `siteServer.js` is how a site stops being that.
+ * - A protected site is served over TLS only. `gate` answers 503 `site_not_tls`
+ *   on a clear socket before any form or cookie, so a password and a session
+ *   token never cross the network in clear. The cookie is `Secure`, and the
+ *   flag is read from the socket rather than from configuration. A project that
+ *   was protected before this rule and has no TLS is not migrated: it fails
+ *   closed until the operator turns TLS on. `project.tls` in `siteServer.js` is
+ *   how a site gets there.
+ * - `Strict-Transport-Security` goes out only on a secure request routed by the
+ *   project's own host name (`ctx.viaRouterHostName`), never on `host:port`:
+ *   HSTS ignores the port, so on a shared host name it would reach every other
+ *   site on the machine.
  * - Cookies are scoped by host, not by port. Two protected sites on the same
  *   machine share the `aegis_site` cookie name, so logging into the second one
  *   replaces the session of the first. The session record stores the slug and
@@ -480,6 +484,7 @@ const STRINGS = {
         signedOut: 'You have been signed out.',
         errUnavailable: 'Sign-in is unavailable for this site. Contact the administrator.',
         errUnavailableTitle: 'Sign-in unavailable',
+        errNotTls: 'This site requires an encrypted connection. Open it over HTTPS, or contact the administrator.',
         errCredentials: 'Incorrect username or password.',
         errPasswordExpired: 'Your password has expired. Change it, then sign in again.',
         errPasswordMustChange: 'Your password must be changed before you can sign in.',
@@ -506,6 +511,7 @@ const STRINGS = {
         signedOut: 'Vous avez été déconnecté.',
         errUnavailable: 'La connexion est indisponible pour ce site. Contactez l\'administrateur.',
         errUnavailableTitle: 'Connexion indisponible',
+        errNotTls: 'Ce site exige une connexion chiffrée. Ouvrez-le en HTTPS, ou contactez l\'administrateur.',
         errCredentials: 'Identifiant ou mot de passe incorrect.',
         errPasswordExpired: 'Votre mot de passe a expiré. Changez-le, puis reconnectez-vous.',
         errPasswordMustChange: 'Votre mot de passe doit être changé avant la connexion.',
@@ -851,8 +857,14 @@ function loginPage(res, status, ctx, opts) {
  * anything, false when it is authenticated and the file server should proceed.
  * Returns a promise on the POST path only; the caller handles both.
  */
-function gate(req, res, { slug, tenantPaths, project, root }) {
+function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName }) {
     const projectId = project && project.id;
+    // One year, no `includeSubDomains`, no `preload`: it binds this host name
+    // and nothing under it. Only for a secure request that was routed by the
+    // project's own name; see the file header for why never `host:port`.
+    if (isSecure(req) && viaRouterHostName && typeof res.setHeader === 'function') {
+        res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+    }
     const siteName = (project && (project.name || project.id)) || 'site';
     const pathOnly = String(req.url || '/').split('?')[0];
     const reserved = pathOnly === '/__aegis' || pathOnly.startsWith(PREFIX);
@@ -896,6 +908,17 @@ function gate(req, res, { slug, tenantPaths, project, root }) {
             siteIcon.serve(req, res, { root, siteName });
             return true;
         }
+    }
+
+    // A protected site is never served over a clear socket. Refused before the
+    // directory is consulted and before any form or cookie exists: a password
+    // typed into a page loaded in clear is already lost.
+    if (!isSecure(req)) {
+        const plainLang = pickLang(req);
+        console.warn(`[Deploy] ${slug}/${projectId}: refused, site_not_tls: a protected site is served over TLS only`);
+        sendHtml(res, 503,
+            renderError(plainLang, tr(plainLang, 'errUnavailableTitle'), tr(plainLang, 'errNotTls')));
+        return true;
     }
 
     // Which door this site opens. `none` returned above; every method this

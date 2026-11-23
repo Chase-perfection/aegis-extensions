@@ -26,10 +26,29 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const net = require('net');
-const http = require('http');
+const https = require('https');
+const { spawnSync } = require('node:child_process');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-siteauth-ldap-'));
 process.env.AEGIS_DATA_ROOT = TMP;
+
+/**
+ * A throwaway certificate for the sites under test, written at run time. A
+ * protected site is served over TLS only, and `node:crypto` cannot issue an
+ * X.509 certificate, so openssl does it, as in `siteAuth.test.js`.
+ */
+function selfSignedFiles() {
+    const keyFile = path.join(TMP, 'site-key.pem');
+    const certFile = path.join(TMP, 'site-cert.pem');
+    if (fs.existsSync(keyFile) && fs.existsSync(certFile)) return { keyFile, certFile };
+    const run = spawnSync('openssl', [
+        'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+        '-keyout', keyFile, '-out', certFile, '-days', '1',
+        '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1'
+    ], { stdio: 'ignore' });
+    if (run.status !== 0) throw new Error('openssl is required to build the test certificate');
+    return { keyFile, certFile };
+}
 
 const authStore = require('../authStore');
 const projectStore = require('../projectStore');
@@ -189,8 +208,8 @@ function fakeDirectory(users, accounts) {
 
 function request(port, options, body) {
     return new Promise((resolve, reject) => {
-        const req = http.request({
-            host: '127.0.0.1', port,
+        const req = https.request({
+            host: '127.0.0.1', port, rejectUnauthorized: false,
             method: options.method || 'GET',
             path: options.path || '/',
             headers: options.headers || {}
@@ -290,6 +309,7 @@ async function scaffold(t, {
     const port = await freePort();
     const project = {
         id: 'demo', name: 'Demo Site', port,
+        tls: Object.assign({ enabled: true }, selfSignedFiles()),
         auth: { enabled: protectedSite, allowedGroups: allowedGroups || [] }
     };
     projectStore.saveProject(tenantPaths, project);

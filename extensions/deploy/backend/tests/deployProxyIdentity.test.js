@@ -65,7 +65,9 @@ function fakeReq(method, url, opts) {
     req.url = url;
     req.headers = Object.assign({}, o.headers);
     req.socket = { remoteAddress: o.ip || '10.0.0.1' };
-    if (o.secure) req.socket.encrypted = true;
+    // A protected site is served over TLS only, so a request is encrypted
+    // unless the test says `secure: false`.
+    if (o.secure !== false) req.socket.encrypted = true;
     return req;
 }
 

@@ -31,6 +31,11 @@ const routes = require('../routes');
 const projectStore = require('../projectStore');
 const authMethods = require('../authMethods');
 
+// The create route reads the branch before it decides anything. No network.
+const github = require('../github');
+github.readRepoFile = async () => null;
+github.listRootEntries = async () => [];
+
 console.log = () => { };
 console.error = () => { };
 
@@ -92,11 +97,19 @@ function request(id, body) {
     };
 }
 
-/** A project on disk, with whatever auth record the test needs. */
-function makeProject(id, auth) {
-    projectStore.saveProject(pathsFor('acme'), {
+/**
+ * A project on disk, with whatever auth record the test needs.
+ *
+ * It carries a TLS switch by default, because a protected site is refused
+ * without one; a test about that refusal passes `tls` as `null`.
+ */
+function makeProject(id, auth, tls) {
+    const record = {
         id, name: id, port: 3081, repoUrl: 'https://github.com/acme/' + id, auth
-    });
+    };
+    record.tls = tls === undefined ? { enabled: true, certFile: 'C:\\certs\\site.pem', keyFile: 'C:\\certs\\site.key' } : tls;
+    if (record.tls === null) delete record.tls;
+    projectStore.saveProject(pathsFor('acme'), record);
     return id;
 }
 
@@ -376,4 +389,87 @@ test('route: a save that mentions no grants closes every declared resource', asy
 
     assert.deepEqual(storedAuth(id).grants, {},
         'the closed state is the one a silent body has to produce');
+});
+
+/* ------------------------------------------------------------------ */
+/* HTTPS is mandatory for a protected site                             */
+/* ------------------------------------------------------------------ */
+
+const TLS_ROUTE = 'POST /api/deploy/projects/:id/tls';
+const AUTH_ROUTE = 'POST /api/deploy/projects/:id/auth';
+const SETTINGS_ROUTE = 'POST /api/deploy/projects/:id/settings';
+
+test('tls: the auth route refuses a directory login on a project without TLS', async () => {
+    for (const [id, tls] of [
+        ['tls-absent', null],
+        ['tls-off', { enabled: false, certFile: 'C:\c.pem', keyFile: 'C:\k.pem' }]
+    ]) {
+        makeProject(id, null, tls);
+        const answer = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));
+        assert.equal(answer.status, 400, id);
+        assert.equal(answer.body.error, 'auth_requires_tls', id);
+        assert.equal(storedAuth(id), undefined, `${id}: the project is unchanged on disk`);
+    }
+});
+
+test('tls: the legacy enabled body is held to the same rule', async () => {
+    const id = makeProject('tls-legacy', null, null);
+    const answer = await call(AUTH_ROUTE, request(id, { enabled: true }));
+    assert.equal(answer.status, 400);
+    assert.equal(answer.body.error, 'auth_requires_tls');
+});
+
+test('tls: the auth route accepts none without TLS', async () => {
+    const id = makeProject('tls-none', null, null);
+    const answer = await call(AUTH_ROUTE, request(id, { method: 'none' }));
+    assert.equal(answer.status, 200);
+    assert.equal(storedAuth(id).method, 'none');
+});
+
+test('tls: a project reached under a host name through the TLS router may be protected', async () => {
+    const id = makeProject('tls-router', null, null);
+    const project = projectStore.getProject(pathsFor('acme'), id);
+    project.hostname = 'app.corp.local';
+    projectStore.saveProject(pathsFor('acme'), project);
+
+    const saved = { cert: process.env.AEGIS_SITES_ROUTER_CERT, key: process.env.AEGIS_SITES_ROUTER_KEY };
+    try {
+        const without = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));
+        assert.equal(without.body.error, 'auth_requires_tls', 'a host name alone is not TLS');
+
+        process.env.AEGIS_SITES_ROUTER_CERT = 'C:\certs\router.pem';
+        process.env.AEGIS_SITES_ROUTER_KEY = 'C:\certs\router.key';
+        const withRouter = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));
+        assert.equal(withRouter.status, 200);
+        assert.equal(storedAuth(id).method, 'ldap');
+
+        // And the name cannot be taken away from under the protection.
+        const cleared = await call(SETTINGS_ROUTE, request(id, { hostname: '' }));
+        assert.equal(cleared.status, 409);
+        assert.equal(cleared.body.error, 'tls_required_by_auth');
+        assert.equal(projectStore.getProject(pathsFor('acme'), id).hostname, 'app.corp.local');
+    } finally {
+        for (const [name, value] of [['AEGIS_SITES_ROUTER_CERT', saved.cert], ['AEGIS_SITES_ROUTER_KEY', saved.key]]) {
+            if (value === undefined) delete process.env[name]; else process.env[name] = value;
+        }
+    }
+});
+
+test('tls: the TLS route refuses to switch TLS off under a protected site', async () => {
+    const id = makeProject('tls-keep', { method: 'ldap', enabled: true, allowedGroups: ['Ops'] });
+    const answer = await call(TLS_ROUTE, request(id, { enabled: false }));
+    assert.equal(answer.status, 409);
+    assert.equal(answer.body.error, 'tls_required_by_auth');
+    assert.equal(projectStore.getProject(pathsFor('acme'), id).tls.enabled, true, 'TLS is still on');
+});
+
+test('tls: create with a directory login and no TLS is refused', async () => {
+    const answer = await call('POST /api/deploy/projects', request(undefined, {
+        runId: 'authrequirestls01',
+        repoUrl: 'https://github.com/acme/site',
+        branch: 'main',
+        auth: 'ldap'
+    }));
+    assert.equal(answer.status, 400);
+    assert.equal(answer.body.error, 'auth_requires_tls');
 });

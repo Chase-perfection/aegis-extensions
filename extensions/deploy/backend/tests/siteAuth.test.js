@@ -61,9 +61,10 @@ function fakeReq(method, url, opts) {
     req.url = url;
     req.headers = Object.assign({}, o.headers);
     // `encrypted` is the only thing `isSecure` looks at, and a real TLS socket
-    // is the only thing that sets it. Absent means plain HTTP.
+    // is the only thing that sets it. A protected site is served over TLS only,
+    // so a request is encrypted unless the test says `secure: false`.
     req.socket = { remoteAddress: o.ip || '10.0.0.1' };
-    if (o.secure) req.socket.encrypted = true;
+    if (o.secure !== false) req.socket.encrypted = true;
     return req;
 }
 
@@ -75,6 +76,8 @@ function fakeRes() {
         res.headersSent = true;
         return res;
     };
+    // Headers set before `writeHead`, as a real response lets a caller do.
+    res.setHeader = function (name, value) { res.headers[name] = value; };
     res.end = function (chunk) {
         if (chunk) res.body += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
         res.ended = true;
@@ -541,7 +544,7 @@ test('login: a valid user is given a session and sent to the validated next', as
         const setCookie = String(res.headers['Set-Cookie']);
         assert.ok(setCookie.includes('HttpOnly'));
         assert.ok(setCookie.includes('SameSite=Lax'));
-        assert.ok(!/;\s*Secure/i.test(setCookie), 'Secure is deliberately absent over plain HTTP');
+        assert.ok(/;\s*Secure/.test(setCookie), 'a protected site is served over TLS, so the cookie is Secure');
         assert.ok(!(res.body + JSON.stringify(res.headers)).includes(SECRET),
             'the password must not appear anywhere in the response');
 
@@ -818,28 +821,7 @@ test('invalidate: turning protection on takes effect without waiting for the cac
 /* the Secure cookie flag                                              */
 /* ------------------------------------------------------------------ */
 
-test('cookies: a login over a plain socket gets a session cookie without Secure', async (t) => {
-    const slug = 'tenant-plain';
-    const tenantPaths = seed(slug, 'plain',
-        { name: 'Plain', auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
-
-    siteAuth._setVerifier(() => ({ ok: true, groups: [] }));
-    t.after(() => { siteAuth._setVerifier(null); siteAuth.dropSessions(slug, 'plain'); });
-
-    const { res } = await login(slug, tenantPaths, 'plain',
-        { username: 'jdoe', password: SECRET, next: '/' }, { ip: '10.0.0.91' });
-    const setCookie = String(res.headers['Set-Cookie']);
-
-    assert.ok(setCookie.startsWith('aegis_site='));
-    assert.ok(setCookie.includes('Path=/'));
-    assert.ok(setCookie.includes('HttpOnly'));
-    assert.ok(setCookie.includes('SameSite=Lax'));
-    // Setting it here would not harden anything: the browser would refuse to
-    // send the cookie back over http and login would stop working outright.
-    assert.ok(!/;\s*Secure/i.test(setCookie), 'Secure has no business on a plain socket');
-});
-
-test('cookies: the same login over a TLS socket gets Secure', async (t) => {
+test('cookies: a login over a TLS socket gets Secure', async (t) => {
     const slug = 'tenant-secure';
     const tenantPaths = seed(slug, 'secure',
         { name: 'Secure', auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
@@ -857,26 +839,20 @@ test('cookies: the same login over a TLS socket gets Secure', async (t) => {
     assert.ok(setCookie.includes('SameSite=Lax'));
 });
 
-test('cookies: the login page CSRF cookie follows the socket too', async () => {
+test('cookies: the login page CSRF cookie is Secure', async () => {
     const slug = 'tenant-csrf-flag';
     const tenantPaths = seed(slug, 'csrfflag',
         { name: 'Csrf', auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
     const ctx = { slug, tenantPaths, project: { id: 'csrfflag', name: 'Csrf' } };
 
-    const plain = fakeRes();
-    await siteAuth.gate(fakeReq('GET', '/__aegis/login'), plain, ctx);
-    const plainCookie = String(plain.headers['Set-Cookie']);
-    assert.ok(plainCookie.startsWith('aegis_site_csrf='));
-    assert.ok(!/;\s*Secure/i.test(plainCookie));
-
     const encrypted = fakeRes();
-    await siteAuth.gate(fakeReq('GET', '/__aegis/login', { secure: true }), encrypted, ctx);
+    await siteAuth.gate(fakeReq('GET', '/__aegis/login'), encrypted, ctx);
     const secureCookie = String(encrypted.headers['Set-Cookie']);
     assert.ok(secureCookie.startsWith('aegis_site_csrf='));
     assert.ok(/;\s*Secure/.test(secureCookie));
 });
 
-test('cookies: the logout clear follows the socket as well', async (t) => {
+test('cookies: the logout clear carries the Secure flag too', async (t) => {
     const slug = 'tenant-out-flag';
     const tenantPaths = seed(slug, 'outflag',
         { name: 'Out', auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
@@ -896,16 +872,6 @@ test('cookies: the logout clear follows the socket as well', async (t) => {
     const secureCleared = String(secureOut.headers['Set-Cookie']);
     assert.ok(secureCleared.includes('Max-Age=0'));
     assert.ok(/;\s*Secure/.test(secureCleared));
-
-    const plainLogin = await login(slug, tenantPaths, 'outflag',
-        { username: 'jdoe', password: SECRET, next: '/' }, { ip: '10.0.0.94' });
-    const plainToken = cookieValue(plainLogin.res.headers['Set-Cookie'], 'aegis_site');
-    const plainOut = fakeRes();
-    await siteAuth.gate(fakeReq('POST', '/__aegis/logout',
-        { headers: { cookie: `aegis_site=${plainToken}` } }), plainOut, ctx);
-    const plainCleared = String(plainOut.headers['Set-Cookie']);
-    assert.ok(plainCleared.includes('Max-Age=0'));
-    assert.ok(!/;\s*Secure/i.test(plainCleared));
 });
 
 /* ------------------------------------------------------------------ */
@@ -1938,4 +1904,65 @@ test('policy: a site with no manifest is served exactly as it was before', async
     const token = await sessionFor(slug, tenantPaths, 'app', []);
     const { handled } = await knockWith(slug, tenantPaths, 'app', '/admin/users', token);
     assert.strictEqual(handled, false, 'every site deployed before this feature has to keep serving');
+});
+
+/* ------------------------------------------------------------------ */
+/* HTTPS is mandatory for a protected site                             */
+/* ------------------------------------------------------------------ */
+
+test('tls: a protected site answers 503 site_not_tls on a plain socket, with no form and no cookie', async () => {
+    const slug = 'tls-plain';
+    const tenantPaths = seed(slug, 'app',
+        { name: 'App', auth: { method: 'ldap', enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
+    let verified = 0;
+    siteAuth._setVerifier(() => { verified += 1; return { ok: true, groups: [] }; });
+
+    try {
+        for (const [verb, url] of [['GET', '/'], ['GET', '/__aegis/login'], ['POST', '/__aegis/login']]) {
+            const res = fakeRes();
+            const handled = await siteAuth.gate(
+                fakeReq(verb, url, { secure: false, body: verb === 'POST' ? 'username=a&password=b' : undefined }),
+                res, { slug, tenantPaths, project: { id: 'app', name: 'App' } });
+            assert.strictEqual(handled, true, `${verb} ${url}`);
+            assert.strictEqual(res.statusCode, 503, `${verb} ${url}`);
+            assert.ok(!/<form/i.test(res.body), 'no login form crosses a clear socket');
+            assert.strictEqual(res.headers['Set-Cookie'], undefined, 'no cookie either');
+        }
+        assert.strictEqual(verified, 0, 'the directory is never consulted over a clear socket');
+    } finally {
+        siteAuth._setVerifier(null);
+    }
+});
+
+test('tls: an unprotected site is still served on a plain socket', async () => {
+    const slug = 'tls-open';
+    const tenantPaths = seed(slug, 'open', { name: 'Open' }, null);
+    const handled = await siteAuth.gate(fakeReq('GET', '/', { secure: false }), fakeRes(),
+        { slug, tenantPaths, project: { id: 'open', name: 'Open' } });
+    assert.strictEqual(handled, false);
+});
+
+test('tls: HSTS is sent only on a secure request under the project host name', async () => {
+    const slug = 'tls-hsts';
+    const tenantPaths = seed(slug, 'app',
+        { name: 'App', auth: { method: 'ldap', enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
+    const project = { id: 'app', name: 'App' };
+
+    const named = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/__aegis/login', { headers: { host: 'app.corp.local' } }), named,
+        { slug, tenantPaths, project, viaRouterHostName: 'app.corp.local' });
+    assert.strictEqual(named.headers['Strict-Transport-Security'], 'max-age=31536000');
+
+    const byPort = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/__aegis/login', { headers: { host: 'srv.corp.local:3081' } }), byPort,
+        { slug, tenantPaths, project });
+    assert.strictEqual(byPort.statusCode, 200);
+    assert.strictEqual(byPort.headers['Strict-Transport-Security'], undefined,
+        'HSTS ignores the port, so a port URL must never send it');
+
+    const clear = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/', { secure: false, headers: { host: 'app.corp.local' } }), clear,
+        { slug, tenantPaths, project, viaRouterHostName: 'app.corp.local' });
+    assert.strictEqual(clear.headers['Strict-Transport-Security'], undefined,
+        'HSTS over a clear socket is ignored by browsers and misleading');
 });
