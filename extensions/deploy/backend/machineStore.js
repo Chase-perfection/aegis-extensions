@@ -38,6 +38,10 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const keyAcl = require('./keyAcl');
+
+/** Key files whose ACL this process has already restricted. */
+const aclApplied = new Set();
 
 const ALGO = 'aes-256-gcm';
 
@@ -79,16 +83,25 @@ function keyFile() { return path.join(storeDir(), 'machine.key'); }
  */
 function machineKey() {
     fs.mkdirSync(storeDir(), { recursive: true });
+    const file = keyFile();
+    let created = null;
     try {
-        const fd = fs.openSync(keyFile(), 'wx', 0o600);
-        const key = crypto.randomBytes(32);
-        fs.writeSync(fd, key);
+        const fd = fs.openSync(file, 'wx', 0o600);
+        created = crypto.randomBytes(32);
+        fs.writeSync(fd, created);
         fs.closeSync(fd);
-        return key;
     } catch (e) {
         if (e.code !== 'EEXIST') throw e;
-        return fs.readFileSync(keyFile());
     }
+    // The ACL is applied once per process and per key file, before the first
+    // read, to a new key and to one written by an earlier release alike. A
+    // failure throws and is not cached, so no caller gets a key that is still
+    // readable by every local user, and the next call tries again.
+    if (!aclApplied.has(file)) {
+        keyAcl.protect(file);
+        aclApplied.add(file);
+    }
+    return created || fs.readFileSync(file);
 }
 
 /**

@@ -207,3 +207,43 @@ test('stored build account data is encrypted, not plaintext', () => {
         cleanupTestContext(ctx);
     }
 });
+
+test('machineKey refuses to return a key when protect fails, with no fallback read', () => {
+    const keyAcl = require('../keyAcl');
+    const realProtect = keyAcl.protect;
+    const ctx = createTestContext();
+    try {
+        keyAcl.protect = () => {
+            const e = new Error('icacls failed');
+            e.code = 'key_acl_failed';
+            throw e;
+        };
+        const store = require('../machineStore');
+        assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_acl_failed');
+        // Not cached as protected: once protect works the next call succeeds.
+        keyAcl.protect = () => {};
+        assert.ok(store.decrypt(store.encrypt('x')) === 'x');
+    } finally {
+        keyAcl.protect = realProtect;
+        cleanupTestContext(ctx);
+    }
+});
+
+test('machineKey protects an existing key once, before the first read', () => {
+    const keyAcl = require('../keyAcl');
+    const realProtect = keyAcl.protect;
+    const ctx = createTestContext();
+    try {
+        const calls = [];
+        keyAcl.protect = (f) => calls.push(f);
+        fs.mkdirSync(path.join(ctx.tempDir, 'deploy'), { recursive: true });
+        fs.writeFileSync(path.join(ctx.tempDir, 'deploy', 'machine.key'), Buffer.alloc(32, 7));
+        const store = require('../machineStore');
+        store.encrypt('a');
+        store.encrypt('b');
+        assert.deepStrictEqual(calls, [path.join(ctx.tempDir, 'deploy', 'machine.key')]);
+    } finally {
+        keyAcl.protect = realProtect;
+        cleanupTestContext(ctx);
+    }
+});
