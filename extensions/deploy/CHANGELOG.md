@@ -50,7 +50,11 @@ application: code from one repository could read and replay another site's
 session. The proxy now removes Aegis's cookies from each request and refuses
 them in each response. Sign-in and sign-out also check `Origin` (or
 `Sec-Fetch-Site`) against the site's own scheme, host and port, because a
-sibling site could plant the double-submit CSRF cookie and post its match.
+sibling site could plant the double-submit CSRF cookie and post its match. The
+sign-in pages now send `Referrer-Policy: same-origin` instead of `no-referrer`,
+under which Chromium posts the form with `Origin: null`. A CSRF cookie a
+sibling site adds under `Path=/__aegis` no longer shadows the genuine one: the
+form's token is compared with every value the browser sends.
 
 **A protected site is served over TLS only.** Sign-in over plain HTTP sent the
 password and the session cookie in the clear. A protected site now answers 503

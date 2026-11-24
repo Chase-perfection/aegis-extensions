@@ -855,7 +855,9 @@ test('login page: the site icon top left, Aegis bottom left, and a CSP that stil
     assert.match(csp, /img-src 'self'/);
     assert.match(csp, /font-src 'self'/);
     assert.ok(!/script-src/.test(csp), 'the page runs no script, so the policy names none');
-    assert.strictEqual(res.headers['Referrer-Policy'], 'no-referrer');
+    // Not `no-referrer`: under it a browser posts the form with `Origin: null`,
+    // and the sign-in, which checks the origin, would refuse every visitor.
+    assert.strictEqual(res.headers['Referrer-Policy'], 'same-origin');
     assert.ok(!/<script/i.test(res.body));
 });
 

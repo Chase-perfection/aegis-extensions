@@ -1141,7 +1141,10 @@ function sendHtml(res, status, body, extraHeaders) {
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'DENY',
         // The `next` path rides in the URL; no other origin needs to read it.
-        'Referrer-Policy': 'no-referrer',
+        // `same-origin` and not `no-referrer`: under `no-referrer` a browser
+        // posts this page's own form with `Origin: null`, and fromOwnOrigin
+        // can then only fall back on the fetch metadata.
+        'Referrer-Policy': 'same-origin',
         'Cross-Origin-Opener-Policy': 'same-origin',
         // The login page loads its own stylesheet, font and images, and posts
         // to its own origin. Nothing else, so nothing else is allowed. Still no
@@ -1246,6 +1249,30 @@ function readCookie(req, name) {
         if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
     }
     return null;
+}
+
+/**
+ * Whether the token a form sent matches any value the request carries for the
+ * CSRF cookie `name`, not only the first one.
+ *
+ * A browser sends every cookie of that name it holds, the one with the longest
+ * path first. A sibling site on the same host cannot overwrite the HttpOnly
+ * cookie, but it can add one under `Path=/__aegis`, which then comes first.
+ * Matching the first value only let that planted cookie refuse every genuine
+ * sign-in and sign-out until the browser closed. Accepting any value gives the
+ * sibling nothing: its forged form is already refused by fromOwnOrigin.
+ */
+function csrfMatches(req, name, sent) {
+    if (!sent) return false;
+    const header = (req.headers && req.headers.cookie) || '';
+    let hit = false;
+    for (const part of String(header).split(';')) {
+        const eq = part.indexOf('=');
+        if (eq < 0 || part.slice(0, eq).trim() !== name) continue;
+        // Every value compared, so the time taken does not say which matched.
+        if (sameToken(sent, part.slice(eq + 1).trim())) hit = true;
+    }
+    return hit;
 }
 
 /** The body, or null when it is absent, oversized or unreadable. */
@@ -1388,8 +1415,12 @@ function originKey(value) {
  * its server can fetch this site's form for a genuine pair. What it cannot do is
  * make the visitor's browser send this site's origin. So the `Origin` header,
  * which every current browser sends on a form POST, has to be this site's
- * scheme, host and port exactly. `null`, sent by a sandboxed or privacy-stripped
- * page, is refused like a foreign one.
+ * scheme, host and port exactly.
+ *
+ * `Origin: null` says nothing either way: a sandboxed page sends it, and so
+ * does a page of this very site under `Referrer-Policy: no-referrer` (Chromium,
+ * checked in a browser). It is treated as absent, so `Sec-Fetch-Site` decides,
+ * and a null origin with no fetch metadata is refused.
  *
  * Without `Origin`, `Sec-Fetch-Site` decides when present: only `same-origin`
  * or `none` (typed by the user) pass. With neither header the client is not a
@@ -1400,15 +1431,16 @@ function originKey(value) {
 function fromOwnOrigin(req) {
     const headers = req.headers || {};
     const origin = headers.origin;
-    if (origin !== undefined) {
+    const site = headers['sec-fetch-site'];
+    if (origin !== undefined && String(origin).trim() !== 'null') {
         const host = headers.host;
         if (!host) return false;
         const own = originKey(`${isSecure(req) ? 'https' : 'http'}://${host}`);
         return own !== null && originKey(String(origin)) === own;
     }
-    const site = headers['sec-fetch-site'];
     if (site !== undefined) return site === 'same-origin' || site === 'none';
-    return true;
+    // An opaque origin with no fetch metadata to vouch for it.
+    return origin === undefined;
 }
 
 /**
@@ -1418,7 +1450,7 @@ function fromOwnOrigin(req) {
 async function handleLogout(req, res, ctx, token, session) {
     const raw = await readBody(req, BODY_LIMIT);
     const sent = new URLSearchParams(raw === null ? '' : raw).get('csrf') || '';
-    if (!fromOwnOrigin(req) || !sameToken(sent, readCookie(req, ctx.cookies.csrf) || '')) {
+    if (!fromOwnOrigin(req) || !csrfMatches(req, ctx.cookies.csrf, sent)) {
         logoutPage(res, 400, ctx, tr(ctx.lang, 'errSignOutForm'));
         return true;
     }
@@ -1738,7 +1770,6 @@ async function handleLogin(req, res, ctx, config) {
     const username = String(form.get('username') || '').trim();
     const password = String(form.get('password') || '');
     const sentCsrf = String(form.get('csrf') || '');
-    const cookieCsrf = readCookie(req, ctx.cookies.csrf) || '';
 
     // From here on `password` is only ever passed to verify(). It is not logged,
     // not echoed into the form, and not part of any error.
@@ -1774,7 +1805,7 @@ async function handleLogin(req, res, ctx, config) {
     // Double submit: a form posted from another origin cannot read the cookie,
     // so it cannot produce a matching field. Counted as a failure like any
     // other, because a real user never trips it twice.
-    if (!sameToken(sentCsrf, cookieCsrf)) {
+    if (!csrfMatches(req, ctx.cookies.csrf, sentCsrf)) {
         noteFailure(ctx.slug, ctx.projectId, ip);
         audit(ctx.slug, ctx.projectId, 'login_refused', who || username, ip, 'bad_session');
         loginPage(res, 400, ctx, { next, error: tr(ctx.lang, 'errSession'), username });

@@ -104,6 +104,19 @@ test('login: an opaque origin is refused', async () => {
     assert.strictEqual(session, null);
 });
 
+// A page under `Referrer-Policy: no-referrer`, or a browser set to strip it,
+// posts its own form with `Origin: null`. Chromium did exactly that on the
+// login page before its policy changed. The fetch metadata still tells.
+test('login: an opaque origin the browser calls same-origin signs in', async () => {
+    const { session } = await login({ origin: 'null', 'sec-fetch-site': 'same-origin' });
+    assert.ok(session);
+});
+
+test('login: an opaque origin from a sibling site is refused', async () => {
+    const { session } = await login({ origin: 'null', 'sec-fetch-site': 'same-site' });
+    assert.strictEqual(session, null);
+});
+
 test('login: no Origin but a same-site fetch is refused', async () => {
     const { session } = await login({ 'sec-fetch-site': 'same-site' });
     assert.strictEqual(session, null);
@@ -123,6 +136,48 @@ test('login: own origin, case and default port aside, signs in', async () => {
 test('login: no Origin and no fetch metadata, a non-browser client, still signs in', async () => {
     const { session } = await login({});
     assert.ok(session);
+});
+
+// A sibling site cannot overwrite the HttpOnly cookie, but it can add one of the
+// same name under a longer path, `/__aegis`, which the browser then sends first.
+// Seen in Chromium. Only the first value was read, so the genuine form never
+// matched again: sign-in and sign-out both refused until the browser closed.
+test('login: a planted cookie sent first does not shadow the genuine one', async () => {
+    const { site, names } = newSite();
+    const genuine = 'genuine-pair-0123456789abcdef0123';
+    const res = fakeRes();
+    siteAuth._setVerifier(() => VERDICT);
+    try {
+        await siteAuth.gate(fakeReq('POST', '/__aegis/login', {
+            body: new URLSearchParams({ csrf: genuine, username: 'jdoe', password: 'pw', next: '/' }).toString(),
+            headers: { origin: OWN, cookie: `${names.csrf}=PLANTED-BY-B-0123456789; ${names.csrf}=${genuine}` }
+        }), res, site);
+    } finally {
+        siteAuth._setVerifier(null);
+    }
+    assert.ok(valueOf(res, names.session), 'the genuine pair still signs in');
+});
+
+test('logout: a planted cookie sent first does not shadow the genuine one', async () => {
+    const { site, names } = newSite();
+    const pair = 'victim-pair-0123456789abcdef0123';
+    const res = fakeRes();
+    siteAuth._setVerifier(() => VERDICT);
+    try {
+        await siteAuth.gate(fakeReq('POST', '/__aegis/login', {
+            body: new URLSearchParams({ csrf: pair, username: 'jdoe', password: 'pw', next: '/' }).toString(),
+            headers: { origin: OWN, cookie: `${names.csrf}=${pair}` }
+        }), res, site);
+    } finally {
+        siteAuth._setVerifier(null);
+    }
+    const session = valueOf(res, names.session);
+    const out = fakeRes();
+    await siteAuth.gate(fakeReq('POST', '/__aegis/logout', {
+        body: `csrf=${pair}`,
+        headers: { origin: OWN, cookie: `${names.session}=${session}; ${names.csrf}=PLANTED-BY-B-0123456789; ${names.csrf}=${pair}` }
+    }), out, site);
+    assert.strictEqual(out.statusCode, 302);
 });
 
 test('logout: a sibling site\'s origin closes nothing', async () => {
