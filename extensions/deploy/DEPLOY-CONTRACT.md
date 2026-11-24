@@ -1026,6 +1026,15 @@ hours is not journalled. The console lines keep their text and carry the client
 address; any visitor-supplied value in them has control characters replaced by
 a space and is cut at 256 characters.
 
+Core keeps these journal rows 365 days, then purges them; the other journal
+rows are not touched. In the Windows Application log (source `Aegis`) they are
+event IDs 201 to 205 in the order of the table above, and the username is
+there too, cut at 64 characters. Repeated `login_refused` from one address on
+one project within 60 seconds collapse into one row with a count, naming up to
+5 of the accounts tried. Session closes by an administrator name the acting
+administrator in the console line only: the journal event carries no field for
+it.
+
 ## Filling the directory form
 
 The Authentication page protects a deployed site with the same Active Directory
@@ -1165,9 +1174,13 @@ refuses any method but `none` with `400 auth_requires_tls` unless the project ha
 TLS, answer `409 tls_required_by_auth` while the site is protected. On every
 request, `siteAuth.gate` answers `503 site_not_tls` on a clear socket for a
 protected site, before any form, cookie or directory lookup, so a project
-protected before this rule fails closed until TLS is turned on. A plain-HTTP
-listener asked for a protected site that has its own HTTPS port answers
-`308` to `https://<host>:<port><url>`.
+protected before this rule fails closed until TLS is turned on. Only a
+plain-HTTP router (the host-name router when it listens in clear, in front of a
+site served over TLS on its own port) redirects: asked for a protected site that has its own HTTPS port, it
+answers `308` to `https://<host>:<port><url>`. A visitor who types `http://`
+on the port of a site that serves TLS gets no redirect and no page: that port
+speaks TLS only, so the browser reports a failed handshake (on some browsers,
+an empty or reset response).
 
 Cookie names are per project: `aegis_site_<slug>_<projectId>` (session) and
 `aegis_csrf_<slug>_<projectId>` (login form), from `siteAuth.cookieNames`.
