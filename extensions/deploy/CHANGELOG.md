@@ -2,6 +2,33 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.16
+
+Nothing changes on upgrade: audience measurement is off on every site until an
+administrator switches it on.
+
+- New **Audience** tab on each project: unique visitors, visits, average visit
+  length and total time over a period (7, 30, 90 days, 12 months, or two
+  dates), visitors per day, then the pages (views, visitors, time per view)
+  and the most clicked controls. Clicking a page narrows the controls to it.
+- New switch on the Settings tab, "Measure the audience of this site", and a
+  button to erase what was measured. With the switch on, the proxy adds
+  `/__aegis/audience.js` to every HTML page, beside the notices script.
+- A visitor is a pseudonym: on a protected site an HMAC of their account, on an
+  open site a random cookie `aegis_aud_<project>` kept 13 months and never
+  extended. The application never sees that cookie. No IP address, no query
+  string, no page title and no field value is stored. A browser sending the
+  Global Privacy Control signal is not measured.
+- Raw events are kept 90 days, day summaries 25 months. Past 90 days, visitors
+  over a period are an estimate (about 3 %), from an anonymous sketch.
+- On a protected site, a successful sign-in counts as a click on
+  `aegis: Connexion`.
+- A site can name a control for the dashboard with `data-aegis-track="..."`.
+  Without it, a control is named by its id, its `aria-label`, its visible text
+  (40 characters), or its tag and position.
+- The operator must mention the audience measurement in the site's privacy
+  page.
+
 ## 0.2.15
 
 **Breaking on upgrade.** Read this list before installing. Each item changes

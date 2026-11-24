@@ -126,6 +126,21 @@
     white-space: nowrap;
 }
 
+.dep-aud-pages .dep-btn-link {
+    border: 0;
+    background: none;
+    padding: 0;
+    color: var(--text-main);
+    cursor: pointer;
+    text-align: left;
+}
+
+.dep-aud-pages .dep-btn-link:hover,
+.dep-aud-pages .dep-btn-link:focus-visible {
+    color: var(--accent-bright);
+    text-decoration: underline;
+}
+
 .dep-aud-pages .dep-btn-link[aria-pressed="true"] {
     color: var(--accent-bright);
     text-decoration: underline;

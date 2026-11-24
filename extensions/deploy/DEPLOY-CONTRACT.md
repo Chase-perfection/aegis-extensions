@@ -717,6 +717,66 @@ script itself is public, it holds no text.
 A site whose `Content-Security-Policy` does not allow `script-src 'self'` will
 block the script, and its visitors see no notice.
 
+### Audience
+
+Off by default. With `audience: { "enabled": true }` on the record (Settings
+tab, `POST /api/deploy/projects/:id/settings` with `{ "audience": { "enabled":
+true } }`), the proxy adds a second tag under the same rules as the notices
+one, even when the notices are not injected:
+
+```html
+<script src="/__aegis/audience.js" defer></script>
+```
+
+The script posts batches to `POST /__aegis/audience` with `sendBeacon`, as
+`text/plain` JSON, every 15 seconds and when the page is hidden or left:
+
+```json
+{ "v": 1, "events": [
+  { "k": "view",  "pv": "q1w2e3r4t5y6", "p": "/stock" },
+  { "k": "click", "pv": "q1w2e3r4t5y6", "p": "/stock", "c": "button: #refresh" },
+  { "k": "time",  "pv": "q1w2e3r4t5y6", "p": "/stock", "ms": 41000 }
+] }
+```
+
+A view starts on load and on every `pushState`, `replaceState` or `popstate`
+that changes the path. `ms` is the active time of the view so far: the tab is
+visible and the visitor did something in the last 30 seconds. `p` is the path
+only. A click counts on a link, a button, a `summary`, a `select`, a `label`, a
+button-like `input`, an element with a `role` of `button`, `link`, `tab`,
+`menuitem`, `checkbox` or `switch`, or an element carrying `data-aegis-track`.
+The control is named, first match wins: `data-aegis-track`, its `id` (unless it
+looks generated: four digits in a row, or eight hex characters), its
+`aria-label`, its visible text cut to 40 characters (links, buttons, summaries
+and roles only), else its tag, first class and position from the nearest
+ancestor with an id. The tag comes first: `button: Actualiser`. A field's value
+is never read.
+
+`/__aegis/audience` is answered by Deploy, never by the application. 204 for
+everything it takes or drops, 405 for another method, 403 when `Origin` (or
+`Sec-Fetch-Site`) is not the site, 413 over 16 KiB, 400 for JSON it cannot
+read. At most 50 events a batch, 240 views and clicks a visitor and a minute,
+200 000 a site and a day; time events count in neither limit and keep one per
+view and ten seconds. A known robot user agent is not counted. On a protected
+site only a signed-in visitor is counted; without a session the answer is 204
+and nothing is written, and a batch never waits for the directory.
+
+The visitor is `HMAC-SHA256(key, "u:<project>:<username>")` on a protected site
+and `HMAC-SHA256(key, "c:<project>:<cookie>")` on an open one, cut to 16 hex
+characters. The key is per tenant, in `deploy/audience/key.json`, sealed with
+the secrets key. The cookie `aegis_aud_<project>` holds 128 random bits, is
+`HttpOnly; SameSite=Lax` (`Secure` over HTTPS), lasts 13 months and is never
+renewed; like every `aegis_*` cookie the application never receives it.
+
+Files, per project, under `<tenant>/deploy/audience/<project>/`: `raw/<day>.jsonl`
+(kept 90 days) and `days/<day>.json` (kept 760 days), a day being the server's
+local calendar day. `GET /api/deploy/projects/:id/audience?from=YYYY-MM-DD&to=YYYY-MM-DD`
+(any role, default the last 30 days) answers totals, a series per day, the
+pages and the controls, 100 of each at most. Visitors are exact within 90 days
+and an estimate (`visitorsPrecision: "estimate"`) further back. `DELETE` on the
+same path (administrator) erases a project's files; removing the project does
+too. A site that uses this must say so in its privacy page.
+
 A project served by a process keeps every version under `releases/`, the one on
 the port included, and `current/` is a junction onto that one. Windows refuses
 to rename a folder a running process works in (`EBUSY`), and the old process is

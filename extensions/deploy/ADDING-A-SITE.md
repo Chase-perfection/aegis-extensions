@@ -222,6 +222,15 @@ to allow processes. The repository is the exception: that is what the project
 is, so changing it is still a new project. A preview follows its parent and
 refuses its own settings.
 
+## Measuring who uses it
+
+Switch on "Measure the audience of this site" on the Settings tab, and the
+Audience tab counts visitors, visits, time, pages and clicked controls. The site
+needs no code for it. To give a control a readable name on the dashboard, put
+`data-aegis-track="refresh-stock"` on it; otherwise Deploy names it by its id,
+its `aria-label` or its text. Say in the site's privacy page that its audience
+is measured. `DEPLOY-CONTRACT.md`, section "Audience", has the details.
+
 ## Choosing between static and a process
 
 Serve files if you can. A static project needs no host switch, no local
