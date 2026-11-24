@@ -1368,6 +1368,49 @@ function logoutPage(res, status, ctx, error) {
         { 'Set-Cookie': csrfCookie(ctx.cookies.csrf, csrf, ctx.secure === true) });
 }
 
+/** The scheme, host and port of an origin, normalised, or null. */
+function originKey(value) {
+    try {
+        const u = new URL(value);
+        if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+        return `${u.protocol}//${u.hostname}:${u.port || (u.protocol === 'https:' ? '443' : '80')}`;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Whether a form was posted by a page of this very site.
+ *
+ * The double-submit token alone does not hold on a shared host. Cookies ignore
+ * the port, so every other site on this host is "same site" for the browser: a
+ * page there can plant this site's CSRF cookie and post the matching field, and
+ * its server can fetch this site's form for a genuine pair. What it cannot do is
+ * make the visitor's browser send this site's origin. So the `Origin` header,
+ * which every current browser sends on a form POST, has to be this site's
+ * scheme, host and port exactly. `null`, sent by a sandboxed or privacy-stripped
+ * page, is refused like a foreign one.
+ *
+ * Without `Origin`, `Sec-Fetch-Site` decides when present: only `same-origin`
+ * or `none` (typed by the user) pass. With neither header the client is not a
+ * browser, and a non-browser client is not a CSRF vector: it holds no
+ * visitor's cookies. The host compared against is the one the browser asked
+ * for; a forged `Host` only changes which origin the forger must also forge.
+ */
+function fromOwnOrigin(req) {
+    const headers = req.headers || {};
+    const origin = headers.origin;
+    if (origin !== undefined) {
+        const host = headers.host;
+        if (!host) return false;
+        const own = originKey(`${isSecure(req) ? 'https' : 'http'}://${host}`);
+        return own !== null && originKey(String(origin)) === own;
+    }
+    const site = headers['sec-fetch-site'];
+    if (site !== undefined) return site === 'same-origin' || site === 'none';
+    return true;
+}
+
 /**
  * The sign-out itself, on a POST whose token matches its cookie. Anything else
  * closes nothing and shows the confirmation again with a fresh token.
@@ -1375,7 +1418,7 @@ function logoutPage(res, status, ctx, error) {
 async function handleLogout(req, res, ctx, token, session) {
     const raw = await readBody(req, BODY_LIMIT);
     const sent = new URLSearchParams(raw === null ? '' : raw).get('csrf') || '';
-    if (!sameToken(sent, readCookie(req, ctx.cookies.csrf) || '')) {
+    if (!fromOwnOrigin(req) || !sameToken(sent, readCookie(req, ctx.cookies.csrf) || '')) {
         logoutPage(res, 400, ctx, tr(ctx.lang, 'errSignOutForm'));
         return true;
     }
@@ -1714,6 +1757,17 @@ async function handleLogin(req, res, ctx, config) {
             next, error: tr(ctx.lang, 'errLocked', locked), username,
             headers: { 'Retry-After': String(locked) }
         });
+        return true;
+    }
+
+    // A form from any other origin, a sibling site on this host included, is
+    // refused before its token is even compared: see fromOwnOrigin for why the
+    // token alone does not hold here. Same answer and same count as a bad
+    // token, so the refusal tells a forger nothing more.
+    if (!fromOwnOrigin(req)) {
+        noteFailure(ctx.slug, ctx.projectId, ip);
+        audit(ctx.slug, ctx.projectId, 'login_refused', who || username, ip, 'cross_origin');
+        loginPage(res, 400, ctx, { next, error: tr(ctx.lang, 'errSession'), username });
         return true;
     }
 

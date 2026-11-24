@@ -35,6 +35,20 @@ what an operator or a visitor sees the first time the new version runs.
 - An application that links to `/__aegis/logout` now leads its visitors to a
   confirmation page with a "Sign out" button: the link alone no longer signs
   anyone out.
+- An application no longer receives any cookie whose name starts with `aegis_`
+  or `aegis.`, and a `Set-Cookie` it sends under such a name is dropped. An
+  application that named its own cookie that way loses it.
+- A sign-in or sign-out form posted from another origin, a sibling site on the
+  same host included, is refused with "Your session expired".
+
+**A site no longer sees the cookies of the others.** Cookies ignore the port,
+so a browser sent every protected site's session cookie, and the dashboard's
+`aegis.sid`, to every site on the same host, and the proxy passed them to the
+application: code from one repository could read and replay another site's
+session. The proxy now removes Aegis's cookies from each request and refuses
+them in each response. Sign-in and sign-out also check `Origin` (or
+`Sec-Fetch-Site`) against the site's own scheme, host and port, because a
+sibling site could plant the double-submit CSRF cookie and post its match.
 
 **A protected site is served over TLS only.** Sign-in over plain HTTP sent the
 password and the session cookie in the clear. A protected site now answers 503

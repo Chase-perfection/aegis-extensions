@@ -1195,6 +1195,17 @@ earlier shared names `aegis_site` and `aegis_site_csrf` are never read for
 authentication and are cleared (`Max-Age=0`, `Path=/`, `Secure`) on the first
 response a protected site gives to a browser that still sends them.
 
+Because the host is shared, the browser sends every one of those cookies, and
+the dashboard's `aegis.sid`, to every site on it. `proxyTo` therefore removes
+from the forwarded `Cookie` header every name `siteServer.isAegisCookie`
+matches (`aegis_*`, `aegis.*`, with or without `__Host-`/`__Secure-`), and
+drops every application `Set-Cookie` under such a name before adding its own
+`aegis_release`. Sign-in and sign-out are accepted only from the site's own
+origin (`siteAuth.fromOwnOrigin`): `Origin` must equal the scheme, host and
+port of the request; without it, `Sec-Fetch-Site` must be `same-origin` or
+`none`; with neither, the client is not a browser and passes. A sign-in
+refused there is journalled `login_refused` with reason `cross_origin`.
+
 A project created with an `auth` method, for instance from the repository's
 manifest, is stored as sent and stays closed (`503 site_not_tls`) until TLS is on.
 A preview of a parent that is protected only through the router host name has no

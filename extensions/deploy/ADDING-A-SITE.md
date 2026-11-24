@@ -189,6 +189,11 @@ versions are never read; a browser that still holds them gets them cleared on
 its first answer from a protected site, so everyone signs in once more after
 the update.
 
+Your application never sees those cookies, nor the dashboard's: Deploy removes
+every cookie whose name starts with `aegis_` or `aegis.` before forwarding a request, and
+ignores any such cookie your application tries to set. Name your own cookies
+otherwise. Read the visitor from `X-Aegis-User`, never from a cookie.
+
 There is no WebSocket upgrade. The proxy forwards requests, not socket
 upgrades. Anything that needs a live socket needs something else in front.
 

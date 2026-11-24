@@ -178,6 +178,47 @@ function stripIdentity(headers) {
     }
 }
 
+/**
+ * Whether a cookie name is one of Aegis's own: a protected site's session and
+ * CSRF cookies (`aegis_site_*`, `aegis_csrf_*`, and the old shared names), the
+ * release affinity cookie, and the dashboard's `aegis.sid` and
+ * `aegis.admin.sid`. A `__Host-` or `__Secure-` prefix does not hide one.
+ *
+ * Cookies are scoped by host and not by port, and every site on a machine
+ * shares one host name, so a browser sends all of these to every site on it.
+ * An application comes from a repository: a cookie that reaches it can be
+ * logged and replayed, and a cookie it sets can stand in for another site's.
+ * The rule is a prefix rather than a list so a cookie Aegis adds later is
+ * covered on the day it is added. An application naming its own cookie
+ * `aegis...` loses it; that is the cheaper of the two mistakes.
+ */
+function isAegisCookie(name) {
+    const n = String(name || '').trim().toLowerCase().replace(/^__(host|secure)-/, '');
+    return n.startsWith('aegis_') || n.startsWith('aegis.') || n === 'aegis';
+}
+
+/** Removes Aegis's cookies from a request's `Cookie` header, in place. */
+function stripAegisCookies(headers) {
+    for (const name of Object.keys(headers)) {
+        if (name.toLowerCase() !== 'cookie') continue;
+        const kept = [].concat(headers[name]).join('; ').split(';')
+            .map((part) => part.trim())
+            .filter((part) => part && !isAegisCookie(part.split('=')[0]));
+        if (kept.length) headers[name] = kept.join('; ');
+        else delete headers[name];
+    }
+}
+
+/** Removes the `Set-Cookie` lines of an application response that name an Aegis cookie. */
+function stripAegisSetCookies(headers) {
+    for (const name of Object.keys(headers)) {
+        if (name.toLowerCase() !== 'set-cookie') continue;
+        const kept = [].concat(headers[name]).filter((line) => !isAegisCookie(String(line).split('=')[0]));
+        if (kept.length) headers[name] = kept;
+        else delete headers[name];
+    }
+}
+
 function stripProxyKey(headers) {
     for (const name of Object.keys(headers)) {
         if (name.toLowerCase() === PROXY_KEY_HEADER.toLowerCase()) delete headers[name];
@@ -240,6 +281,10 @@ function proxyTo(req, res, target, ctx) {
     // when nothing is about to be written.
     stripIdentity(headers);
     stripProxyKey(headers);
+    // The session cookie of every protected site on this host, and the
+    // dashboard's, ride on this request. None of them is the application's.
+    // `identityFor` below reads `req`, not this copy, so the guard still sees them.
+    stripAegisCookies(headers);
     if (proxyKey) headers[PROXY_KEY_HEADER] = proxyKey;
 
     // A page the notices script may go into. Asked for uncompressed, so the
@@ -277,6 +322,8 @@ function proxyTo(req, res, target, ctx) {
     }, (up) => {
         const responseHeaders = withoutHopByHop(up.headers);
         stripProxyKey(responseHeaders);
+        // Before the affinity cookie is added, which is the proxy's own.
+        stripAegisSetCookies(responseHeaders);
         if (release) {
             // Which version answered, for the page to compare with the one it
             // loaded from. Set here, after the application's own headers, so
@@ -1113,6 +1160,7 @@ module.exports = {
     startRouter, routerPort, routerIsTls, invalidateHostIndex,
     touchSite, lastTouch, proxyTo, withoutHopByHop,
     IDENTITY_HEADERS, stripIdentity, stripProxyKey, encodeIdentity,
+    isAegisCookie, stripAegisCookies, stripAegisSetCookies,
     normaliseHostname, hostOf, buildHostIndex, HOSTNAME_RE,
     DEFAULT_PORT_BASE, PORT_RANGE, portBase, isServing,
     RELEASE_COOKIE,
