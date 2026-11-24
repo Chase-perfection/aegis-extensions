@@ -32,6 +32,9 @@ what an operator or a visitor sees the first time the new version runs.
   marker before Deploy's first start would not be detected.
 - Logins, refusals and logouts are journalled only with a core that provides
   `recordSiteEvent`. The minimum core version is set at release.
+- An application that links to `/__aegis/logout` now leads its visitors to a
+  confirmation page with a "Sign out" button: the link alone no longer signs
+  anyone out.
 
 **A protected site is served over TLS only.** Sign-in over plain HTTP sent the
 password and the session cookie in the clear. A protected site now answers 503
@@ -82,7 +85,17 @@ all of them (`GET` and `DELETE /api/deploy/projects/:id/sessions`).
 Each carries its outcome. In the Application log they are event IDs 201 to
 205, source `Aegis`, and name the account. Core keeps the journal rows 365
 days. This needs a core with `recordSiteEvent`. A request refused because the
-site is not served over TLS is a state of the site, not a journal event.
+site is not served over TLS is a state of the site, not a journal event. A
+session that ends without a logout is journalled too, as `session_closed` with
+reason `admin`, `idle` (30 minutes without a request) or `expired` (the 8 hour
+cap); sessions are swept once a minute, so the event comes within a minute
+whether or not anyone visits.
+
+**Signing out needs the form's token.** Any request to `/__aegis/logout`
+closed the session, so a link or an image on another site could sign a visitor
+out and write a logout in their name. A GET now shows a confirmation; only its
+POST, carrying the CSRF token of the form, signs out. A POST without it gets
+400 and closes nothing.
 
 **A refused directory search is no answer.** A search the directory refuses is
 reported as such and is not read as "no such user". An account the service

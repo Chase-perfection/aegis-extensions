@@ -477,11 +477,31 @@ function isOver(s, now) {
     return now - (s.lastSeen || now) > IDLE_MS;
 }
 
+/**
+ * Closes every session past its idle timeout or its eight hour cap, and
+ * journals each one: an access that ends is part of the trail as much as one
+ * that starts. `expired` when the cap was reached, `idle` otherwise.
+ */
 function purgeSessions(now) {
     for (const [token, s] of sessions) {
-        if (isOver(s, now)) sessions.delete(token);
+        if (!isOver(s, now)) continue;
+        sessions.delete(token);
+        audit(s.slug, s.projectId, 'session_closed', s.login || s.username, s.ip,
+            s.expiresAt <= now ? 'expired' : 'idle');
     }
 }
+
+/**
+ * Without a sweep, a session nobody uses again would only be closed, and
+ * journalled, on the next request to any protected site, which on a quiet host
+ * may be hours later. Once a minute bounds the delay. `unref` so the timer
+ * never holds the process open.
+ */
+const SWEEP_MS = 60 * 1000;
+const sweeper = setInterval(() => {
+    try { purgeSessions(Date.now()); } catch (_) { /* the next sweep retries */ }
+}, SWEEP_MS);
+if (typeof sweeper.unref === 'function') sweeper.unref();
 
 /**
  * The live session a cookie names on this site, or null.
@@ -896,7 +916,11 @@ const STRINGS = {
         errDirectoryTitle: 'Directory unavailable',
         errEmpty: 'Enter a username and a password.',
         errSession: 'Your session expired. Sign in again.',
-        errLocked: 'Too many attempts. Try again in $1 seconds.'
+        errLocked: 'Too many attempts. Try again in $1 seconds.',
+        signOutTitle: 'Sign out',
+        signOutPrompt: 'Sign out of $1?',
+        signOutSubmit: 'Sign out',
+        errSignOutForm: 'This sign-out form has expired. Sign out again.'
     },
     fr: {
         htmlLang: 'fr',
@@ -924,7 +948,11 @@ const STRINGS = {
         errDirectoryTitle: 'Annuaire injoignable',
         errEmpty: 'Saisissez un identifiant et un mot de passe.',
         errSession: 'Votre session a expiré. Reconnectez-vous.',
-        errLocked: 'Trop de tentatives. Réessayez dans $1 secondes.'
+        errLocked: 'Trop de tentatives. Réessayez dans $1 secondes.',
+        signOutTitle: 'Déconnexion',
+        signOutPrompt: 'Se déconnecter de $1 ?',
+        signOutSubmit: 'Se déconnecter',
+        errSignOutForm: 'Ce formulaire de déconnexion a expiré. Recommencez.'
     }
 };
 
@@ -1304,6 +1332,60 @@ function loginPage(res, status, ctx, opts) {
 }
 
 /**
+ * The sign-out confirmation: one button that posts back with a CSRF token.
+ *
+ * Signing out changes state and writes a journal event, so it takes the same
+ * double submit as the login. A link or an image from another site reaches
+ * this page with a GET and only sees the question. Same shell and classes as
+ * `renderError`, no script.
+ */
+function renderLogout(lang, siteName, csrf, error) {
+    return '<!DOCTYPE html>\n'
+        + `<html lang="${escapeHtml(STRINGS[lang] ? STRINGS[lang].htmlLang : 'en')}">\n`
+        + '<head>\n<meta charset="utf-8">\n'
+        + '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        + '<meta name="robots" content="noindex, nofollow">\n'
+        + `<title>${escapeHtml(tr(lang, 'signOutTitle'))} | ${escapeHtml(siteName)}</title>\n`
+        + `<link rel="stylesheet" href="${CSS_PATH}">\n`
+        + '</head>\n<body class="auth-body">\n<main class="auth-shell">\n'
+        + '<section class="auth-card" aria-labelledby="auth-title">\n'
+        + `<h1 class="auth-title" id="auth-title">${escapeHtml(tr(lang, 'signOutTitle'))}</h1>\n`
+        + `<p class="auth-subtitle">${escapeHtml(tr(lang, 'signOutPrompt', siteName))}</p>\n`
+        + `<form class="auth-form" method="post" action="${LOGOUT_PATH}">\n`
+        + `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">\n`
+        + `<p class="auth-error" role="alert">${escapeHtml(error || '')}</p>\n`
+        + `<button class="auth-submit" type="submit">${escapeHtml(tr(lang, 'signOutSubmit'))}</button>\n`
+        + '</form>\n</section>\n</main>\n'
+        + `<footer class="auth-brand" aria-label="${escapeHtml(tr(lang, 'footer'))}">\n`
+        + `<img class="auth-brand-mark" src="${MARK_PATH}" alt="" width="20" height="20">\n`
+        + '<span class="auth-brand-word" aria-hidden="true">Aegis</span>\n'
+        + '</footer>\n</body>\n</html>\n';
+}
+
+function logoutPage(res, status, ctx, error) {
+    const csrf = newToken();
+    return sendHtml(res, status, renderLogout(ctx.lang, ctx.siteName, csrf, error),
+        { 'Set-Cookie': csrfCookie(ctx.cookies.csrf, csrf, ctx.secure === true) });
+}
+
+/**
+ * The sign-out itself, on a POST whose token matches its cookie. Anything else
+ * closes nothing and shows the confirmation again with a fresh token.
+ */
+async function handleLogout(req, res, ctx, token, session) {
+    const raw = await readBody(req, BODY_LIMIT);
+    const sent = new URLSearchParams(raw === null ? '' : raw).get('csrf') || '';
+    if (!sameToken(sent, readCookie(req, ctx.cookies.csrf) || '')) {
+        logoutPage(res, 400, ctx, tr(ctx.lang, 'errSignOutForm'));
+        return true;
+    }
+    if (token) sessions.delete(token);
+    if (session) audit(ctx.slug, ctx.projectId, 'logout', session.login || session.username, clientIp(req));
+    redirect(res, LOGIN_PATH, { 'Set-Cookie': sessionCookie(ctx.cookies.session, '', 0, ctx.secure) });
+    return true;
+}
+
+/**
  * Intercepts a request to a deployed site.
  *
  * Returns true when the request is finished and the caller must not serve
@@ -1409,9 +1491,10 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
     const session = sessionFor(token, slug, projectId);
 
     if (pathOnly === LOGOUT_PATH) {
-        if (token) sessions.delete(token);
-        if (session) audit(slug, projectId, 'logout', session.login || session.username, clientIp(req));
-        redirect(res, LOGIN_PATH, { 'Set-Cookie': sessionCookie(ctx.cookies.session, '', 0, ctx.secure) });
+        if (req.method === 'POST') return handleLogout(req, res, ctx, token, session);
+        // Any other method only asks. Nobody signed in has nothing to confirm.
+        if (!session) { redirect(res, LOGIN_PATH); return true; }
+        logoutPage(res, 200, ctx);
         return true;
     }
 
@@ -1964,6 +2047,7 @@ module.exports = {
     // Test seams. Not part of the contract's public surface; nothing outside
     // tests/siteAuth.test.js should reach for them.
     _setVerifier, _setLookup, _setThresholdReader,
+    _sweepSessions: () => purgeSessions(Date.now()),
     _userPolicy: userPolicy,
     _noteUserFailure: noteUserFailure,
     _failureCount: () => failures.size,

@@ -190,7 +190,15 @@ test('logout clears the project cookie under its own name', async () => {
     const token = await signIn(site);
     const names = siteAuth.cookieNames(site.slug, 'app');
 
-    const { res } = await visit(site, `${names.session}=${token}`, '/__aegis/logout');
+    // The GET only asks, under the project CSRF name; the POST signs out.
+    const { res: page } = await visit(site, `${names.session}=${token}`, '/__aegis/logout');
+    const csrf = valueOf(setCookies(page), names.csrf);
+    assert.ok(csrf, 'the confirmation sets the project CSRF cookie');
+    const res = fakeRes();
+    await run(fakeReq('POST', '/__aegis/logout', {
+        body: new URLSearchParams({ csrf }).toString(),
+        headers: { cookie: `${names.session}=${token}; ${names.csrf}=${csrf}`, 'content-type': 'application/x-www-form-urlencoded' }
+    }), res, site);
     const line = setCookies(res).find((l) => l.startsWith(names.session + '='));
     assert.ok(line && line.includes('Max-Age=0'));
 

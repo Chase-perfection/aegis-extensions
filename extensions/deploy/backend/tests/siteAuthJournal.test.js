@@ -1,8 +1,8 @@
 /**
  * What a protected site tells core about its visitors.
  *
- * Every login, refused login, logout, administrator close and refused
- * revalidation reaches the host's `recordSiteEvent` once, with the tenant slug
+ * Every login, refused login, logout, administrator close, idle or expired
+ * close and refused revalidation reaches the host's `recordSiteEvent` once, with the tenant slug
  * taken from Deploy's own record of the site, a normalised address and a short
  * machine code for a refusal. Without a sink the console line is all there is
  * and nothing throws.
@@ -114,6 +114,38 @@ async function login(slug, tenantPaths, id, fields, opts) {
 function withVerifier(t, answer) {
     siteAuth._setVerifier(typeof answer === 'function' ? answer : () => answer);
     t.after(() => siteAuth._setVerifier(null));
+}
+
+/**
+ * Signs out the way a browser does: the GET shows the confirmation form and
+ * its CSRF pair, the POST sends them back. Returns both answers.
+ */
+async function logout(slug, tenantPaths, id, token, ip) {
+    const ctx = { slug, tenantPaths, project: { id, name: id } };
+    const names = siteAuth.cookieNames(slug, id);
+    const page = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/__aegis/logout',
+        { ip, headers: { cookie: `${names.session}=${token}` } }), page, ctx);
+    const csrf = cookieValue(page.headers['Set-Cookie'], names.csrf);
+    const res = fakeRes();
+    await siteAuth.gate(fakeReq('POST', '/__aegis/logout', {
+        ip,
+        body: new URLSearchParams({ csrf }).toString(),
+        headers: {
+            cookie: `${names.session}=${token}; ${names.csrf}=${csrf}`,
+            'content-type': 'application/x-www-form-urlencoded'
+        }
+    }), res, ctx);
+    return { page, res };
+}
+
+/** Moves the clock the guard reads, for the body of one test. */
+function fakeClock(t) {
+    const real = Date.now;
+    let skew = 0;
+    Date.now = () => real() + skew;
+    t.after(() => { Date.now = real; });
+    return (ms) => { skew += ms; };
 }
 
 test('a login reaches the sink once, with the owner slug, the project, the name and the address', async (t) => {
@@ -313,10 +345,7 @@ test('a logout is one event for the person whose session it closed', async (t) =
     withVerifier(t, { ok: true, groups: [VIEWERS_DN], login: 'alice' });
     const { token } = await login(slug, tenantPaths, 'portal', { username: 'alice', password: SECRET }, { ip: '10.0.4.1' });
     events.length = 0;
-    const names = siteAuth.cookieNames(slug, 'portal');
-    await siteAuth.gate(fakeReq('POST', '/__aegis/logout',
-        { ip: '10.0.4.1', headers: { cookie: `${names.session}=${token}` } }), fakeRes(),
-    { slug, tenantPaths, project: { id: 'portal', name: 'portal' } });
+    await logout(slug, tenantPaths, 'portal', token, '10.0.4.1');
     assert.deepStrictEqual(events, [
         { slug, type: 'logout', project: 'portal', username: 'alice', ip: '10.0.4.1' }
     ]);
@@ -324,6 +353,86 @@ test('a logout is one event for the person whose session it closed', async (t) =
     await siteAuth.gate(fakeReq('POST', '/__aegis/logout', { ip: '10.0.4.1' }), fakeRes(),
         { slug, tenantPaths, project: { id: 'portal', name: 'portal' } });
     assert.strictEqual(events.length, 1);
+});
+
+test('a logout without the form token closes nothing and journals nothing', async (t) => {
+    const events = collect(t);
+    const slug = 'tenant-j5b';
+    const tenantPaths = seed(slug, 'portal');
+    t.after(() => siteAuth.dropSessions(slug, 'portal'));
+    withVerifier(t, { ok: true, groups: [VIEWERS_DN], login: 'alice' });
+    const { token } = await login(slug, tenantPaths, 'portal', { username: 'alice', password: SECRET }, { ip: '10.0.4.2' });
+    events.length = 0;
+    const ctx = { slug, tenantPaths, project: { id: 'portal', name: 'portal' } };
+    const names = siteAuth.cookieNames(slug, 'portal');
+    const cookie = `${names.session}=${token}`;
+
+    // A link from another site: a GET. It shows a confirmation, it does not sign out.
+    const viaLink = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/__aegis/logout', { ip: '10.0.4.2', headers: { cookie } }), viaLink, ctx);
+    assert.strictEqual(viaLink.statusCode, 200);
+    assert.match(viaLink.body, /<form[^>]*method="post"[^>]*action="\/__aegis\/logout"/);
+    assert.match(viaLink.body, /name="csrf" value="[^"]+"/);
+
+    // A form posted from another site: no token, or a token without its cookie.
+    for (const req of [
+        fakeReq('POST', '/__aegis/logout', { ip: '10.0.4.2', headers: { cookie } }),
+        fakeReq('POST', '/__aegis/logout', {
+            ip: '10.0.4.2', body: 'csrf=forged',
+            headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }
+        })
+    ]) {
+        const res = fakeRes();
+        await siteAuth.gate(req, res, ctx);
+        assert.strictEqual(res.statusCode, 400);
+        assert.ok(!String(res.headers['Set-Cookie'] || '').includes(`${names.session}=;`));
+    }
+
+    const still = fakeRes();
+    const handled = await siteAuth.gate(fakeReq('GET', '/', { ip: '10.0.4.2', headers: { cookie } }), still, ctx);
+    assert.strictEqual(handled, false, 'the session is still open');
+    assert.deepStrictEqual(events, []);
+});
+
+test('a session closed by the idle timeout is one session_closed, reason idle', async (t) => {
+    const events = collect(t);
+    const advance = fakeClock(t);
+    const slug = 'tenant-j5c';
+    const tenantPaths = seed(slug, 'portal');
+    t.after(() => siteAuth.dropSessions(slug, 'portal'));
+    withVerifier(t, { ok: true, groups: [VIEWERS_DN], login: 'alice' });
+    await login(slug, tenantPaths, 'portal', { username: 'alice', password: SECRET }, { ip: '10.0.4.3' });
+    events.length = 0;
+    advance(siteAuth.IDLE_MS + 1000);
+    siteAuth._sweepSessions();
+    assert.deepStrictEqual(events.filter((e) => e.slug === slug), [
+        { slug, type: 'session_closed', project: 'portal', username: 'alice', ip: '10.0.4.3', reason: 'idle' }
+    ]);
+    siteAuth._sweepSessions();
+    assert.strictEqual(events.filter((e) => e.slug === slug).length, 1, 'one event per session, once');
+});
+
+test('a session that reaches the eight hour cap is one session_closed, reason expired', async (t) => {
+    const events = collect(t);
+    const advance = fakeClock(t);
+    const slug = 'tenant-j5d';
+    const tenantPaths = seed(slug, 'portal');
+    t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions(slug, 'portal'); });
+    withVerifier(t, { ok: true, groups: [VIEWERS_DN], login: 'alice' });
+    // The periodic group check still finds her entitled all day.
+    siteAuth._setLookup(() => ({ ok: true, groups: [VIEWERS_DN], login: 'alice' }));
+    const { token } = await login(slug, tenantPaths, 'portal', { username: 'alice', password: SECRET }, { ip: '10.0.4.4' });
+    events.length = 0;
+    const ctx = { slug, tenantPaths, project: { id: 'portal', name: 'portal' } };
+    const cookie = `${siteAuth.cookieNames(slug, 'portal').session}=${token}`;
+    // Active all day: a request every 20 minutes keeps the idle timeout away.
+    for (let i = 0; i < 25; i++) {
+        advance(20 * 60 * 1000);
+        await siteAuth.gate(fakeReq('GET', '/', { ip: '10.0.4.4', headers: { cookie } }), fakeRes(), ctx);
+    }
+    assert.deepStrictEqual(events.filter((e) => e.slug === slug && e.type === 'session_closed'), [
+        { slug, type: 'session_closed', project: 'portal', username: 'alice', ip: '10.0.4.4', reason: 'expired' }
+    ]);
 });
 
 test('closing sessions by hand is one session_closed per session, reason admin', async (t) => {

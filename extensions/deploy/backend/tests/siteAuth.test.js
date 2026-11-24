@@ -927,6 +927,27 @@ test('refusal page: it carries the Aegis mark like the form does', async () => {
 
 const SECRET = 'correct-horse-battery';
 
+/**
+ * Signs out through the confirmation form: the GET hands out the CSRF pair,
+ * the POST sends it back. Returns the POST's answer.
+ */
+async function signOut(slug, tenantPaths, projectId, token, opts) {
+    const o = opts || {};
+    const ctx = { slug, tenantPaths, project: { id: projectId, name: projectId } };
+    const n = names(slug, projectId);
+    const page = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/__aegis/logout',
+        { secure: o.secure, headers: { cookie: `${n.session}=${token}` } }), page, ctx);
+    const csrf = cookieValue(page.headers['Set-Cookie'], n.csrf);
+    const out = fakeRes();
+    await siteAuth.gate(fakeReq('POST', '/__aegis/logout', {
+        secure: o.secure,
+        body: new URLSearchParams({ csrf }).toString(),
+        headers: { cookie: `${n.session}=${token}; ${n.csrf}=${csrf}`, 'content-type': 'application/x-www-form-urlencoded' }
+    }), out, ctx);
+    return out;
+}
+
 async function login(slug, tenantPaths, projectId, fields, opts) {
     const o = opts || {};
     // First the form, to obtain the CSRF pair the POST has to present.
@@ -1128,10 +1149,7 @@ test('logout: the session is dropped and the cookie expired', async () => {
         const token = cookieValue(res.headers['Set-Cookie'], names(slug, 'out').session);
         assert.ok(token);
 
-        const out = fakeRes();
-        await siteAuth.gate(fakeReq('POST', '/__aegis/logout',
-            { headers: { cookie: `${names(slug, 'out').session}=${token}` } }), out,
-        { slug, tenantPaths, project: { id: 'out', name: 'Out' } });
+        const out = await signOut(slug, tenantPaths, 'out', token);
         assert.strictEqual(out.statusCode, 302);
         assert.ok(String(out.headers['Set-Cookie']).includes('Max-Age=0'));
 
@@ -1299,9 +1317,7 @@ test('cookies: the logout clear carries the Secure flag too', async (t) => {
     const secureLogin = await login(slug, tenantPaths, 'outflag',
         { username: 'jdoe', password: SECRET, next: '/' }, { ip: '10.0.0.93', secure: true });
     const secureToken = cookieValue(secureLogin.res.headers['Set-Cookie'], names(slug, 'outflag').session);
-    const secureOut = fakeRes();
-    await siteAuth.gate(fakeReq('POST', '/__aegis/logout',
-        { secure: true, headers: { cookie: `${names(slug, 'outflag').session}=${secureToken}` } }), secureOut, ctx);
+    const secureOut = await signOut(slug, tenantPaths, 'outflag', secureToken, { secure: true });
     const secureCleared = String(secureOut.headers['Set-Cookie']);
     assert.ok(secureCleared.includes('Max-Age=0'));
     assert.ok(/;\s*Secure/.test(secureCleared));
