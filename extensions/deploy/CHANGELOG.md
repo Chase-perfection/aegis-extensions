@@ -29,6 +29,29 @@ administrator switches it on.
 - The operator must mention the audience measurement in the site's privacy
   page.
 
+Known limits, not fixed in this version:
+
+- Not tested against a real directory: on a protected site, the visitor named
+  by the HMAC of their account and the sign-in counted as `aegis: Connexion`
+  were only exercised with a fake directory. Run that flow before release.
+- A visit still running when its day closes (first batch after midnight, or
+  the hourly pass) loses its later active time in that day's summary. Only
+  periods starting more than 90 days back read the summaries.
+- A visit that started two days before a closed day is attributed to the
+  wrong day: the summary reads one day either side, not two.
+- After a backend restart, pages already open get no more active time: the
+  views they report were accepted by the previous process.
+- A batch refused as too large (413) is not read to its end before the answer.
+- A page left with more than 500 events pending sends the first 500 only.
+- A visitor whose browser sends Do Not Track but not Global Privacy Control is
+  measured.
+- In French, at 1280 px, the ninth project tab (Réglages) wraps to a second
+  row.
+- Core test `extensionUpload.test.js` ("per-file and cumulative request limits
+  return 413") fails on this host with `write ECONNABORTED`, independently of
+  Deploy. The Deploy browser test "saving sends only the fields that changed"
+  can time out under a loaded parallel run and passes alone.
+
 ## 0.2.15
 
 **Breaking on upgrade.** Read this list before installing. Each item changes
