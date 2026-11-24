@@ -101,7 +101,7 @@ test('a stored installation that still works is used, and nothing is looked up a
     assert.strictEqual(stored(paths, project.id), '111', 'a working installation must not be rewritten');
 });
 
-test('the KPI case: a stored installation GitHub refuses is resolved again and written back', async () => {
+test('the reporting case: a stored installation GitHub refuses is resolved again and written back', async () => {
     const { paths, project } = makeProject('154611592');
     const { say, lines } = collector();
     let forgotten = null;

@@ -2126,7 +2126,7 @@
     }
 
     /**
-     * "kpi-briconord needs openpyxl to run. Install it?" and two buttons.
+     * "reports-app needs openpyxl to run. Install it?" and two buttons.
      *
      * What the server needs (git, Python, Node) Deploy installs from the store
      * drawer, because Deploy is what needs it. What one site needs is that

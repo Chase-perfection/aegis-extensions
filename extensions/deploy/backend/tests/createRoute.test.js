@@ -305,7 +305,7 @@ test('a start command declared by the branch reaches the route that reads it', a
     github.readRepoFile = async (app, installationId, repo, file) =>
         file === 'aegis.deploy.json'
             ? JSON.stringify({
-                startCmd: 'python packaging/api/kpi_api.py',
+                startCmd: 'python packaging/api/reports_api.py',
                 rootDir: 'site',
                 installCmd: 'pip install -r r.txt --target .'
             })

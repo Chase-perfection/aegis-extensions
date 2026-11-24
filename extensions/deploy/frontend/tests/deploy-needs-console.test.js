@@ -1,7 +1,7 @@
 /**
  * Tier 3 — the dependency question, and a console that follows the build.
  *
- * Two things an operator met on the same KPI deployment:
+ * Two things an operator met on the same reporting deployment:
  *
  * - The site needed openpyxl and nothing installed it. The refusal
  *   `needs_dependencies` now carries `needs`, and the card, the overview and
@@ -53,11 +53,11 @@ const NEEDS = {
     preview: false
 };
 
-function kpi(overrides) {
+function reportsSite(overrides) {
     return Object.assign({
-        id: 'kpi-briconord',
-        name: 'kpi-briconord',
-        repoFullName: 'acme/kpi',
+        id: 'reports-app',
+        name: 'reports-app',
+        repoFullName: 'acme/reports',
         branch: 'aegis',
         rootDir: null,
         installCmd: null,
@@ -83,7 +83,7 @@ function kpi(overrides) {
         routerPort: null,
         releases: [],
         runtime: 'node',
-        startCmd: 'python packaging/api/kpi_api.py',
+        startCmd: 'python packaging/api/reports_api.py',
         running: true,
         parentId: null,
         previews: []
@@ -103,8 +103,8 @@ function runBody(from, to, extra) {
         run: Object.assign({
             id: 'r1',
             cursor: to,
-            projectId: 'kpi-briconord',
-            projectName: 'kpi-briconord',
+            projectId: 'reports-app',
+            projectName: 'reports-app',
             branch: 'aegis',
             sha: 'abcdef01',
             trigger: 'manual',
@@ -131,7 +131,7 @@ function stubs(list) {
 }
 
 test('the card asks whether to install what the site needs, by name', async () => {
-    const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#projects`, stubs([kpi()]));
+    const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#projects`, stubs([reportsSite()]));
     try {
         await page.waitForSelector('#deploy-project-list .dep-needs');
         const box = await page.$eval('#deploy-project-list .dep-needs', (n) => ({
@@ -139,7 +139,7 @@ test('the card asks whether to install what the site needs, by name', async () =
             command: n.querySelector('.dep-needs-how code').textContent.trim(),
             buttons: [...n.querySelectorAll('button')].map((b) => b.textContent.trim())
         }));
-        assert.strictEqual(box.question, 'kpi-briconord needs openpyxl to run. Do you want to install it?');
+        assert.strictEqual(box.question, 'reports-app needs openpyxl to run. Do you want to install it?');
         assert.strictEqual(box.command, NEEDS.installCmd);
         assert.deepStrictEqual(box.buttons, ['Yes, install and deploy', 'No']);
     } finally {
@@ -148,9 +148,9 @@ test('the card asks whether to install what the site needs, by name', async () =
 });
 
 test('Yes saves the install command, then deploys again', async () => {
-    const s = stubs([kpi()]);
-    s['projects/kpi-briconord/settings'] = { success: true, changed: ['installCmd'] };
-    s['projects/kpi-briconord/redeploy'] = { success: false, error: 'busy' };
+    const s = stubs([reportsSite()]);
+    s['projects/reports-app/settings'] = { success: true, changed: ['installCmd'] };
+    s['projects/reports-app/redeploy'] = { success: false, error: 'busy' };
     const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#projects`, s);
     try {
         const seen = [];
@@ -168,7 +168,7 @@ test('Yes saves the install command, then deploys again', async () => {
 
         const patch = seen.find((r) => r.method === 'PATCH');
         assert.ok(patch, 'no PATCH sent');
-        assert.match(patch.path, /\/api\/deploy\/projects\/kpi-briconord\/settings$/);
+        assert.match(patch.path, /\/api\/deploy\/projects\/reports-app\/settings$/);
         assert.deepStrictEqual(JSON.parse(patch.body), { installCmd: NEEDS.installCmd });
 
         const post = seen.find((r) => r.method === 'POST' && /\/redeploy$/.test(r.path));
@@ -180,7 +180,7 @@ test('Yes saves the install command, then deploys again', async () => {
 });
 
 test('No changes nothing and says what that means', async () => {
-    const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#projects`, stubs([kpi()]));
+    const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#projects`, stubs([reportsSite()]));
     try {
         const writes = [];
         page.on('request', (req) => { if (req.method() !== 'GET') writes.push(req.url()); });
@@ -198,7 +198,7 @@ test('No changes nothing and says what that means', async () => {
 });
 
 test('a preview is told where to answer, and offered no buttons', async () => {
-    const list = [kpi({ needs: Object.assign({}, NEEDS, { preview: true }) })];
+    const list = [reportsSite({ needs: Object.assign({}, NEEDS, { preview: true }) })];
     const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#projects`, stubs(list));
     try {
         await page.waitForSelector('#deploy-project-list .dep-needs');
@@ -210,7 +210,7 @@ test('a preview is told where to answer, and offered no buttons', async () => {
 });
 
 test('the console asks the same question when the run stops on it', async () => {
-    const s = stubs([kpi()]);
+    const s = stubs([reportsSite()]);
     s['deploy/runs/'] = runBody(0, 3, {
         status: 'failed', error: 'needs_dependencies', needs: NEEDS, endedAt: Date.now()
     });
@@ -218,7 +218,7 @@ test('the console asks the same question when the run stops on it', async () => 
     try {
         await page.waitForSelector('#deploy-run-needs .dep-needs-question', { timeout: 5000 });
         const q = await page.$eval('#deploy-run-needs .dep-needs-question', (n) => n.textContent.trim());
-        assert.strictEqual(q, 'kpi-briconord needs openpyxl to run. Do you want to install it?');
+        assert.strictEqual(q, 'reports-app needs openpyxl to run. Do you want to install it?');
     } finally {
         await close();
     }
@@ -236,7 +236,7 @@ const logState = () => {
 };
 
 test('the console stays anchored to its last line, poll after poll', async () => {
-    const s = stubs([kpi()]);
+    const s = stubs([reportsSite()]);
     s['deploy/runs/'] = runBody(0, 80);
     const { page, close } = await openPage(browser, `${server.url}/pages/deploy.html#console/r1`, s);
     try {
@@ -289,7 +289,7 @@ test('the console stays anchored to its last line, poll after poll', async () =>
 });
 
 test('an answer repeating lines the console already holds paints none of them twice', async () => {
-    const s = stubs([kpi()]);
+    const s = stubs([reportsSite()]);
     // The same body on every poll: what two overlapping polls with one cursor
     // used to receive.
     s['deploy/runs/'] = runBody(0, 5);

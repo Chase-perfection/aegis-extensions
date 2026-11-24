@@ -22,8 +22,8 @@
  * ```json
  * {
  *   "installCmd": "pip install --no-cache-dir -r packaging/api/requirements.txt --target .",
- *   "startCmd": "python packaging/api/kpi_api.py",
- *   "dbFile": "kpi.db",
+ *   "startCmd": "python packaging/api/reports_api.py",
+ *   "dbFile": "reports.db",
  *   "migrationsDir": "migrations"
  * }
  * ```

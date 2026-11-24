@@ -157,7 +157,7 @@ test('findIcon: no root, or a root that does not exist, is no icon', () => {
 });
 
 test('monogram: the first letter, upper-cased and escaped', () => {
-    assert.match(siteIcon.monogram('portail'), />P<\/text>/);
+    assert.match(siteIcon.monogram('portal'), />P<\/text>/);
     assert.match(siteIcon.monogram('<script>'), />&lt;<\/text>/);
     assert.match(siteIcon.monogram(''), />\?<\/text>/);
 });

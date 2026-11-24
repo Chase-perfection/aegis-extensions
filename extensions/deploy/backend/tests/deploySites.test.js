@@ -83,7 +83,7 @@ test('assertServableAsIs refuses a repository that needs building', () => {
 
 // A Vite tree keeps an index.html at the root of its source folder, so "does an
 // index.html exist" answers yes for something that serves a blank page. This is
-// the shape of Chase-perfection/portail-interne, and pointing an operator at
+// the shape of example-org/internal-site, and pointing an operator at
 // `frontend` would have published nothing and reported success.
 test('assertServableAsIs refuses a folder whose index.html is a build entry point', () => {
     const { root } = tmpTree();
@@ -157,7 +157,7 @@ test('assertServableAsIs calls a tree with no entry point anywhere not_a_site', 
         e.code === 'not_a_site' && e.rootDir === undefined);
 });
 
-// The shape of the KPI repository: a Python application, no index.html at the
+// The shape of a reporting app repository: a Python application, no index.html at the
 // root and none one level down either.
 test('assertServableAsIs calls an application repository not_a_site, not no_index', () => {
     const { root } = tmpTree();

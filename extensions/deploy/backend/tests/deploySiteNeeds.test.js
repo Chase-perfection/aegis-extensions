@@ -1,7 +1,7 @@
 /**
  * What a site served by a process needs and nothing installs.
  *
- * The case behind it: KPI starts with `python packaging/api/kpi_api.py`, keeps
+ * The case behind it: a reporting app starts with `python packaging/api/reports_api.py`, keeps
  * its `requirements.txt` beside the script, and had no install command. Every
  * stage passed and the process died on `import openpyxl`. Deploy now refuses
  * before publishing and asks whether to install what the branch declares.
@@ -26,21 +26,21 @@ function tree(files) {
     return root;
 }
 
-const KPI_REQUIREMENTS = [
-    '# Dependances de KPI-API.',
+const REPORTS_REQUIREMENTS = [
+    '# Dependances de Reports-API.',
     'openpyxl>=3.1',
     '',
-    '# Uniquement pour construire KPI.exe, pas pour l executer.',
+    '# Uniquement pour construire Reports.exe, pas pour l executer.',
     'pyinstaller>=6.6',
     ''
 ].join('\r\n');
 
-test('KPI: the requirements beside the script are found, and PyInstaller is left out', () => {
+test('reporting app: the requirements beside the script are found, and PyInstaller is left out', () => {
     const root = tree({
-        'packaging/api/kpi_api.py': 'import scheduler\n',
-        'packaging/api/requirements.txt': KPI_REQUIREMENTS
+        'packaging/api/reports_api.py': 'import scheduler\n',
+        'packaging/api/requirements.txt': REPORTS_REQUIREMENTS
     });
-    const needs = siteNeeds.find({ root, startCmd: 'python packaging/api/kpi_api.py', installCmd: '' });
+    const needs = siteNeeds.find({ root, startCmd: 'python packaging/api/reports_api.py', installCmd: '' });
     assert.deepStrictEqual(needs, {
         kind: 'python',
         file: 'packaging/api/requirements.txt',
@@ -53,7 +53,7 @@ test('an install command, typed or declared, is an answer and is not questioned'
     const root = tree({ 'packaging/api/requirements.txt': 'openpyxl\n' });
     const needs = siteNeeds.find({
         root,
-        startCmd: 'python packaging/api/kpi_api.py',
+        startCmd: 'python packaging/api/reports_api.py',
         installCmd: 'pip install --no-cache-dir -r packaging/api/requirements.txt --target .'
     });
     assert.strictEqual(needs, null);

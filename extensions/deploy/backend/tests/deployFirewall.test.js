@@ -181,12 +181,12 @@ test('firewall: an unknown profile falls back, and Public is never a default', a
 /* ------------------------------------------------------------------ */
 
 test('firewall: a rule name round-trips, and a malformed one is not ours', async () => {
-    const name = firewall._ruleName('acme', 'kpi-internal');
-    assert.deepStrictEqual(firewall._parseRuleName(name), { slug: 'acme', projectId: 'kpi-internal' });
+    const name = firewall._ruleName('acme', 'reports-internal');
+    assert.deepStrictEqual(firewall._parseRuleName(name), { slug: 'acme', projectId: 'reports-internal' });
 
     for (const other of ['', 'Aegis Dashboard (TCP 3000)', 'Aegis Deploy site: acme',
-        'Aegis Deploy site: acme/kpi/extra', 'Aegis Deploy site: ACME/kpi',
-        'Aegis Deploy site: acme/../kpi']) {
+        'Aegis Deploy site: acme/reports/extra', 'Aegis Deploy site: ACME/reports',
+        'Aegis Deploy site: acme/../reports']) {
         assert.strictEqual(firewall._parseRuleName(other), null, `not ours: ${other}`);
     }
 });
@@ -199,7 +199,7 @@ test('firewall: opening names the port, the profiles and the scope', async () =>
     await withEnv('AEGIS_DEPLOY_FIREWALL_SCOPE', '192.168.0.0/16', async () => {
         await withFirewall(withRules([]), async (scripts) => {
             await muffle('log', async () => {
-                assert.strictEqual(await firewall.ensureFor('acme', 'kpi', 3081), true);
+                assert.strictEqual(await firewall.ensureFor('acme', 'reports', 3081), true);
             });
             const add = scripts.find((s) => s.includes('New-NetFirewallRule'));
             assert.ok(add, 'a rule is added');
@@ -216,9 +216,9 @@ test('firewall: opening names the port, the profiles and the scope', async () =>
 });
 
 test('firewall: a rule that is already right is left alone', async () => {
-    await withFirewall(withRules([{ name: firewall._ruleName('acme', 'kpi'), port: '3081' }]),
+    await withFirewall(withRules([{ name: firewall._ruleName('acme', 'reports'), port: '3081' }]),
         async (scripts) => {
-            assert.strictEqual(await firewall.ensureFor('acme', 'kpi', 3081), true);
+            assert.strictEqual(await firewall.ensureFor('acme', 'reports', 3081), true);
             assert.ok(!scripts.some((s) => s.includes('New-NetFirewallRule')),
                 'nothing is rewritten when the host already agrees');
         });
@@ -227,10 +227,10 @@ test('firewall: a rule that is already right is left alone', async () => {
 test('firewall: a project that moved port does not keep the old one open', async () => {
     // The hole nobody would think to look for: a rule left behind on a port the
     // project no longer uses, which some other project may later be given.
-    await withFirewall(withRules([{ name: firewall._ruleName('acme', 'kpi'), port: '3081' }]),
+    await withFirewall(withRules([{ name: firewall._ruleName('acme', 'reports'), port: '3081' }]),
         async (scripts) => {
             await muffle('log', async () => {
-                assert.strictEqual(await firewall.ensureFor('acme', 'kpi', 3090), true);
+                assert.strictEqual(await firewall.ensureFor('acme', 'reports', 3090), true);
             });
             assert.ok(scripts.some((s) => s.includes('Remove-NetFirewallRule')), 'the old rule goes');
             assert.ok(scripts.some((s) => /New-NetFirewallRule[\s\S]*-LocalPort 3090\b/.test(s)),
@@ -241,10 +241,10 @@ test('firewall: a project that moved port does not keep the old one open', async
 test('firewall: a port outside the range, or a bad id, opens nothing', async () => {
     await withFirewall(withRules([]), async (scripts) => {
         for (const port of [0, -1, 70000, 1.5, NaN, '3081; shutdown']) {
-            assert.strictEqual(await firewall.ensureFor('acme', 'kpi', port), false, `port ${port}`);
+            assert.strictEqual(await firewall.ensureFor('acme', 'reports', port), false, `port ${port}`);
         }
         for (const id of ['../etc', 'ACME', 'a b', "x'; Remove-Item C:\\ #", '']) {
-            assert.strictEqual(await firewall.ensureFor(id, 'kpi', 3081), false, `slug ${id}`);
+            assert.strictEqual(await firewall.ensureFor(id, 'reports', 3081), false, `slug ${id}`);
             assert.strictEqual(await firewall.ensureFor('acme', id, 3081), false, `id ${id}`);
         }
         assert.ok(!scripts.some((s) => s.includes('New-NetFirewallRule')));
@@ -262,7 +262,7 @@ test('firewall: a refusal is reported and never thrown', async () => {
         const original = console.warn;
         console.warn = (...a) => lines.push(a.join(' '));
         try {
-            assert.strictEqual(await firewall.ensureFor('acme', 'kpi', 3081), false);
+            assert.strictEqual(await firewall.ensureFor('acme', 'reports', 3081), false);
         } finally { console.warn = original; }
         assert.ok(lines.some((l) => l.includes('Access is denied')), 'the reason is named');
         assert.ok(lines.some((l) => l.includes('New-NetFirewallRule')),
@@ -290,10 +290,10 @@ function seed(projects) {
 test('firewall: reconcile closes a rule whose project is gone', async () => {
     // Nothing fires for a project deleted while the service was stopped, so a
     // per-project hook can never see this. The sweep is the only thing that can.
-    const seeded = seed([{ id: 'kpi', name: 'KPI', port: 3081 }]);
+    const seeded = seed([{ id: 'reports', name: 'Reports', port: 3081 }]);
     try {
         await withFirewall(withRules([
-            { name: firewall._ruleName('acme', 'kpi'), port: '3081' },
+            { name: firewall._ruleName('acme', 'reports'), port: '3081' },
             { name: firewall._ruleName('acme', 'ghost'), port: '3082' }
         ]), async (scripts) => {
             const out = await muffle('log', async () => firewall.reconcile(seeded));
@@ -320,7 +320,7 @@ test('firewall: reconcile leaves a rule it does not own alone', async () => {
 });
 
 test('firewall: reconcile opens a project that has no rule yet', async () => {
-    const seeded = seed([{ id: 'kpi', port: 3081 }, { id: 'pulse', port: 3082 }]);
+    const seeded = seed([{ id: 'reports', port: 3081 }, { id: 'pulse', port: 3082 }]);
     try {
         await withFirewall(withRules([]), async (scripts) => {
             await muffle('log', async () => firewall.reconcile(seeded));
@@ -347,18 +347,18 @@ test('firewall: a project with no port yet is not a rule', async () => {
 test('firewall: one rule comes back as an object, not a one-element array', async () => {
     // ConvertTo-Json does that, and reading it as an array silently finds no
     // rules: the sweep would then re-add every rule that already exists.
-    const single = { name: firewall._ruleName('acme', 'kpi'), port: '3081' };
+    const single = { name: firewall._ruleName('acme', 'reports'), port: '3081' };
     await withFirewall((script) => (script.includes('Get-NetFirewallRule')
         ? { ok: true, out: JSON.stringify(single) }
         : { ok: true, out: '' }), async (scripts) => {
-        assert.strictEqual(await firewall.ensureFor('acme', 'kpi', 3081), true);
+        assert.strictEqual(await firewall.ensureFor('acme', 'reports', 3081), true);
         assert.ok(!scripts.some((s) => s.includes('New-NetFirewallRule')),
             'the existing rule was seen');
     });
 });
 
 test('firewall: an answer that is not JSON is a refusal, not a crash', async () => {
-    const seeded = seed([{ id: 'kpi', port: 3081 }]);
+    const seeded = seed([{ id: 'reports', port: 3081 }]);
     try {
         await withFirewall((script) => (script.includes('Get-NetFirewallRule')
             ? { ok: true, out: 'Le terme Get-NetFirewallRule n est pas reconnu' }
@@ -396,7 +396,7 @@ test('firewall: the stored network is what a rule is written with', () => withSc
     try {
         machineStore.saveSiteNetwork('10.9.0.0/16');
         await withFirewall(withRules([]), async (scripts) => {
-            await muffle('log', async () => firewall.ensureFor('acme', 'kpi', 3081));
+            await muffle('log', async () => firewall.ensureFor('acme', 'reports', 3081));
             const add = scripts.find((s) => s.includes('New-NetFirewallRule'));
             assert.match(add, /-RemoteAddress 10\.9\.0\.0\/16/);
         });

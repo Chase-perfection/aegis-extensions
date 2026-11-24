@@ -11,11 +11,11 @@ const { requirementName, PACKAGING_ONLY } = require('./build/autofix');
  * Two kinds of need, and two owners. What Deploy itself needs on the server
  * (git, Python, Node) is Deploy's job: its prerequisites are listed in
  * `extension.json` and the store drawer installs them. What one site needs to
- * run (openpyxl for KPI, express for a Node app) is that site's business, and
+ * run (openpyxl for a reporting app, express for a Node app) is that site's business, and
  * installing it is a decision about that site, so it is asked, not assumed.
  *
  * The case this exists for: a branch whose start command is
- * `python packaging/api/kpi_api.py`, with its `requirements.txt` beside the
+ * `python packaging/api/reports_api.py`, with its `requirements.txt` beside the
  * script and no install command anywhere. Detection at creation only reads the
  * root of the branch, so nothing ran pip, the build passed, the publish passed,
  * and the process died on its first import with ModuleNotFoundError. The
@@ -58,7 +58,7 @@ function program(word) {
 
 /**
  * The folder the start command runs code from, relative to the site root, or
- * '' for the root itself. `python packaging/api/kpi_api.py` gives
+ * '' for the root itself. `python packaging/api/reports_api.py` gives
  * `packaging/api`; `python -m app` and anything unrecognised give the root.
  */
 function scriptDir(args) {

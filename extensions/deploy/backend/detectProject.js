@@ -73,7 +73,7 @@ function detect(names, packageJson) {
     }
 
     if (has(entries, PY_REQUIREMENTS)) {
-        // `--target .` for the same reason the KPI project uses it: the sandbox
+        // `--target .` for the same reason a Python reporting app uses it: the sandbox
         // account has no site-packages of its own to install into.
         // `python -m pip`, not `pip`: a Python installed for all users puts pip in
         // Scripts\, which is not always on PATH when python.exe is.

@@ -1,7 +1,7 @@
 /**
  * Tier 3 -- what a project card says when a push has to wait.
  *
- * Reported on KPI-BRICONORD- (27/10/2026): a push landed while the previous
+ * Reported on a reporting site (27/10/2026): a push landed while the previous
  * version still served its visitors. The card's refusal line was appended to
  * the card itself, below its padded body, so it sat flush against the edge and
  * the rounded, clipped corner cut into it; and nothing told the operator that
@@ -43,9 +43,9 @@ const NEW = 'bbbbbbb2222222222222222222222222222222222';
 
 function project(over) {
   return Object.assign({
-    id: 'kpi',
-    name: 'KPI',
-    repoFullName: 'acme/kpi',
+    id: 'reports',
+    name: 'Reports',
+    repoFullName: 'acme/reports',
     branch: 'aegis',
     lastSha: OLD,
     previousSha: null,
@@ -112,7 +112,7 @@ async function waitForToast(page, needle, variant) {
 
 test('a refusal is written inside the card body, under its buttons', async () => {
   const map = stubs([project({})]);
-  map['projects/kpi/redeploy'] = { success: false, error: 'queued' };
+  map['projects/reports/redeploy'] = { success: false, error: 'queued' };
   const { page, close } = await openPage(browser, server.url + '/pages/deploy.html#projects', map);
   try {
     await waitForCard(page);

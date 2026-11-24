@@ -24,16 +24,16 @@ function collector() {
     return { report: { log: (t) => lines.push(t) }, lines };
 }
 
-const KPI_REQUIREMENTS = [
+const REPORTS_REQUIREMENTS = [
     'openpyxl>=3.1',
     '',
-    '# Embarquee dans KPI.exe par PyInstaller : rien a installer sur la machine',
+    '# Embarquee dans Reports.exe par PyInstaller : rien a installer sur la machine',
     'pyinstaller>=6.6',
     ''
 ].join('\n');
 
-test('the KPI case: a packaging-only dependency is skipped when the build does not use it', () => {
-    const ws = tmpWorkspace({ 'packaging/api/requirements.txt': KPI_REQUIREMENTS });
+test('the reporting case: a packaging-only dependency is skipped when the build does not use it', () => {
+    const ws = tmpWorkspace({ 'packaging/api/requirements.txt': REPORTS_REQUIREMENTS });
     const { report, lines } = collector();
 
     const removed = applyAutofixes({
@@ -186,7 +186,7 @@ test('requirementName ignores what it cannot attribute to a distribution', () =>
 
 test('through the builder: the copy is fixed and the staging clone is not', async () => {
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-autofix-staging-'));
-    fs.writeFileSync(path.join(staging, 'requirements.txt'), KPI_REQUIREMENTS);
+    fs.writeFileSync(path.join(staging, 'requirements.txt'), REPORTS_REQUIREMENTS);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-autofix-root-'));
     const pool = createPool(['acct-a']);
     let seen = null;
@@ -206,6 +206,6 @@ test('through the builder: the copy is fixed and the staging clone is not', asyn
 
     assert.match(seen, /# skipped by Aegis Deploy, packaging only: pyinstaller>=6\.6/,
         'the sandbox must install from the fixed copy');
-    assert.strictEqual(fs.readFileSync(path.join(staging, 'requirements.txt'), 'utf8'), KPI_REQUIREMENTS,
+    assert.strictEqual(fs.readFileSync(path.join(staging, 'requirements.txt'), 'utf8'), REPORTS_REQUIREMENTS,
         'the clone Deploy made from GitHub must be untouched');
 });

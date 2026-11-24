@@ -15,10 +15,10 @@ const test = require('node:test');
 const assert = require('node:assert');
 const manifest = require('../deployManifest');
 
-const KPI = JSON.stringify({
+const REPORTS = JSON.stringify({
     installCmd: 'pip install --no-cache-dir -r packaging/api/requirements.txt --target .',
-    startCmd: 'python packaging/api/kpi_api.py',
-    dbFile: 'kpi.db',
+    startCmd: 'python packaging/api/reports_api.py',
+    dbFile: 'reports.db',
     migrationsDir: 'migrations'
 });
 
@@ -31,14 +31,14 @@ test('no file is a repository with nothing to declare, not a fault', () => {
     }
 });
 
-test('the KPI case: four fields declared by the branch', () => {
-    const r = manifest.parse(KPI);
+test('the reporting case: four fields declared by the branch', () => {
+    const r = manifest.parse(REPORTS);
     assert.strictEqual(r.ok, true);
     assert.strictEqual(r.present, true);
     assert.deepStrictEqual(r.config, {
         installCmd: 'pip install --no-cache-dir -r packaging/api/requirements.txt --target .',
-        startCmd: 'python packaging/api/kpi_api.py',
-        dbFile: 'kpi.db',
+        startCmd: 'python packaging/api/reports_api.py',
+        dbFile: 'reports.db',
         migrationsDir: 'migrations'
     });
     assert.deepStrictEqual(r.unsupported, []);
@@ -47,26 +47,26 @@ test('the KPI case: four fields declared by the branch', () => {
 test('an empty form takes everything from the branch', () => {
     const { values, from } = manifest.merge(
         { installCmd: '', buildCmd: '', startCmd: '', dbFile: '', migrationsDir: '' },
-        manifest.parse(KPI).config);
-    assert.strictEqual(values.startCmd, 'python packaging/api/kpi_api.py');
-    assert.strictEqual(values.dbFile, 'kpi.db');
+        manifest.parse(REPORTS).config);
+    assert.strictEqual(values.startCmd, 'python packaging/api/reports_api.py');
+    assert.strictEqual(values.dbFile, 'reports.db');
     assert.deepStrictEqual(from.sort(), ['dbFile', 'installCmd', 'migrationsDir', 'startCmd']);
 });
 
 test('what the operator typed is never overruled by the branch', () => {
     const { values, from } = manifest.merge(
         { startCmd: 'python other.py', dbFile: '' },
-        manifest.parse(KPI).config);
+        manifest.parse(REPORTS).config);
     assert.strictEqual(values.startCmd, 'python other.py',
         'a field the operator is looking at was changed from inside the repository');
-    assert.strictEqual(values.dbFile, 'kpi.db');
+    assert.strictEqual(values.dbFile, 'reports.db');
     assert.ok(!from.includes('startCmd'));
     assert.ok(from.includes('dbFile'));
 });
 
 test('whitespace in the form is not a filled field', () => {
-    const { values } = manifest.merge({ startCmd: '   ' }, manifest.parse(KPI).config);
-    assert.strictEqual(values.startCmd, 'python packaging/api/kpi_api.py');
+    const { values } = manifest.merge({ startCmd: '   ' }, manifest.parse(REPORTS).config);
+    assert.strictEqual(values.startCmd, 'python packaging/api/reports_api.py');
 });
 
 test('a file that will not parse refuses, it is not ignored', () => {
@@ -92,10 +92,10 @@ test('a path that leaves the repository refuses', () => {
 });
 
 test('an ordinary nested path is accepted', () => {
-    const r = manifest.parse(JSON.stringify({ rootDir: 'apps/site/dist', dbFile: 'data/kpi.db' }));
+    const r = manifest.parse(JSON.stringify({ rootDir: 'apps/site/dist', dbFile: 'data/reports.db' }));
     assert.strictEqual(r.ok, true);
     assert.strictEqual(r.config.rootDir, 'apps/site/dist');
-    assert.strictEqual(r.config.dbFile, 'data/kpi.db');
+    assert.strictEqual(r.config.dbFile, 'data/reports.db');
 });
 
 test('a command longer than the cap refuses', () => {
@@ -111,7 +111,7 @@ test('a key Aegis does not read is named, not dropped in silence', () => {
 });
 
 test('a declared empty string declares nothing, and does not blank the form', () => {
-    const r = manifest.parse(JSON.stringify({ startCmd: '', dbFile: 'kpi.db' }));
+    const r = manifest.parse(JSON.stringify({ startCmd: '', dbFile: 'reports.db' }));
     assert.strictEqual(r.ok, true);
     assert.ok(!('startCmd' in r.config));
     const { values } = manifest.merge({ startCmd: 'python keep.py' }, r.config);
