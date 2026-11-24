@@ -53,6 +53,8 @@ const siteAuth = require('./siteAuth');
 const authMethods = require('./authMethods');
 const siteConfig = require('./siteConfig');
 const siteNotices = require('./siteNotices');
+const audience = require('./audience');
+const audienceCollect = require('./audienceCollect');
 const runtime = require('./runtime');
 const firewall = require('./firewall');
 
@@ -564,6 +566,15 @@ function serve(req, res, ctx) {
     // Asked by the notices script, which polls: answered here and never by
     // the application, so a poll is not activity on the version it is on.
     if (pathOnly === siteNotices.DATA_PATH) return serveNotices(req, res, ctx);
+    // Where the audience script posts (audienceCollect.js). Never the
+    // application's, and never activity on a version.
+    if (pathOnly === audience.AUDIENCE_PATH) {
+        audienceCollect.serveAudience(req, res, ctx).catch((e) => {
+            console.warn(`[Deploy] ${ctx.slug}/${ctx.project.id}: audience batch failed: ${e.message}`);
+            if (!res.headersSent) send(res, 500, 'Not recorded');
+        });
+        return undefined;
+    }
     const settings = siteConfig.settingsFor(ctx.slug, ctx.tenantPaths, ctx.project.id);
 
     if (ctx.runtime === 'node') {

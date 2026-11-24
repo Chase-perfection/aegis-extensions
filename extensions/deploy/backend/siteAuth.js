@@ -76,6 +76,7 @@ const authMethods = require('./authMethods');
 const accessPolicy = require('./accessPolicy');
 const siteIcon = require('./siteIcon');
 const siteNotices = require('./siteNotices');
+const audience = require('./audience');
 
 /** Everything under here belongs to the guard and never to the site. */
 const PREFIX = '/__aegis/';
@@ -96,7 +97,10 @@ const ASSETS = {
     '/__aegis/nevera.otf': { file: 'Nevera-Regular.otf', type: 'font/otf' },
     // The script the proxy adds to a site's pages. Public on purpose: it holds
     // no text of its own and asks `/__aegis/notices` what to say.
-    [siteNotices.SCRIPT_PATH]: { file: 'notices.js', type: 'text/javascript; charset=utf-8' }
+    [siteNotices.SCRIPT_PATH]: { file: 'notices.js', type: 'text/javascript; charset=utf-8' },
+    // The audience script, same reasoning: code with nothing secret in it. What
+    // it posts is refused on a protected site unless the visitor signed in.
+    [audience.SCRIPT_PATH]: { file: 'audience.js', type: 'text/javascript; charset=utf-8' }
 };
 
 /*
@@ -114,10 +118,11 @@ function isReleasePath(pathOnly) {
 
 /**
  * The routes siteServer.js answers under the reserved prefix: the release
- * routes, and what the notices script asks for. Same rule for all of them.
+ * routes, what the notices script asks for, and where the audience script
+ * posts. Same rule for all of them.
  */
 function isSitePath(pathOnly) {
-    return isReleasePath(pathOnly) || pathOnly === siteNotices.DATA_PATH;
+    return isReleasePath(pathOnly) || pathOnly === siteNotices.DATA_PATH || pathOnly === audience.AUDIENCE_PATH;
 }
 
 /**
@@ -1495,7 +1500,8 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
         // The release and notices routes are the site server's, and an open
         // site hides nothing behind them that the site itself does not show.
         if (isSitePath(pathOnly)) return false;
-        if (pathOnly === siteNotices.SCRIPT_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
+        if ((pathOnly === siteNotices.SCRIPT_PATH || pathOnly === audience.SCRIPT_PATH)
+            && (req.method === 'GET' || req.method === 'HEAD')) {
             serveAsset(req, res, ASSETS[pathOnly]);
             return true;
         }
@@ -1621,6 +1627,19 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
         });
         res.end(req.method === 'HEAD' ? undefined : json);
         if (session) served(session, false);
+        return true;
+    }
+
+    // The audience script posts every 15 seconds and on leaving a page. It is
+    // a write, and it does not take the write path below: that one waits for
+    // the directory, which a measurement is not worth. A visitor without a
+    // session is not counted, and gets an empty 204 rather than the sign-in
+    // page, which a beacon could not show. Neither slides the idle window.
+    // Origin is checked by the site server (siteServer.serveAudience).
+    if (pathOnly === audience.AUDIENCE_PATH) {
+        if (session) return false;
+        res.writeHead(204, { 'Cache-Control': 'no-store' });
+        res.end();
         return true;
     }
 
@@ -2126,6 +2145,7 @@ function dropSessions(slug, projectId) {
 module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
     listSessions, dropSessionsFor, normalizeUser, setAuditSink, writesRecheckable, safeLog, IDLE_MS,
+    fromOwnOrigin,
     PREFIX, LOGIN_PATH, WHOAMI_PATH, cookieNames, LOCK_THRESHOLD, LOCK_MS,
     USER_LOCK_MAX_MS, MAX_FAILURE_ENTRIES,
     RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, isSitePath, safeNext, readCookie, pickLang,
