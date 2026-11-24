@@ -2408,3 +2408,38 @@ button.dep-listrow {
     gap: var(--space-sm);
     margin-top: var(--space-md);
 }
+
+/* --- Spacing between blocks ----------------------------------------------
+   Each rule below closes a gap that measured 0 px between two blocks that
+   are meant to read apart. */
+
+/* A site with no declared resources builds the access section empty: its
+   top margin and padding still pushed Apply 56 px below the people list. */
+.dep-access:empty {
+    display: none;
+}
+
+/* The people list sat flush on the hint under it; every other field keeps
+   16 px before its hint. */
+.dep-auth-people-list {
+    margin-bottom: var(--space-md);
+}
+
+/* "Close sessions" touched the last session row. */
+.dep-auth-sessions > .dep-btn {
+    margin-top: var(--space-md);
+}
+
+/* One project's variables ran into the next project's title, and the two
+   GitHub cards into each other. */
+.dep-card-block + .dep-card-block {
+    margin-top: var(--space-xl);
+}
+
+/* A step title after a button (GitHub: "Already connected...", with a hidden
+   note between them) and the hint under the repository box in Settings had
+   no gap. */
+.dep-btn ~ .dep-steps-title,
+.dep-meta + .dep-hint {
+    margin-top: var(--space-md);
+}
