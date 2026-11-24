@@ -1001,18 +1001,22 @@ a password, a token or a directory message:
 | Event type | When | `reason` |
 |---|---|---|
 | `login` | A visitor signed in | none |
-| `login_refused` | A sign-in was refused | `bad_credentials`, `account_locked`, `account_disabled`, `account_expired`, `password_expired`, `logon_denied`, `directory_unreachable`, `not_in_group`, `identity_unreadable`, `locked`, `bad_session`, `site_not_tls` |
+| `login_refused` | A sign-in was refused | `bad_credentials`, `account_locked`, `account_disabled`, `account_expired`, `password_expired`, `logon_denied`, `directory_unreachable`, `not_in_group`, `directory_config` (TLS or configuration fault on the directory), `identity_unreadable`, `locked`, `bad_session` |
 | `logout` | A visitor ended their own session | none |
 | `session_closed` | An administrator closed sessions from the dashboard, one event per session | `admin` |
 | `revalidation_refused` | The directory said the signed-in person is no longer entitled or no longer exists, on the periodic check or before a write | `not_in_group`, `account_not_found` |
 
-Every event carries the project id, the account (empty for `site_not_tls`) and
-the client address: no port, an IPv4-mapped IPv6 address reduced to IPv4,
+A plain-HTTP request to a protected site is a configuration fault and is not
+journalled: it fires on every request, assets included, before any credential.
+It leaves one console line per site per hour.
+
+Every event carries the project id, the account and the client address: no port, an IPv4-mapped IPv6 address reduced to IPv4,
 `unknown` when the socket gave none. The tenant is the one that owns the served
 project, taken from Deploy's own record of it and never from the Host header,
 the URL, a form or a cookie. A session that ends by idle timeout or after eight
-hours is not journalled. The console lines keep their text and now end with the
-client address.
+hours is not journalled. The console lines keep their text and carry the client
+address; any visitor-supplied value in them has control characters replaced by
+a space and is cut at 256 characters.
 
 ## Filling the directory form
 

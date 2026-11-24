@@ -174,15 +174,135 @@ test('a locked account is a login_refused with reason locked', async (t) => {
     t.after(() => siteAuth.dropFailures(slug, 'portal'));
 });
 
-test('a plain-HTTP request to a protected site is a login_refused site_not_tls, with no name', async (t) => {
+test('plain-HTTP requests to a protected site are a configuration fault: no event, one console line an hour', async (t) => {
     const events = collect(t);
     const tenantPaths = seed('tenant-j4', 'portal');
+    const before = consoleLines.length;
+    for (let i = 0; i < 50; i++) {
+        const res = fakeRes();
+        await siteAuth.gate(fakeReq('GET', i % 2 ? '/__aegis/site.css' : '/', { secure: false, ip: `10.0.3.${i}` }), res,
+            { slug: 'tenant-j4', tenantPaths, project: { id: 'portal', name: 'portal' } });
+        assert.strictEqual(res.statusCode, 503);
+    }
+    assert.strictEqual(events.length, 0, 'nothing reaches the journal');
+    const lines = consoleLines.slice(before).filter((l) => l.includes('tenant-j4/portal') && l.includes('site_not_tls'));
+    assert.strictEqual(lines.length, 1, 'one console line for fifty requests');
+});
+
+test('a visitor-supplied name cannot forge a console line', async (t) => {
+    collect(t);
+    const slug = 'tenant-j4b';
+    const tenantPaths = seed(slug, 'portal');
+    withVerifier(t, { ok: false, error: 'ldap_invalid_credentials' });
+    const before = consoleLines.length;
+    const sep = String.fromCharCode(0x2028, 0x85, 0x7f, 0);
+    const evil = 'bob\r\n[Deploy] tenant-x/portal: site login by admin' + sep + 'x'.repeat(400);
+    await login(slug, tenantPaths, 'portal', { username: evil, password: SECRET }, { ip: '10.0.3.50' });
+    t.after(() => siteAuth.dropFailures(slug, 'portal'));
+    const lines = consoleLines.slice(before).filter((l) => l.includes(`${slug}/portal`));
+    assert.ok(lines.length >= 1);
+    for (const l of lines) {
+        const codes = Array.from(l).map((c) => c.charCodeAt(0));
+        assert.ok(!codes.some((n) => n < 0x20 || n === 0x7f || n === 0x85 || n === 0x2028 || n === 0x2029),
+            'no control or line separator in a console line');
+        assert.ok(l.length < 420, 'the visitor value is capped');
+    }
+});
+
+test('each directory refusal has its own code; TLS and configuration faults are directory_config', async (t) => {
+    const events = collect(t);
+    const slug = 'tenant-j4c';
+    const tenantPaths = seed(slug, 'portal');
+    t.after(() => siteAuth.dropFailures(slug, 'portal'));
+    const cases = [
+        ['ldap_account_disabled', 'account_disabled'], ['ldap_account_expired', 'account_expired'],
+        ['ldap_password_expired', 'password_expired'], ['ldap_password_must_change', 'password_expired'],
+        ['ldap_logon_denied', 'logon_denied'],
+        ['ldap_requires_tls', 'directory_config'], ['ldap_requires_validation', 'directory_config'],
+        ['ldap_bad_config', 'directory_config'], ['ldap_tls_untrusted', 'directory_config'],
+        ['ldap_tls_expired', 'directory_config'], ['ldap_tls_name_mismatch', 'directory_config'],
+        ['ldap_tls_failed', 'directory_config'], ['ldap_not_tls', 'directory_config'],
+        ['ldap_timeout', 'directory_unreachable'], ['ldap_protocol_error', 'directory_unreachable']
+    ];
+    let n = 0;
+    for (const [error, reason] of cases) {
+        withVerifier(t, { ok: false, error });
+        await login(slug, tenantPaths, 'portal', { username: `d${n}`, password: SECRET }, { ip: `10.1.9.${n}` });
+        n += 1;
+        assert.strictEqual(events.length, n, error);
+        assert.strictEqual(events[n - 1].reason, reason, error);
+    }
+});
+
+test('no SID with named people, and a CSRF mismatch, have their own codes', async (t) => {
+    const events = collect(t);
+    const slug = 'tenant-j4d';
+    const tenantPaths = seed(slug, 'portal', { allowedGroups: [], allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103' }] });
+    t.after(() => siteAuth.dropFailures(slug, 'portal'));
+    withVerifier(t, { ok: true, groups: [VIEWERS_DN] });   // no sid
+    await login(slug, tenantPaths, 'portal', { username: 'carol', password: SECRET }, { ip: '10.1.8.1' });
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].reason, 'identity_unreadable');
+
+    // A POST whose form token does not match its cookie.
+    const ctx = { slug, tenantPaths, project: { id: 'portal', name: 'portal' } };
+    const names = siteAuth.cookieNames(slug, 'portal');
+    await siteAuth.gate(fakeReq('POST', '/__aegis/login', {
+        body: new URLSearchParams({ csrf: 'forged', username: 'carol', password: SECRET }).toString(),
+        ip: '10.1.8.2',
+        headers: { cookie: `${names.csrf}=other`, 'content-type': 'application/x-www-form-urlencoded' }
+    }), fakeRes(), ctx);
+    assert.strictEqual(events.length, 2);
+    assert.strictEqual(events[1].reason, 'bad_session');
+});
+
+test('a second post while one bind is in flight, and a full failure map, are both reason locked', async (t) => {
+    const events = collect(t);
+    const slug = 'tenant-j4e';
+    const tenantPaths = seed(slug, 'portal');
+    t.after(() => siteAuth.dropFailures(slug, 'portal'));
+    let release;
+    const open = new Promise((r) => { release = r; });
+    withVerifier(t, async () => { await open; return { ok: false, error: 'ldap_invalid_credentials' }; });
+    const first = login(slug, tenantPaths, 'portal', { username: 'erin', password: SECRET }, { ip: '10.1.7.1' });
+    await new Promise((r) => setTimeout(r, 50));
+    await login(slug, tenantPaths, 'portal', { username: 'erin', password: SECRET }, { ip: '10.1.7.2' });
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].reason, 'locked');
+    release();
+    await first;
+    assert.strictEqual(events[1].reason, 'bad_credentials');
+
+    events.length = 0;
+    const policy = { cap: 3, windowMs: 30 * 60 * 1000 };
+    for (let i = 0; i < siteAuth.MAX_FAILURE_ENTRIES + 50; i++) {
+        siteAuth._noteUserFailure(slug, 'portal', `spray${i}`, policy);
+    }
+    withVerifier(t, { ok: false, error: 'ldap_invalid_credentials' });
+    await login(slug, tenantPaths, 'portal', { username: 'newcomer', password: SECRET }, { ip: '10.1.7.3' });
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].reason, 'locked');
+});
+
+test('the background timer dropping a session is a revalidation_refused', async (t) => {
+    const events = collect(t);
+    const slug = 'tenant-j4f';
+    const tenantPaths = seed(slug, 'portal');
+    t.after(() => { siteAuth._setLookup(null); siteAuth.dropSessions(slug, 'portal'); });
+    withVerifier(t, { ok: true, groups: [VIEWERS_DN], login: 'alice' });
+    const { token } = await login(slug, tenantPaths, 'portal', { username: 'alice', password: SECRET }, { ip: '10.1.6.1' });
+    siteAuth._setLookup(() => ({ ok: true, groups: ['CN=Other,DC=corp,DC=local'] }));
+    events.length = 0;
+    const real = Date.now;
+    Date.now = () => real() + 11 * 60 * 1000;
+    t.after(() => { Date.now = real; });
+    const names = siteAuth.cookieNames(slug, 'portal');
     const res = fakeRes();
-    await siteAuth.gate(fakeReq('GET', '/', { secure: false, ip: '10.0.3.1' }), res,
-        { slug: 'tenant-j4', tenantPaths, project: { id: 'portal', name: 'portal' } });
-    assert.strictEqual(res.statusCode, 503);
+    siteAuth.gate(fakeReq('GET', '/', { ip: '10.1.6.1', headers: { cookie: `${names.session}=${token}` } }), res,
+        { slug, tenantPaths, project: { id: 'portal', name: 'portal' } });
+    for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
     assert.deepStrictEqual(events, [
-        { slug: 'tenant-j4', type: 'login_refused', project: 'portal', username: '', ip: '10.0.3.1', reason: 'site_not_tls' }
+        { slug, type: 'revalidation_refused', project: 'portal', username: 'alice', ip: '10.1.6.1', reason: 'not_in_group' }
     ]);
 });
 

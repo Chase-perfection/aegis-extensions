@@ -600,8 +600,36 @@ function audit(slug, projectId, type, username, ip, reason) {
     try { auditSink(slug, event); } catch (_) { /* the journal is not the guard */ }
 }
 
+/**
+ * A visitor-supplied value, made safe for a console line: control characters,
+ * DEL, NEL and the Unicode line and paragraph separators become a space, so a
+ * name cannot start a line of its own, and the length is capped.
+ */
+function safeLog(value) {
+    let out = '';
+    for (const ch of String(value === undefined || value === null ? '' : value).slice(0, 256)) {
+        const n = ch.charCodeAt(0);
+        out += (n < 0x20 || n === 0x7f || n === 0x85 || n === 0x2028 || n === 0x2029) ? ' ' : ch;
+    }
+    return out;
+}
+
+/** One `site_not_tls` console line per site per hour: it is a fault, not a visit. */
+const NOT_TLS_WARN_MS = 60 * 60 * 1000;
+const notTlsWarned = new Map();
+function warnNotTls(slug, projectId) {
+    const key = `${slug}/${projectId}`;
+    const now = Date.now();
+    const last = notTlsWarned.get(key);
+    if (last !== undefined && now - last < NOT_TLS_WARN_MS) return;
+    notTlsWarned.set(key, now);
+    console.warn(`[Deploy] ${key}: refused, site_not_tls: a protected site is served over TLS only`);
+}
+
 /** The journal's code for a directory refusal. */
 function refusalReason(error) {
+    if (error === 'ldap_bad_config' || error === 'ldap_not_tls' || error === 'ldap_requires_tls'
+        || error === 'ldap_requires_validation' || String(error).startsWith('ldap_tls_')) return 'directory_config';
     if (error === 'ldap_invalid_credentials' || error === 'ldap_user_not_found') return 'bad_credentials';
     if (error === 'ldap_account_locked') return 'account_locked';
     if (error === 'ldap_account_disabled') return 'account_disabled';
@@ -1313,8 +1341,9 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
     // typed into a page loaded in clear is already lost.
     if (!isSecure(req)) {
         const plainLang = pickLang(req);
-        console.warn(`[Deploy] ${slug}/${projectId}: refused, site_not_tls: a protected site is served over TLS only (from ${journalIp(clientIp(req))})`);
-        audit(slug, projectId, 'login_refused', '', clientIp(req), 'site_not_tls');
+        // A configuration fault and no visitor's doing, and it fires on every
+        // plain request, assets included: no journal entry, one line an hour.
+        warnNotTls(slug, projectId);
         sendHtml(res, 503,
             renderError(plainLang, tr(plainLang, 'errUnavailableTitle'), tr(plainLang, 'errNotTls')));
         return true;
@@ -1482,8 +1511,8 @@ function admit(req, res, session, ctx, pathOnly) {
             // access they lack, because asking an administrator for it is
             // their next move; the log carries who they are, which is the half
             // the page has no business repeating back.
-            console.warn(`[Deploy] ${slug}/${projectId}: ${session.username} refused `
-                + `${pathOnly} (needs ${seen.resource || 'an unreadable path'})`);
+            console.warn(`[Deploy] ${slug}/${projectId}: ${safeLog(session.username)} refused `
+                + `${safeLog(pathOnly)} (needs ${safeLog(seen.resource || 'an unreadable path')})`);
             sendHtml(res, 403, renderError(lang,
                 tr(lang, 'errNoGrantTitle'), tr(lang, 'errNoGrant')));
             return true;
@@ -1640,7 +1669,7 @@ async function handleLogin(req, res, ctx, config) {
     if (!result.ok) {
         noteFailure(ctx.slug, ctx.projectId, ip);
         const refusal = VISITOR_REFUSAL[result.error] || DIRECTORY_REFUSAL;
-        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} from ${journalIp(ip)} (${result.error || 'unknown'})`);
+        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${safeLog(username)} from ${journalIp(ip)} (${safeLog(result.error || 'unknown')})`);
         audit(ctx.slug, ctx.projectId, 'login_refused', who, ip, refusalReason(result.error));
         loginPage(res, refusal.status, ctx, {
             next,
@@ -1665,7 +1694,7 @@ async function handleLogin(req, res, ctx, config) {
     if (!sid && allowedUsers.length) {
         noteFailure(ctx.slug, ctx.projectId, ip);
         audit(ctx.slug, ctx.projectId, 'login_refused', who, ip, 'identity_unreadable');
-        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} from ${journalIp(ip)} (no objectSid returned; the service account may not be able to read it)`);
+        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${safeLog(username)} from ${journalIp(ip)} (no objectSid returned; the service account may not be able to read it)`);
         loginPage(res, 403, ctx, { next, error: tr(ctx.lang, 'errForbidden'), username });
         return true;
     }
@@ -1677,7 +1706,7 @@ async function handleLogin(req, res, ctx, config) {
         // Authenticated but not entitled. Counted, because probing a list is a
         // way of enumerating accounts.
         noteFailure(ctx.slug, ctx.projectId, ip);
-        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} from ${journalIp(ip)} (not_allowed)`);
+        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${safeLog(username)} from ${journalIp(ip)} (not_allowed)`);
         audit(ctx.slug, ctx.projectId, 'login_refused', who, ip, 'not_in_group');
         loginPage(res, 403, ctx, { next, error: tr(ctx.lang, 'errForbidden'), username });
         return true;
@@ -1706,7 +1735,7 @@ async function handleLogin(req, res, ctx, config) {
         // interval away rather than on the next request.
         nextCheckAt: everyMs > 0 ? now + everyMs : Infinity
     });
-    console.log(`[Deploy] ${ctx.slug}/${ctx.projectId}: site login by ${username}${verdict.admin ? ' (site administrator)' : ''} from ${journalIp(ip)}`);
+    console.log(`[Deploy] ${ctx.slug}/${ctx.projectId}: site login by ${safeLog(username)}${verdict.admin ? ' (site administrator)' : ''} from ${journalIp(ip)}`);
     audit(ctx.slug, ctx.projectId, 'login', login, ip);
     redirect(res, next, { 'Set-Cookie': sessionCookie(ctx.cookies.session, token, Math.floor(SESSION_MS / 1000), ctx.secure) });
     return true;
@@ -1798,7 +1827,7 @@ function recheckWrite(session, token, ctx, config) {
     return revalidate(session, token, ctx, config).then((outcome) => {
         if (outcome === 'missing') {
             sessions.delete(token);
-            console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} from ${journalIp(session.ip)} (account not found or not readable by the directory bind)`);
+            console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${safeLog(session.username)} from ${journalIp(session.ip)} (account not found or not readable by the directory bind)`);
             audit(ctx.slug, ctx.projectId, 'revalidation_refused', session.login || session.username, session.ip, 'account_not_found');
             return 'refused';
         }
@@ -1850,7 +1879,7 @@ function revalidate(session, token, ctx, config) {
                 groups, sid);
             if (!verdict.allowed) {
                 sessions.delete(token);
-                console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} from ${journalIp(session.ip)} (no longer allowed)`);
+                console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${safeLog(session.username)} from ${journalIp(session.ip)} (no longer allowed)`);
                 audit(ctx.slug, ctx.projectId, 'revalidation_refused', session.login || session.username, session.ip, 'not_in_group');
                 return 'refused';
             }
