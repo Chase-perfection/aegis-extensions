@@ -388,6 +388,57 @@ test('real icacls: the linked key keeps its own restricted ACL (Windows)', { ski
     }
 });
 
+function withWarnings(fn) {
+    const real = console.warn;
+    const warned = [];
+    console.warn = (...a) => warned.push(a.join(' '));
+    try { return fn(warned); } finally { console.warn = real; }
+}
+
+test('ensureKeyProtected restricts the store folder, with Administrators, before the key exists', () => {
+    const events = [];
+    withWarnings((warned) => withStubbedProtect((store, ctx) => {
+        store.ensureKeyProtected();
+        const dir = path.join(ctx.tempDir, 'deploy');
+        assert.deepStrictEqual(events[0], ['dir', dir, true, false], 'the store folder first, before any key');
+        assert.strictEqual(fs.statSync(path.join(dir, 'machine.key')).size, 32);
+        assert.deepStrictEqual(warned, [], 'a fresh install has nothing to rotate');
+    }, () => {}, (d, opts) => {
+        events.push(['dir', d, !!(opts && opts.admins), fs.existsSync(path.join(d, 'machine.key'))]);
+    }));
+});
+
+test('a key found in a store folder never restricted before is reported once, for rotation', () => {
+    withWarnings((warned) => withStubbedProtect((store, ctx) => {
+        const dir = path.join(ctx.tempDir, 'deploy');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'machine.key'), Buffer.alloc(32, 3));
+        store.ensureKeyProtected();
+        store.ensureKeyProtected();
+        assert.strictEqual(warned.length, 1, 'one line');
+        assert.ok(/rotat/i.test(warned[0]) && /machine\.key/.test(warned[0]), warned[0]);
+    }, () => {}));
+});
+
+test('a key in a store folder already restricted by an earlier boot is not reported', () => {
+    withWarnings((warned) => withStubbedProtect((store, ctx) => {
+        const dir = path.join(ctx.tempDir, 'deploy');
+        store.ensureKeyProtected();
+        // The next boot of the service: a new process, the same folder.
+        delete require.cache[require.resolve('../machineStore')];
+        require('../machineStore').ensureKeyProtected();
+        assert.ok(fs.existsSync(path.join(dir, 'machine.key')));
+        assert.deepStrictEqual(warned, []);
+    }, () => {}));
+});
+
+test('a store folder that cannot be restricted stops the boot check before any key is made', () => {
+    withStubbedProtect((store, ctx) => {
+        assert.throws(() => store.ensureKeyProtected(), (e) => e.code === 'key_acl_failed');
+        assert.ok(!fs.existsSync(path.join(ctx.tempDir, 'deploy', 'machine.key')));
+    }, () => {}, (d) => { if (path.basename(d) === 'deploy') throw aclFailure(); });
+});
+
 test('ensureKeyProtected creates and protects the key', () => {
     const calls = [];
     withStubbedProtect((store, ctx) => {

@@ -76,6 +76,15 @@ test('protectDir grants SYSTEM and the service SID with inheritance to children,
     ]]);
 });
 
+test('protectDir with admins also grants Administrators, for the store folder an elevated script writes', () => {
+    const { run, calls } = fakeRun();
+    keyAcl.protectDir('C:\\x\\deploy', { run, platform: 'win32', admins: true });
+    assert.deepStrictEqual(calls.find((c) => c[0] === 'icacls'), ['icacls', [
+        'C:\\x\\deploy', '/inheritance:r', '/grant:r',
+        '*S-1-5-18:(OI)(CI)F', '*S-1-5-21-111-222-333-1001:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F'
+    ]]);
+});
+
 test('protectDir throws key_acl_failed with the tool stderr on failure', () => {
     const { run } = fakeRun({ failIcacls: true });
     assert.throws(

@@ -95,9 +95,10 @@ function keyFile() { return path.join(storeDir(), 'machine.key'); }
  * move), and it is then hard-linked to `machine.key`. `linkSync` fails with
  * EEXIST when the target exists, which is the no-clobber step that works on
  * NTFS (`renameSync` would replace it). So the final name only ever appears
- * complete, a crash leaves nothing but a staging directory that is removed in
- * `finally`, and of two processes racing on first boot the loser discards its
- * key and reads the winner's.
+ * complete; an error removes the staging directory in `finally`, a crash can
+ * leave one behind (restricted, under a name nothing reads); and of two
+ * processes racing on first boot the loser discards its key and reads the
+ * winner's.
  *
  * A key left by an earlier release is restricted in place, once per process,
  * before the first read.
@@ -182,11 +183,57 @@ function readKey(file, settle = false) {
 }
 
 /**
- * Creates and restricts the key now, so a host that cannot apply the ACL is
- * reported at boot and not at the first secret. Throws `key_acl_failed`.
+ * Restricts the store folder, then creates and restricts the key, so a host
+ * that cannot apply the ACL is reported at boot and not at the first secret.
+ * Throws `key_acl_failed`. Called by the service at boot only (`routes.js`).
  */
 function ensureKeyProtected() {
+    protectStoreDir();
     machineKey();
+}
+
+/** Written once the store folder has been restricted, so a later boot knows. */
+const DIR_MARK = '.store-restricted';
+const dirApplied = new Set();
+
+/**
+ * Restricts the store folder to SYSTEM, the service account and
+ * Administrators, before any key is made in it.
+ *
+ * The data root is created by the installer with the ACL it inherits from
+ * `%ProgramData%`, which lets every local user (BUILTIN\Users) create files
+ * and folders under it. So before this, a local user could create `deploy\`
+ * or `deploy\machine.key` ahead of the service's first boot, and the service
+ * would adopt a key that user had chosen. Restricted, the folder admits no
+ * new file from anyone else. Administrators keep access because the elevated
+ * build-account setup script writes `machine.json` here; the key itself keeps
+ * its own ACL without them.
+ *
+ * Boot only, from the service: another process (that script) running it would
+ * re-grant the folder to its own account and could cut the service out.
+ *
+ * A key found here before the folder was ever restricted may have been planted
+ * or read: one warning recommends rotating it. The mark that says "restricted
+ * before" is written inside the restricted folder, so only an account that
+ * could already write there can forge it.
+ */
+function protectStoreDir() {
+    const dir = storeDir();
+    if (dirApplied.has(dir)) return;
+    fs.mkdirSync(dir, { recursive: true });
+    const mark = path.join(dir, DIR_MARK);
+    const restrictedBefore = fs.existsSync(mark);
+    const keyWasThere = fs.existsSync(keyFile());
+    keyAcl.protectDir(dir, { admins: true });
+    dirApplied.add(dir);
+    if (restrictedBefore) return;
+    try { fs.writeFileSync(mark, 'restricted by Deploy at boot\n', { flag: 'w' }); } catch (_) { /* warn again next boot */ }
+    if (keyWasThere) {
+        console.warn(`[Deploy] ${keyFile()} existed before its folder was restricted to SYSTEM, the service account and `
+            + 'Administrators, so another local account could have created or read it. Rotating it is recommended: '
+            + 'stop the service, delete machine.key, start it, then enter again every secret Deploy keeps (GitHub App, '
+            + 'directory password, project environment values, build accounts): the old ones no longer decrypt.');
+    }
 }
 
 /**
@@ -211,11 +258,13 @@ function encrypt(plaintext) {
 /**
  * Returns null on a value that will not decrypt (malformed, or sealed under a
  * different key). A rotated key file makes every stored secret unreadable, and
- * the useful behaviour then is "GitHub is not connected" rather than a boot loop.
+ * the useful behaviour then is "not set" (GitHub not connected, no directory
+ * password) rather than a boot loop.
  *
  * Throws when the key itself is unusable: `key_acl_failed` when it cannot be
- * restricted, `key_invalid` when the file is not 32 bytes. Those are host faults,
- * not bad input, and answering null would hide them as "not connected".
+ * restricted (for a minute after a failure, without trying again), and
+ * `key_invalid` when the file is not 32 bytes. Those are host faults, not bad
+ * input, and answering null would hide them as "not set".
  */
 function decrypt(packed) {
     // The key is fetched before, and outside, the try: its errors must reach the

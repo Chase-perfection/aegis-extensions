@@ -24,6 +24,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const SYSTEM_SID = 'S-1-5-18';
+const ADMINISTRATORS_SID = 'S-1-5-32-544';
 
 /**
  * The native tool from System32, not whatever `PATH` finds first: a PATH can
@@ -74,12 +75,17 @@ function protect(file, opts = {}) {
  * Same for a directory, with the grants inherited by what is created inside it
  * (`(OI)(CI)`), so a file made there never exists under a wider ACL. Off
  * Windows: chmod 0700.
+ *
+ * `admins: true` grants Administrators too. Only for the store folder itself:
+ * it holds files an elevated setup script writes (build account secrets), and
+ * the key inside it carries its own ACL without inheritance, so the grant
+ * never reaches the key.
  */
 function protectDir(dir, opts = {}) {
     restrict(dir, '(OI)(CI)', 0o700, opts);
 }
 
-function restrict(target, inherit, mode, { run = defaultRun, platform = process.platform } = {}) {
+function restrict(target, inherit, mode, { run = defaultRun, platform = process.platform, admins = false } = {}) {
     if (platform !== 'win32') {
         fs.chmodSync(target, mode);
         return;
@@ -87,6 +93,7 @@ function restrict(target, inherit, mode, { run = defaultRun, platform = process.
     const sid = currentSid(run);
     const grants = [`*${SYSTEM_SID}:${inherit}F`];
     if (sid !== SYSTEM_SID) grants.push(`*${sid}:${inherit}F`);
+    if (admins) grants.push(`*${ADMINISTRATORS_SID}:${inherit}F`);
     try {
         run('icacls', [target, '/inheritance:r', '/grant:r', ...grants]);
     } catch (e) {
