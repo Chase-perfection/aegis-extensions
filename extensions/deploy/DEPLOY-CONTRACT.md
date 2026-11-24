@@ -610,10 +610,11 @@ session open on the site.
 deletes the whole project folder, `current/` and every kept release with it. It also
 drops the tenant's cached auth rule for the site, its cached serving config and
 fallback switch, every session anyone holds on it, its build consoles, and the
-login lockouts recorded against its tenant and id. That
+per-address login lockouts recorded against its tenant and id. That
 last one matters because `idFor` hands a freed id straight to the next project
 of the same name, and an inherited lockout would refuse a visitor who never
-typed a password there.
+typed a password there. The per-account counts stay: they are kept per tenant,
+and AD keeps counting those bad passwords whatever happens to the site.
 
 Nothing is kept. There is no bin to restore from, and no soft delete: the
 project is a clone of a repository that still exists on GitHub plus a port
@@ -917,10 +918,15 @@ attempts. Try again in N seconds.", and no bind is sent.
 | Counter | Key | Rule |
 |---|---|---|
 | Per address | tenant, project, client address | 5 failures, then 60 seconds; the count starts over |
-| Per account | tenant, project, account name | at most `cap` refused binds per observation window (below) |
+| Per account | tenant, account name | at most `cap` refused binds per observation window (below) |
 
-Both are keyed on the tenant as well as the project: two tenants with a project
-of the same name never lock or clear each other.
+Both are keyed on the tenant: two tenants with a project or a user of the same
+name never lock or clear each other. The account counter is not per project,
+because AD counts bad passwords per account whichever site sent them: every
+protected project of a tenant, and every preview, draws on one count, so
+together they never send more binds than one site would. A successful sign-in
+on any of them clears it. Two tenants pointed at the same directory still keep
+two counts, and together can send it twice the cap: that remains a limit.
 
 The account name is compared the way the allow list compares it: lower case,
 without a `DOMAIN\` prefix or an `@suffix`, so `CORP\Alice`, `alice@corp.local`
@@ -940,7 +946,7 @@ books per account:
 |---|---|---|
 | `lockoutThreshold` > 0 | threshold minus 2, at least 1 | `lockOutObservationWindow` |
 | `lockoutThreshold` = 0 (AD never locks) | 5 | 15 minutes |
-| unreadable (anonymous bind, refusal, error) | 2 | 30 minutes |
+| unreadable (anonymous bind, refusal, error, a window over 99,999 minutes or AD's "never") | 2 | 30 minutes |
 
 The first refused bind is free. Each further one under the cap waits 60
 seconds, doubled per failure, at most 30 minutes. Once the cap is reached, no
@@ -972,8 +978,8 @@ was the right password and does not count. An unknown name counts exactly like
 a real one, so the lock reveals nothing about which accounts exist. A directory
 that cannot be reached counts against the address only. A request refused
 because the account is locked changes no counter, so hammering a locked account
-does not lengthen its lock. A successful sign-in clears both counters for that
-address and that account.
+does not lengthen its lock. A successful sign-in clears the address counter on
+that project and the account counter of the tenant.
 
 One bind per account is in flight at a time. A second post for the same account
 while the first is with the directory gets the 429 with a one-second wait, so a

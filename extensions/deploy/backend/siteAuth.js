@@ -182,6 +182,10 @@ const USER_CAP_NO_LOCKOUT = 5;
 const USER_WINDOW_NO_LOCKOUT_MS = 15 * 60 * 1000;
 const USER_CAP_FALLBACK = 2;
 const USER_WINDOW_FALLBACK_MS = 30 * 60 * 1000;
+/** The longest observation window AD's policy editor accepts, 99,999 minutes.
+ *  Anything longer, AD's "never" among them, is read as no usable window: a
+ *  spray of names would otherwise keep each one shut for millennia. */
+const USER_WINDOW_MAX_MS = 99999 * 60 * 1000;
 const USER_LOCK_MAX_MS = 30 * 60 * 1000;
 const WINDOW_MARGIN_MS = 5 * 1000;
 /** An address record with no lock is forgotten after this long quiet. */
@@ -459,9 +463,9 @@ function groupAllowed(allowedGroups, groups) {
  *  the directory's canonical account name; `user` is the display name.
  *  `lastSeen` is the last request on the session, for the idle timeout. */
 const sessions = new Map();
-/** `ip|projectId` and `u|projectId|user` -> { fails, until, last } */
+/** `slug/projectId|ip|<ip>` and `slug|u|<user>` -> { fails, until, last } */
 const failures = new Map();
-/** `u|projectId|user` keys with a bind to the directory in progress. */
+/** `slug|u|<user>` keys with a bind to the directory in progress. */
 const inFlight = new Set();
 
 function newToken() {
@@ -640,9 +644,16 @@ function refusalReason(error) {
 }
 
 /*
- * Every record is keyed on the tenant slug and the project id: project ids are
- * per tenant, and two tenants with a project of the same name must not lock or
- * clear each other's visitors.
+ * Every record is keyed on the tenant slug: two tenants with a project or a
+ * user of the same name must not lock or clear each other's visitors.
+ *
+ * An address record is per project too: it is a convenience against one
+ * client hammering one site. An account record is NOT per project: AD counts
+ * bad passwords per account, whichever site sent them, so two protected
+ * projects (or a project and its preview) of one tenant share one count, or
+ * together they would put twice the allowed binds to the directory and lock
+ * the account. Two tenants pointed at the same directory still count apart:
+ * that is a known limit (DEPLOY-CONTRACT, lockout).
  */
 function scopeOf(slug, projectId) {
     return `${slug}/${projectId}|`;
@@ -652,9 +663,14 @@ function ipKey(slug, projectId, ip) {
     return `${scopeOf(slug, projectId)}ip|${ip}`;
 }
 
+/** Prefix of every account record of one tenant. Never a prefix of `scopeOf`. */
+function accountScope(slug) {
+    return `${slug}|u|`;
+}
+
 /** The per-account key. `user` is already `normalizeUser`d and never empty. */
-function userKey(slug, projectId, user) {
-    return `${scopeOf(slug, projectId)}u|${user}`;
+function userKey(slug, user) {
+    return `${accountScope(slug)}${user}`;
 }
 
 /** How long after its last counted failure an account record still matters:
@@ -724,7 +740,7 @@ function ipLockLeft(slug, projectId, ip, now) {
 
 function userLockLeft(slug, projectId, user, now) {
     if (!user) return 0;
-    const k = userKey(slug, projectId, user);
+    const k = userKey(slug, user);
     const rec = failures.get(k);
     if (!rec) return 0;
     // An ended delay is kept: the count it carries is still AD's count. Only
@@ -774,7 +790,7 @@ function userPolicy(lockout) {
         return { cap: USER_CAP_FALLBACK, windowMs: USER_WINDOW_FALLBACK_MS };
     }
     if (lockout.threshold === 0) return { cap: USER_CAP_NO_LOCKOUT, windowMs: USER_WINDOW_NO_LOCKOUT_MS };
-    if (!Number.isSafeInteger(lockout.windowMs) || lockout.windowMs <= 0) {
+    if (!Number.isSafeInteger(lockout.windowMs) || lockout.windowMs <= 0 || lockout.windowMs > USER_WINDOW_MAX_MS) {
         return { cap: USER_CAP_FALLBACK, windowMs: USER_WINDOW_FALLBACK_MS };
     }
     return { cap: Math.max(1, lockout.threshold - 2), windowMs: lockout.windowMs };
@@ -790,7 +806,7 @@ function userPolicy(lockout) {
  */
 function noteUserFailure(slug, projectId, user, policy) {
     if (!user) return null;
-    const k = userKey(slug, projectId, user);
+    const k = userKey(slug, user);
     const now = Date.now();
     if (!trackUser(k, now)) return null;
     const rec = failures.get(k);
@@ -816,23 +832,29 @@ async function userPolicyFor(ctx, config) {
     return userPolicy(await authStore.lockoutPolicy(ctx.tenantPaths, config, readPolicy));
 }
 
+/** A success: this address on this project, and the account tenant-wide. */
 function clearFailures(slug, projectId, ip, user) {
     failures.delete(ipKey(slug, projectId, ip));
-    if (user) failures.delete(userKey(slug, projectId, user));
+    if (user) failures.delete(userKey(slug, user));
 }
 
 /**
- * Forgets every lockout recorded against one project of one tenant.
+ * Forgets the address lockouts recorded against one project of one tenant, or,
+ * without a project, every lockout of the tenant, account records included.
  *
  * Deleting a project frees its id, and `projectStore.idFor` hands a freed id
  * straight back to the next project of the same name. Without this, a visitor
- * who mistyped a password three times on the site that was deleted arrives at
+ * who mistyped a password five times on the site that was deleted arrives at
  * the new one already locked out, for a reason nothing on screen can explain.
+ * The account records stay: they are tenant-wide, and AD keeps counting those
+ * bad passwords whatever happens to the site that sent them.
  */
 function dropFailures(slug, projectId) {
-    const prefix = scopeOf(slug, projectId);
+    const prefixes = projectId === undefined || projectId === null
+        ? [`${slug}/`, accountScope(slug)]
+        : [scopeOf(slug, projectId)];
     for (const k of failures.keys()) {
-        if (k.startsWith(prefix)) failures.delete(k);
+        if (prefixes.some((p) => k.startsWith(p))) failures.delete(k);
     }
 }
 
@@ -1618,7 +1640,7 @@ async function handleLogin(req, res, ctx, config) {
     // all pass the lock check above before the first failure is noted, and
     // every one of them is a bad password on the DC. The second post waits a
     // second, like any lock, and changes no counter.
-    const flightKey = userKey(ctx.slug, ctx.projectId, who);
+    const flightKey = userKey(ctx.slug, who);
     if (inFlight.has(flightKey)) {
         audit(ctx.slug, ctx.projectId, 'login_refused', who, ip, 'locked');
         loginPage(res, 429, ctx, {

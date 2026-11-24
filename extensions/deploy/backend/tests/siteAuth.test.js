@@ -261,13 +261,27 @@ test('lockout: five failures lock the pair, a success clears it', () => {
     assert.strictEqual(siteAuth._lockRemaining('tenant-lock', pid, ip), 0);
 });
 
-test('lockout: counters are per ip and per project', () => {
+test('lockout: address counters are per ip and per project, account counters per tenant', () => {
     const pid = 'lock-scope';
-    siteAuth.dropFailures('tenant-lock', pid);
+    siteAuth.dropFailures('tenant-lock');
     for (let i = 0; i < siteAuth.LOCK_THRESHOLD; i++) siteAuth._noteFailure('tenant-lock', pid, '198.51.100.1');
     assert.ok(siteAuth._lockRemaining('tenant-lock', pid, '198.51.100.1') > 0);
     assert.strictEqual(siteAuth._lockRemaining('tenant-lock', pid, '198.51.100.2'), 0);
+    assert.strictEqual(siteAuth._lockRemaining('tenant-lock', 'lock-other', '198.51.100.1'), 0,
+        'the address lock stays on its project');
+
+    const policy = { cap: 1, windowMs: 30 * 60 * 1000 };
+    siteAuth._noteUserFailure('tenant-lock', pid, 'carol', policy);
+    assert.ok(siteAuth._lockRemaining('tenant-lock', 'lock-other', 'none', 'carol') > 0,
+        'the account lock holds on every project of the tenant');
     siteAuth.dropFailures('tenant-lock', pid);
+    assert.ok(siteAuth._lockRemaining('tenant-lock', pid, 'none', 'carol') > 0,
+        'dropping a project drops its address records, not the account count AD still holds');
+    assert.strictEqual(siteAuth._lockRemaining('tenant-lock', pid, '198.51.100.1'), 0);
+    siteAuth._clearFailures('tenant-lock', 'lock-other', '198.51.100.9', 'carol');
+    assert.strictEqual(siteAuth._lockRemaining('tenant-lock', pid, 'none', 'carol'), 0,
+        'a success on any project clears the account record');
+    siteAuth.dropFailures('tenant-lock');
 });
 
 /* ------------------------------------------------------------------ */
@@ -299,7 +313,7 @@ function userLockSite(t, slug, pid, policy, answer) {
     t.after(() => {
         siteAuth._setVerifier(null);
         siteAuth._setThresholdReader(null);
-        siteAuth.dropFailures(slug, pid);
+        siteAuth.dropFailures(slug);
         siteAuth.dropSessions(slug, pid);
     });
     let n = 0;
@@ -332,6 +346,13 @@ test('per-user lockout: the cap and window follow the domain policy', () => {
         'AD never locks: five tries per quarter hour');
     assert.deepStrictEqual(siteAuth._userPolicy(null), { cap: 2, windowMs: 30 * MIN },
         'unreadable: the conservative pair');
+    assert.deepStrictEqual(siteAuth._userPolicy({ threshold: 5, windowMs: 99999 * MIN }), { cap: 3, windowMs: 99999 * MIN },
+        'the longest window AD lets an administrator type is read as is');
+    assert.deepStrictEqual(siteAuth._userPolicy({ threshold: 5, windowMs: 100000 * MIN }), { cap: 2, windowMs: 30 * MIN },
+        'a longer window is not a window: unreadable');
+    // AD's "never", -9223372036854775808 ticks, as readLockoutPolicy turns it into milliseconds.
+    assert.deepStrictEqual(siteAuth._userPolicy({ threshold: 5, windowMs: 922337203685477 }), { cap: 2, windowMs: 30 * MIN },
+        'AD\'s "never" is unreadable, not 29,000 years');
 });
 
 test('per-user lockout: failures from several IPs on one user lock that user for the window', async (t) => {
@@ -344,6 +365,43 @@ test('per-user lockout: failures from several IPs on one user lock that user for
     assert.strictEqual(site.binds.length, 3);
     const other = await site.attempt('bob');
     assert.strictEqual(other.res.statusCode, 401, 'another user on the same site is not locked');
+});
+
+test('per-user lockout: two projects and a preview of one tenant share one account count', async (t) => {
+    const advance = fakeClock(t);
+    const slug = 'tenant-umulti';
+    const ids = ['site-a', 'site-b', 'site-a--feature'];
+    const tenantPaths = seed(slug, ids[0], { name: ids[0], auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
+    for (const id of ids.slice(1)) {
+        projectStore.saveProject(tenantPaths, { id, port: 3082, name: id, auth: { enabled: true, allowedGroups: [] } });
+        siteAuth.invalidate(slug, id);
+    }
+    const binds = [];
+    siteAuth._setThresholdReader(() => adPolicy(5, 30));
+    siteAuth._setVerifier((config, username) => {
+        binds.push(username);
+        return { ok: false, error: 'ldap_invalid_credentials' };
+    });
+    t.after(() => {
+        siteAuth._setVerifier(null);
+        siteAuth._setThresholdReader(null);
+        siteAuth.dropFailures(slug);
+        for (const id of ids) siteAuth.dropSessions(slug, id);
+    });
+    let n = 0;
+    const last = {};
+    for (let i = 0; i < 30; i++) {
+        const id = ids[i % ids.length];
+        n += 1;
+        const { res } = await login(slug, tenantPaths, id, { username: 'alice', password: 'wrong', next: '/' },
+            { ip: `198.19.${(n >> 8) & 255}.${n & 255}` });
+        last[id] = res;
+        const wait = Number(res.headers['Retry-After'] || 0);
+        // Short delays are waited out; the window-long lock is not.
+        if (res.statusCode === 429 && wait < 30 * 60) advance(wait * 1000);
+    }
+    assert.strictEqual(binds.length, 3, 'threshold 5 caps the account at 3 binds per window, all sites together');
+    for (const id of ids) assert.strictEqual(last[id].statusCode, 429, `${id} sees the lock`);
 });
 
 test('per-user lockout: DOMAIN\\Alice, alice@corp.local and ALICE share one counter', async (t) => {
@@ -408,7 +466,7 @@ test('per-user lockout: under the cap the delay doubles per failure, capped at 3
     const advance = fakeClock(t);
     const slug = 'tenant-udouble';
     const pid = 'udouble';
-    t.after(() => siteAuth.dropFailures(slug, pid));
+    t.after(() => siteAuth.dropFailures(slug));
     const policy = { cap: 9, windowMs: 120 * MIN };
 
     siteAuth._noteUserFailure(slug, pid, 'alice', policy);
@@ -499,7 +557,7 @@ test('per-user lockout: success clears both ip and user counters', async (t) => 
     t.after(() => {
         siteAuth._setVerifier(null);
         siteAuth._setThresholdReader(null);
-        siteAuth.dropFailures(slug, pid);
+        siteAuth.dropFailures(slug);
         siteAuth.dropSessions(slug, pid);
     });
     const tryAs = (password) => login(slug, tenantPaths, pid, { username: 'alice', password, next: '/' }, { ip });
@@ -574,7 +632,7 @@ test('per-user lockout: a spray cannot evict a target\'s count, and a full map f
     const advance = fakeClock(t);
     const slug = 'tenant-ubound';
     const pid = 'ubound';
-    t.after(() => siteAuth.dropFailures(slug, pid));
+    t.after(() => siteAuth.dropFailures(slug));
     const policy = { cap: 3, windowMs: 30 * MIN };
     siteAuth._noteFailure(slug, pid, '10.1.1.1');
     siteAuth._noteUserFailure(slug, pid, 'victim', policy);

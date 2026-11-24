@@ -171,7 +171,7 @@ test('a locked account is a login_refused with reason locked', async (t) => {
     const last = events[events.length - 1];
     assert.strictEqual(last.type, 'login_refused');
     assert.strictEqual(last.reason, 'locked');
-    t.after(() => siteAuth.dropFailures(slug, 'portal'));
+    t.after(() => siteAuth.dropFailures(slug));
 });
 
 test('plain-HTTP requests to a protected site are a configuration fault: no event, one console line an hour', async (t) => {
@@ -198,7 +198,7 @@ test('a visitor-supplied name cannot forge a console line', async (t) => {
     const sep = String.fromCharCode(0x2028, 0x85, 0x7f, 0);
     const evil = 'bob\r\n[Deploy] tenant-x/portal: site login by admin' + sep + 'x'.repeat(400);
     await login(slug, tenantPaths, 'portal', { username: evil, password: SECRET }, { ip: '10.0.3.50' });
-    t.after(() => siteAuth.dropFailures(slug, 'portal'));
+    t.after(() => siteAuth.dropFailures(slug));
     const lines = consoleLines.slice(before).filter((l) => l.includes(`${slug}/portal`));
     assert.ok(lines.length >= 1);
     for (const l of lines) {
@@ -213,7 +213,7 @@ test('each directory refusal has its own code; TLS and configuration faults are 
     const events = collect(t);
     const slug = 'tenant-j4c';
     const tenantPaths = seed(slug, 'portal');
-    t.after(() => siteAuth.dropFailures(slug, 'portal'));
+    t.after(() => siteAuth.dropFailures(slug));
     const cases = [
         ['ldap_account_disabled', 'account_disabled'], ['ldap_account_expired', 'account_expired'],
         ['ldap_password_expired', 'password_expired'], ['ldap_password_must_change', 'password_expired'],
@@ -238,7 +238,7 @@ test('no SID with named people, and a CSRF mismatch, have their own codes', asyn
     const events = collect(t);
     const slug = 'tenant-j4d';
     const tenantPaths = seed(slug, 'portal', { allowedGroups: [], allowedUsers: [{ sid: 'S-1-5-21-1-2-3-1103' }] });
-    t.after(() => siteAuth.dropFailures(slug, 'portal'));
+    t.after(() => siteAuth.dropFailures(slug));
     withVerifier(t, { ok: true, groups: [VIEWERS_DN] });   // no sid
     await login(slug, tenantPaths, 'portal', { username: 'carol', password: SECRET }, { ip: '10.1.8.1' });
     assert.strictEqual(events.length, 1);
@@ -260,7 +260,7 @@ test('a second post while one bind is in flight, and a full failure map, are bot
     const events = collect(t);
     const slug = 'tenant-j4e';
     const tenantPaths = seed(slug, 'portal');
-    t.after(() => siteAuth.dropFailures(slug, 'portal'));
+    t.after(() => siteAuth.dropFailures(slug));
     let release;
     const open = new Promise((r) => { release = r; });
     withVerifier(t, async () => { await open; return { ok: false, error: 'ldap_invalid_credentials' }; });
@@ -389,7 +389,7 @@ test('the address is normalised: mapped IPv4 loses its prefix, an unknown one is
     const events = collect(t);
     const slug = 'tenant-j8';
     const tenantPaths = seed(slug, 'portal');
-    t.after(() => { siteAuth.dropSessions(slug, 'portal'); siteAuth.dropFailures(slug, 'portal'); });
+    t.after(() => { siteAuth.dropSessions(slug, 'portal'); siteAuth.dropFailures(slug); });
     withVerifier(t, { ok: false, error: 'ldap_invalid_credentials' });
     await login(slug, tenantPaths, 'portal', { username: 'a1', password: SECRET }, { ip: '::ffff:192.0.2.7' });
     await login(slug, tenantPaths, 'portal', { username: 'a2', password: SECRET }, { ip: '2001:db8::1' });
