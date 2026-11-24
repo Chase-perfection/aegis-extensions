@@ -2,6 +2,60 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## Unreleased
+
+**Breaking on upgrade.** Read this list before installing. Each item changes
+what an operator or a visitor sees the first time the new version runs.
+
+- A protected site served over plain HTTP answers 503 until TLS is configured.
+  A site that asks for sign-in is no longer served in the clear.
+- A directory saved as `ldap://` without StartTLS, or with certificate
+  validation switched off, refuses sign-in until it is saved again over TLS.
+  For a private certificate authority, use "Trust this authority" in the
+  directory form.
+- Every signed-in visitor signs in once more. Each protected site now has its
+  own session cookie name, so the old cookies no longer match.
+- The secrets key file gets a restricted ACL at first start: SYSTEM and the
+  service account only.
+- Logins, refusals and logouts are journalled only with a core that provides
+  `recordSiteEvent`. The minimum core version is set at release.
+
+**A protected site is served over TLS only.** Sign-in over plain HTTP sent the
+password and the session cookie in the clear. The site now answers 503 until TLS
+is configured, instead of serving the sign-in page.
+
+**The directory is reached over TLS with validation on.** A directory saved as
+plain LDAP, or with certificate validation off, let anyone on the path read the
+bind and the password. Both are refused. A private certificate authority is
+trusted explicitly, one authority at a time.
+
+**The secrets key is readable by SYSTEM and the service account only.** The key
+is protected before it holds any bytes, and staged in a restricted directory so
+no copy is ever readable by another account. If the protection cannot be set,
+the site fails closed instead of starting with an open key.
+
+**Failed logins count per user, and stop before the directory locks the
+account.** Attempts are counted per account as well as per address. Once an
+account nears the lockout threshold, further attempts are refused without a bind
+to the directory, so a visitor from several addresses cannot lock a real user
+out. Per-account binds stay under the threshold the directory observes.
+
+**Each protected site has its own session cookie.** A session from one site is
+no longer accepted by another on the same host. Application cookies are kept
+beside the legacy clear, so a site's own cookies are not removed on sign-out.
+
+**Idle sessions close, and a write rechecks the group.** A session closes after
+a period without activity, a change of data rechecks that the visitor is still
+in the allowed group, and an administrator can close a session.
+
+**Logins, refusals and logouts go to the tenant journal and the Windows log.**
+Each carries its outcome. A refusal because a site is not served over TLS is a
+state of the site, not a journal event.
+
+**A refused directory search is no answer.** A search the directory refuses is
+reported as such and is not read as "no such user". An account that cannot be
+read is reported as looking deleted, and the search scope is pinned.
+
 ## 0.2.14
 
 **The sign-in page shows the site's own icon for a project served by a
