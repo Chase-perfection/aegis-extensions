@@ -163,7 +163,7 @@ test('the gear appears once the backend offers it, and only then', async () => {
     });
     assert.deepStrictEqual(gear, {
       count: 1, href: '#project/site-a/storage', label: 'Data storage', hasIcon: true,
-      rightOfUrl: true, sameRow: true, tabs: 8
+      rightOfUrl: true, sameRow: true, tabs: 9
     }, 'one gear, right of the address, and no ninth tab');
     await shot(page, '1-gear');
 

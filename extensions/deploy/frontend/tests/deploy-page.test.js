@@ -137,11 +137,12 @@ function firstHeading(page) {
   });
 }
 
-test('the tab strip lists all eight tabs, in order, each linking to its own hash, with one aria-current', async () => {
+test('the tab strip lists all nine tabs, in order, each linking to its own hash, with one aria-current', async () => {
   const { page, close } = await openPage(browser, detailUrl('project/site-a/deployments'), stubs([PROJECT]));
   try {
     const expected = [
       ['overview', 'Overview'],
+      ['audience', 'Audience'],
       ['deployments', 'Deployments'],
       ['previews', 'Previews'],
       ['env', 'Variables'],
@@ -151,7 +152,7 @@ test('the tab strip lists all eight tabs, in order, each linking to its own hash
       ['settings', 'Settings']
     ];
     const tabs = await readTabs(page);
-    assert.strictEqual(tabs.length, 8, 'expected exactly eight tabs, got ' + tabs.length);
+    assert.strictEqual(tabs.length, 9, 'expected exactly nine tabs, got ' + tabs.length);
     tabs.forEach((tab, i) => {
       assert.strictEqual(tab.text, expected[i][1], 'tab ' + i + ' label');
       assert.strictEqual(tab.href, '#project/site-a/' + expected[i][0], 'tab ' + i + ' href');
@@ -172,7 +173,7 @@ test('a preview (parentId set) does not render the Previews or Domains tabs', as
     // Authentication is there: a preview is its own record with its own auth,
     // and a branch under review is exactly what gets put behind a login.
     assert.deepStrictEqual(tabs.map((t) => t.text),
-      ['Overview', 'Deployments', 'Variables', 'Data', 'Authentication', 'Settings']);
+      ['Overview', 'Audience', 'Deployments', 'Variables', 'Data', 'Authentication', 'Settings']);
     tabs.forEach((t) => assert.ok(t.href.startsWith('#project/site-a-preview/'), t.href));
   } finally {
     await close();
@@ -185,6 +186,7 @@ test('a preview (parentId set) does not render the Previews or Domains tabs', as
 // show it: the hash for one tab would render another tab's first heading.
 const PANEL_HEADING = {
   overview: 'Production deployment',
+  audience: 'Audience',
   deployments: 'Deployments',
   previews: 'Preview deployments',
   env: 'Environment variables',

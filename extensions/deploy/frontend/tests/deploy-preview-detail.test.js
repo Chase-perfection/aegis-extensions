@@ -170,7 +170,7 @@ test('a preview id in the hash opens the preview, not the missing-project state'
     // branch preview of an internal application is not left open to the
     // network because it is temporary.
     assert.deepStrictEqual(detail.tabs,
-      ['Overview', 'Deployments', 'Variables', 'Data', 'Authentication', 'Settings']);
+      ['Overview', 'Audience', 'Deployments', 'Variables', 'Data', 'Authentication', 'Settings']);
   } finally {
     await close();
   }

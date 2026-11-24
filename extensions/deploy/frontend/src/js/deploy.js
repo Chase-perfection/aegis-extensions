@@ -2895,6 +2895,9 @@
     // one place that knowledge lives now.
     var PROJECT_TABS = [
         { id: 'overview', labelKey: 'deploy_tab_overview', labelFallback: 'Overview', render: overviewTab, hiddenForPreview: false },
+        // Who uses the site (deploy-audience.js). Shown on a preview too: it is
+        // its own record, and a branch under test may well be measured.
+        { id: 'audience', labelKey: 'deploy_tab_audience', labelFallback: 'Audience', render: audienceTab, hiddenForPreview: false },
         { id: 'deployments', labelKey: 'deploy_tab_deployments', labelFallback: 'Deployments', render: deploymentsTab, hiddenForPreview: false },
         { id: 'previews', labelKey: 'deploy_tab_previews', labelFallback: 'Previews', render: previewsPanel, hiddenForPreview: true },
         { id: 'env', labelKey: 'deploy_tab_env', labelFallback: 'Variables', render: envPanel, hiddenForPreview: false },
@@ -3239,6 +3242,12 @@
     }
 
     /** Everything about this project that is a decision rather than a fact. */
+    /** The Audience tab, drawn by deploy-audience.js; empty if that file did not load. */
+    function audienceTab(project) {
+        if (window.DeployAudience) return window.DeployAudience.tab(project);
+        return el('div', 'dep-block');
+    }
+
     function settingsTab(project) {
         var wrap = el('div', 'dep-block');
 
@@ -3266,6 +3275,8 @@
 
         // What the site says to its visitors (deploy-notices.js).
         if (window.DeployNotices) wrap.appendChild(window.DeployNotices.section(project));
+        // Whether it measures its audience (deploy-audience.js).
+        if (window.DeployAudience) wrap.appendChild(window.DeployAudience.section(project));
 
         wrap.appendChild(el('h2', 'dep-subtitle', tr('deploy_branch_title', 'Tracked branch')));
         if (project.parentId) {
