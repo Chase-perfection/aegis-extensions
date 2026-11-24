@@ -9,52 +9,74 @@ what an operator or a visitor sees the first time the new version runs.
 
 - A protected site served over plain HTTP answers 503 until TLS is configured.
   A site that asks for sign-in is no longer served in the clear.
-- A directory saved as `ldap://` without StartTLS, or with certificate
-  validation switched off, refuses sign-in until it is saved again over TLS.
-  For a private certificate authority, use "Trust this authority" in the
-  directory form.
+- Visitors of a site whose directory is saved as `ldap://` without StartTLS, or
+  with certificate validation switched off, see "Sign-in is unavailable for
+  this site" until the directory is saved again over TLS. For a private
+  certificate authority, use "Trust this authority" in the directory form.
 - Every signed-in visitor signs in once more. Each protected site now has its
   own session cookie name, so the old cookies no longer match.
-- The secrets key file gets a restricted ACL at first start: SYSTEM and the
-  service account only.
+- Writes on a protected site (any method but GET, HEAD and OPTIONS) get 503
+  while the directory is unreachable: each write is checked against it first.
+- The secrets key gets a restricted ACL at start (SYSTEM and the service
+  account), and the Deploy data folder too (SYSTEM, the service account and
+  Administrators). Other local accounts can no longer read that folder.
 - Logins, refusals and logouts are journalled only with a core that provides
   `recordSiteEvent`. The minimum core version is set at release.
 
 **A protected site is served over TLS only.** Sign-in over plain HTTP sent the
-password and the session cookie in the clear. The site now answers 503 until TLS
-is configured, instead of serving the sign-in page.
+password and the session cookie in the clear. A protected site now answers 503
+on a clear socket instead of serving the sign-in page. Turning protection on
+for a site without TLS is refused with `400 auth_requires_tls`, and turning TLS
+off (or clearing the host name that carries it) on a protected site with
+`409 tls_required_by_auth`. A plain HTTP router in front of a site with its own
+HTTPS port answers 308 to that port; `http://` typed on a TLS port is a failed
+handshake, not a redirect. Strict-Transport-Security (one year, this host name
+only) is sent on a protected site answered under its own host name, never on
+`host:port`.
 
 **The directory is reached over TLS with validation on.** A directory saved as
 plain LDAP, or with certificate validation off, let anyone on the path read the
-bind and the password. Both are refused. A private certificate authority is
-trusted explicitly, one authority at a time.
+bind and the password. Both are refused at save and again at use. A private
+certificate authority is trusted explicitly, one authority at a time.
 
 **The secrets key is readable by SYSTEM and the service account only.** The key
 is protected before it holds any bytes, and staged in a restricted directory so
-no copy is ever readable by another account. If the protection cannot be set,
-the site fails closed instead of starting with an open key.
+no copy is ever readable by another account. The Deploy data folder is
+restricted at boot before any key is made in it, so a key planted by another
+local account is no longer adopted; a key found in a folder that was never
+restricted logs one warning recommending rotation. If the protection cannot be
+set, every secret operation fails and says why; the backend keeps running.
 
-**Failed logins count per user, and stop before the directory locks the
-account.** Attempts are counted per account as well as per address. Once an
-account nears the lockout threshold, further attempts are refused without a bind
-to the directory, so a visitor from several addresses cannot lock a real user
-out. Per-account binds stay under the threshold the directory observes.
+**Failed logins stop before the directory locks the account.** Attempts are
+counted per address on each site, and per account across every protected site
+and preview of the tenant, since the directory counts bad passwords per
+account. The lockout threshold and observation window are read from the domain
+object; with no readable policy (or a window over 99,999 minutes, or AD's
+"never"), the cap is 2 failed binds per 30 minutes. At the cap no bind is sent
+until the window has passed. The counters are kept in memory: a restart forgets
+them. Two tenants pointed at the same directory still count apart.
 
 **Each protected site has its own session cookie.** A session from one site is
-no longer accepted by another on the same host. Application cookies are kept
-beside the legacy clear, so a site's own cookies are not removed on sign-out.
+no longer accepted by another on the same host. When HSTS was set, clearing the
+legacy cookies dropped the `Set-Cookie` headers the upstream application sent;
+they are now kept beside the clear.
 
 **Idle sessions close, and a write rechecks the group.** A session closes after
-a period without activity, a change of data rechecks that the visitor is still
-in the allowed group, and an administrator can close a session.
+30 minutes without a request, whatever the 8 hour cap says; the notices and
+release-check polls of an open tab do not count as activity. Each write first
+asks the directory whether the visitor is still allowed. An administrator sees
+who is signed in to a site in its sessions panel and can close one session or
+all of them (`GET` and `DELETE /api/deploy/projects/:id/sessions`).
 
 **Logins, refusals and logouts go to the tenant journal and the Windows log.**
-Each carries its outcome. A refusal because a site is not served over TLS is a
-state of the site, not a journal event.
+Each carries its outcome. In the Application log they are event IDs 201 to
+205, source `Aegis`, and name the account. Core keeps the journal rows 365
+days. This needs a core with `recordSiteEvent`. A request refused because the
+site is not served over TLS is a state of the site, not a journal event.
 
 **A refused directory search is no answer.** A search the directory refuses is
-reported as such and is not read as "no such user". An account that cannot be
-read is reported as looking deleted, and the search scope is pinned.
+reported as such and is not read as "no such user". An account the service
+account cannot read is reported as looking deleted.
 
 ## 0.2.14
 
