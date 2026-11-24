@@ -610,6 +610,16 @@ let auditSink = null;
 
 function setAuditSink(fn) { auditSink = typeof fn === 'function' ? fn : null; }
 
+/*
+ * Where a successful sign-in is counted in the site's audience, as a click on
+ * `aegis: Connexion` (audienceCollect.recordSignIn, wired by routes.register).
+ * Called as `(slug, tenantPaths, projectId, login)`; the sink decides whether
+ * the site measures its audience. Fire and forget, like the journal.
+ */
+let audienceSink = null;
+
+function setAudienceSink(fn) { audienceSink = typeof fn === 'function' ? fn : null; }
+
 /** The address as the journal spells it: no IPv4-mapped prefix, never empty. */
 function journalIp(ip) {
     const s = String(ip || '').trim();
@@ -1962,6 +1972,9 @@ async function handleLogin(req, res, ctx, config) {
     });
     console.log(`[Deploy] ${ctx.slug}/${ctx.projectId}: site login by ${safeLog(username)}${verdict.admin ? ' (site administrator)' : ''} from ${journalIp(ip)}`);
     audit(ctx.slug, ctx.projectId, 'login', login, ip);
+    if (audienceSink) {
+        try { audienceSink(ctx.slug, ctx.tenantPaths, ctx.projectId, login); } catch (_) { /* a count is not the door */ }
+    }
     redirect(res, next, { 'Set-Cookie': sessionCookie(ctx.cookies.session, token, Math.floor(SESSION_MS / 1000), ctx.secure) });
     return true;
 }
@@ -2145,7 +2158,7 @@ function dropSessions(slug, projectId) {
 module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
     listSessions, dropSessionsFor, normalizeUser, setAuditSink, writesRecheckable, safeLog, IDLE_MS,
-    fromOwnOrigin,
+    fromOwnOrigin, setAudienceSink,
     PREFIX, LOGIN_PATH, WHOAMI_PATH, cookieNames, LOCK_THRESHOLD, LOCK_MS,
     USER_LOCK_MAX_MS, MAX_FAILURE_ENTRIES,
     RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, isSitePath, safeNext, readCookie, pickLang,

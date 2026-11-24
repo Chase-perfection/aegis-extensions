@@ -60,6 +60,8 @@ const firewall = require('./firewall');
 const siteConfig = require('./siteConfig');
 const siteNotices = require('./siteNotices');
 const audience = require('./audience');
+const audienceCollect = require('./audienceCollect');
+const audienceStore = require('./audienceStore');
 const accessPolicy = require('./accessPolicy');
 const previews = require('./previews');
 const runtime = require('./runtime');
@@ -665,6 +667,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
     // Absent on an Aegis that predates it: the guard then keeps its console
     // lines and nothing else, and never fails over it.
     siteAuth.setAuditSink(typeof recordSiteEvent === 'function' ? recordSiteEvent : null);
+    // A sign-in counts in the site's audience when the site measures it.
+    siteAuth.setAudienceSink(audienceCollect.recordSignIn);
     // Core's Postgres client, for a project whose data is on a database of its
     // own (`projectStorage.js`). Set before anything starts a process, and
     // outside the opt-in below because it starts nothing by itself. Undefined

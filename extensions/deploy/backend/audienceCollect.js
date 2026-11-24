@@ -22,6 +22,8 @@
 
 'use strict';
 
+const crypto = require('crypto');
+
 const siteAuth = require('./siteAuth');
 const siteConfig = require('./siteConfig');
 const audience = require('./audience');
@@ -110,4 +112,33 @@ async function serveAudience(req, res, ctx) {
     return answer(res, 204, setCookie ? { 'Set-Cookie': setCookie } : null);
 }
 
-module.exports = { serveAudience };
+/** Writes in flight from recordSignIn, so a test can wait for them. */
+const pending = new Set();
+
+/**
+ * A successful sign-in on a protected site, counted as one click on the
+ * component `aegis: Connexion` of the page `/__aegis/login`: the "login button"
+ * of a site whose door is Aegis's. Only when the site measures its audience.
+ * Never throws; the sign-in does not wait for it.
+ */
+function recordSignIn(slug, tenantPaths, projectId, login) {
+    try {
+        const settings = siteConfig.settingsFor(slug, tenantPaths, projectId);
+        if (!settings.audience || !settings.audience.enabled || !login) return;
+        const vis = audience.visitorId(audienceStore.keyFor(tenantPaths), projectId, { username: login });
+        const line = { t: Date.now(), vis, k: 'click', pv: 'lg' + crypto.randomBytes(8).toString('hex'), p: LOGIN_PAGE, c: LOGIN_COMPONENT };
+        const write = audienceStore.append(tenantPaths, projectId, [line]);
+        pending.add(write);
+        write.finally(() => pending.delete(write));
+    } catch (e) {
+        console.warn(`[Deploy] ${slug}/${projectId}: sign-in not counted in the audience: ${e.message}`);
+    }
+}
+
+const LOGIN_PAGE = '/__aegis/login';
+const LOGIN_COMPONENT = 'aegis: Connexion';
+
+module.exports = {
+    serveAudience, recordSignIn, LOGIN_PAGE, LOGIN_COMPONENT,
+    _settled: () => Promise.all([...pending])
+};

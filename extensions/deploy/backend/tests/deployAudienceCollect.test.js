@@ -266,6 +266,56 @@ test('the application behind the proxy never sees aegis_aud_ in its Cookie heade
     }
 });
 
+/* ------------------------------------------------- the sign-in itself */
+
+const audienceCollect = require('../audienceCollect');
+
+test('a successful sign-in adds one aegis: Connexion click when audience is on', async (t) => {
+    siteAuth.setAudienceSink(audienceCollect.recordSignIn);
+    const s = site(PROTECTED, true);
+    t.after(() => { siteAuth.setAudienceSink(null); siteAuth.dropSessions(s.slug, s.id); });
+    await signIn(s, 'alice.martin');
+    await audienceCollect._settled();
+    const clicks = rawLines(s).filter((l) => l.k === 'click');
+    assert.strictEqual(clicks.length, 1);
+    assert.strictEqual(clicks[0].c, 'aegis: Connexion');
+    assert.strictEqual(clicks[0].p, '/__aegis/login');
+    assert.strictEqual(clicks[0].vis, audience.visitorId(audienceStore.keyFor(s.tenantPaths), s.id, { username: 'alice.martin' }));
+});
+
+test('no line for a sign-in when audience is off', async (t) => {
+    siteAuth.setAudienceSink(audienceCollect.recordSignIn);
+    const s = site({ auth: { enabled: true, allowedGroups: [] } }, true);
+    t.after(() => { siteAuth.setAudienceSink(null); siteAuth.dropSessions(s.slug, s.id); });
+    await signIn(s, 'alice.martin');
+    await audienceCollect._settled();
+    assert.strictEqual(rawLines(s).length, 0);
+});
+
+test('a refused sign-in adds nothing', async (t) => {
+    siteAuth.setAudienceSink(audienceCollect.recordSignIn);
+    const s = site(PROTECTED, true);
+    t.after(() => { siteAuth.setAudienceSink(null); siteAuth._setVerifier(null); });
+    siteAuth._setVerifier(() => ({ ok: false, reason: 'bad_credentials' }));
+    const names = siteAuth.cookieNames(s.slug, s.id);
+    const get = await answer(fakeReq('GET', '/__aegis/login'), s.ctx);
+    const csrf = cookieValue(header(get, 'set-cookie'), names.csrf);
+    await answer(fakeReq('POST', '/__aegis/login', {
+        body: new URLSearchParams({ csrf, username: 'alice.martin', password: 'wrong', next: '/' }).toString(),
+        headers: { cookie: `${names.csrf}=${csrf}`, origin: `https://${HOST}`, 'content-type': 'application/x-www-form-urlencoded' }
+    }), s.ctx);
+    await audienceCollect._settled();
+    assert.strictEqual(rawLines(s).length, 0);
+});
+
+test('a sink that throws does not break the sign-in', async (t) => {
+    siteAuth.setAudienceSink(() => { throw new Error('boom'); });
+    const s = site(PROTECTED, true);
+    t.after(() => { siteAuth.setAudienceSink(null); siteAuth.dropSessions(s.slug, s.id); });
+    const cookie = await signIn(s, 'alice.martin');
+    assert.ok(cookie);
+});
+
 test('/__aegis/audience.js is served on an open site and on a protected one', async () => {
     const open = site({ audience: { enabled: true } });
     const a = await answer(fakeReq('GET', '/__aegis/audience.js'), open.ctx);
