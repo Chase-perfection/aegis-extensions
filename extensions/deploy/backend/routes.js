@@ -658,7 +658,12 @@ function registerPublic(router, { resolver, moduleGate }) {
 }
 
 /** Routes below the session wall. The module gate is already mounted. */
-function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writableDb, resolveChrome, puppeteer, postgres, reauthenticate }) {
+function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writableDb, resolveChrome, puppeteer, postgres, reauthenticate, recordSiteEvent }) {
+    // The tenant journal and the Windows log, for what a protected site's
+    // visitors do. Core's `recordSiteEvent(slug, event)` is fire and forget.
+    // Absent on an Aegis that predates it: the guard then keeps its console
+    // lines and nothing else, and never fails over it.
+    siteAuth.setAuditSink(typeof recordSiteEvent === 'function' ? recordSiteEvent : null);
     // Core's Postgres client, for a project whose data is on a database of its
     // own (`projectStorage.js`). Set before anything starts a process, and
     // outside the opt-in below because it starts nothing by itself. Undefined

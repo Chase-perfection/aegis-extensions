@@ -556,12 +556,59 @@ function dropSessionsFor(slug, projectId, username) {
         if (named && normalizeUser(s.username) !== wanted && normalizeUser(s.login) !== wanted) continue;
         sessions.delete(token);
         closed += 1;
+        audit(s.slug, s.projectId, 'session_closed', s.login || s.username, s.ip, 'admin');
     }
     return closed;
 }
 
 function clientIp(req) {
     return (req.socket && (req.socket.remoteAddress || '')) || 'unknown';
+}
+
+/*
+ * The journal. Core owns the ledger and the Windows Application log; this file
+ * only says what happened. The sink is the host's `recordSiteEvent(slug,
+ * event)`, set once by `routes.register`. Without one (an Aegis that predates
+ * it, or a test) the console line is all there is.
+ *
+ * The slug is always the one the site was served under: it comes from
+ * `gate`'s own context, which `siteServer` builds from Deploy's record of the
+ * project, or from the dashboard session's tenant on the administrator route.
+ * Never from the Host header, the URL, a form field or a cookie, so a request
+ * cannot write into another tenant's journal.
+ */
+let auditSink = null;
+
+function setAuditSink(fn) { auditSink = typeof fn === 'function' ? fn : null; }
+
+/** The address as the journal spells it: no IPv4-mapped prefix, never empty. */
+function journalIp(ip) {
+    const s = String(ip || '').trim();
+    const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(s);
+    return mapped ? mapped[1] : (s || 'unknown');
+}
+
+/**
+ * One event to the sink. `reason` is a short machine code from this file,
+ * never free text, a password or a directory message. Fire and forget: a sink
+ * that throws costs the entry and never the visitor.
+ */
+function audit(slug, projectId, type, username, ip, reason) {
+    if (!auditSink) return;
+    const event = { type, project: String(projectId || ''), username: String(username || ''), ip: journalIp(ip) };
+    if (reason) event.reason = reason;
+    try { auditSink(slug, event); } catch (_) { /* the journal is not the guard */ }
+}
+
+/** The journal's code for a directory refusal. */
+function refusalReason(error) {
+    if (error === 'ldap_invalid_credentials' || error === 'ldap_user_not_found') return 'bad_credentials';
+    if (error === 'ldap_account_locked') return 'account_locked';
+    if (error === 'ldap_account_disabled') return 'account_disabled';
+    if (error === 'ldap_account_expired') return 'account_expired';
+    if (error === 'ldap_password_expired' || error === 'ldap_password_must_change') return 'password_expired';
+    if (error === 'ldap_logon_denied') return 'logon_denied';
+    return 'directory_unreachable';
 }
 
 /*
@@ -1266,7 +1313,8 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
     // typed into a page loaded in clear is already lost.
     if (!isSecure(req)) {
         const plainLang = pickLang(req);
-        console.warn(`[Deploy] ${slug}/${projectId}: refused, site_not_tls: a protected site is served over TLS only`);
+        console.warn(`[Deploy] ${slug}/${projectId}: refused, site_not_tls: a protected site is served over TLS only (from ${journalIp(clientIp(req))})`);
+        audit(slug, projectId, 'login_refused', '', clientIp(req), 'site_not_tls');
         sendHtml(res, 503,
             renderError(plainLang, tr(plainLang, 'errUnavailableTitle'), tr(plainLang, 'errNotTls')));
         return true;
@@ -1299,6 +1347,7 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
 
     if (pathOnly === LOGOUT_PATH) {
         if (token) sessions.delete(token);
+        if (session) audit(slug, projectId, 'logout', session.login || session.username, clientIp(req));
         redirect(res, LOGIN_PATH, { 'Set-Cookie': sessionCookie(ctx.cookies.session, '', 0, ctx.secure) });
         return true;
     }
@@ -1507,6 +1556,7 @@ async function handleLogin(req, res, ctx, config) {
     const who = normalizeUser(username);
     const locked = lockRemaining(ctx.slug, ctx.projectId, ip, who);
     if (locked > 0) {
+        audit(ctx.slug, ctx.projectId, 'login_refused', who || username, ip, 'locked');
         // Through loginPage, so the form's new token and its cookie travel
         // together. Rendered with a token and no cookie, the first try after
         // the wait failed the CSRF check and counted as one more failure.
@@ -1522,6 +1572,7 @@ async function handleLogin(req, res, ctx, config) {
     // other, because a real user never trips it twice.
     if (!sameToken(sentCsrf, cookieCsrf)) {
         noteFailure(ctx.slug, ctx.projectId, ip);
+        audit(ctx.slug, ctx.projectId, 'login_refused', who || username, ip, 'bad_session');
         loginPage(res, 400, ctx, { next, error: tr(ctx.lang, 'errSession'), username });
         return true;
     }
@@ -1540,6 +1591,7 @@ async function handleLogin(req, res, ctx, config) {
     // second, like any lock, and changes no counter.
     const flightKey = userKey(ctx.slug, ctx.projectId, who);
     if (inFlight.has(flightKey)) {
+        audit(ctx.slug, ctx.projectId, 'login_refused', who, ip, 'locked');
         loginPage(res, 429, ctx, {
             next, error: tr(ctx.lang, 'errLocked', 1), username,
             headers: { 'Retry-After': '1' }
@@ -1550,6 +1602,7 @@ async function handleLogin(req, res, ctx, config) {
     // accounts still inside their window) is not put to the directory.
     if (!trackUser(flightKey, Date.now())) {
         const wait = Math.ceil(LOCK_MS / 1000);
+        audit(ctx.slug, ctx.projectId, 'login_refused', who, ip, 'locked');
         loginPage(res, 429, ctx, {
             next, error: tr(ctx.lang, 'errLocked', wait), username,
             headers: { 'Retry-After': String(wait) }
@@ -1587,7 +1640,8 @@ async function handleLogin(req, res, ctx, config) {
     if (!result.ok) {
         noteFailure(ctx.slug, ctx.projectId, ip);
         const refusal = VISITOR_REFUSAL[result.error] || DIRECTORY_REFUSAL;
-        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} (${result.error || 'unknown'})`);
+        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} from ${journalIp(ip)} (${result.error || 'unknown'})`);
+        audit(ctx.slug, ctx.projectId, 'login_refused', who, ip, refusalReason(result.error));
         loginPage(res, refusal.status, ctx, {
             next,
             error: tr(ctx.lang, refusal.key),
@@ -1610,7 +1664,8 @@ async function handleLogin(req, res, ctx, config) {
     // administrator to two very different places.
     if (!sid && allowedUsers.length) {
         noteFailure(ctx.slug, ctx.projectId, ip);
-        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} (no objectSid returned; the service account may not be able to read it)`);
+        audit(ctx.slug, ctx.projectId, 'login_refused', who, ip, 'identity_unreadable');
+        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} from ${journalIp(ip)} (no objectSid returned; the service account may not be able to read it)`);
         loginPage(res, 403, ctx, { next, error: tr(ctx.lang, 'errForbidden'), username });
         return true;
     }
@@ -1622,7 +1677,8 @@ async function handleLogin(req, res, ctx, config) {
         // Authenticated but not entitled. Counted, because probing a list is a
         // way of enumerating accounts.
         noteFailure(ctx.slug, ctx.projectId, ip);
-        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} (not_allowed)`);
+        console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${username} from ${journalIp(ip)} (not_allowed)`);
+        audit(ctx.slug, ctx.projectId, 'login_refused', who, ip, 'not_in_group');
         loginPage(res, 403, ctx, { next, error: tr(ctx.lang, 'errForbidden'), username });
         return true;
     }
@@ -1650,7 +1706,8 @@ async function handleLogin(req, res, ctx, config) {
         // interval away rather than on the next request.
         nextCheckAt: everyMs > 0 ? now + everyMs : Infinity
     });
-    console.log(`[Deploy] ${ctx.slug}/${ctx.projectId}: site login by ${username}${verdict.admin ? ' (site administrator)' : ''}`);
+    console.log(`[Deploy] ${ctx.slug}/${ctx.projectId}: site login by ${username}${verdict.admin ? ' (site administrator)' : ''} from ${journalIp(ip)}`);
+    audit(ctx.slug, ctx.projectId, 'login', login, ip);
     redirect(res, next, { 'Set-Cookie': sessionCookie(ctx.cookies.session, token, Math.floor(SESSION_MS / 1000), ctx.secure) });
     return true;
 }
@@ -1741,7 +1798,8 @@ function recheckWrite(session, token, ctx, config) {
     return revalidate(session, token, ctx, config).then((outcome) => {
         if (outcome === 'missing') {
             sessions.delete(token);
-            console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} (account not found or not readable by the directory bind)`);
+            console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} from ${journalIp(session.ip)} (account not found or not readable by the directory bind)`);
+            audit(ctx.slug, ctx.projectId, 'revalidation_refused', session.login || session.username, session.ip, 'account_not_found');
             return 'refused';
         }
         return sessions.get(token) === session ? outcome : 'refused';
@@ -1792,7 +1850,8 @@ function revalidate(session, token, ctx, config) {
                 groups, sid);
             if (!verdict.allowed) {
                 sessions.delete(token);
-                console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} (no longer allowed)`);
+                console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: session dropped for ${session.username} from ${journalIp(session.ip)} (no longer allowed)`);
+                audit(ctx.slug, ctx.projectId, 'revalidation_refused', session.login || session.username, session.ip, 'not_in_group');
                 return 'refused';
             }
             session.groups = groups;
@@ -1823,7 +1882,7 @@ function dropSessions(slug, projectId) {
 
 module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
-    listSessions, dropSessionsFor, normalizeUser, writesRecheckable, IDLE_MS,
+    listSessions, dropSessionsFor, normalizeUser, setAuditSink, writesRecheckable, IDLE_MS,
     PREFIX, LOGIN_PATH, WHOAMI_PATH, cookieNames, LOCK_THRESHOLD, LOCK_MS,
     USER_LOCK_MAX_MS, MAX_FAILURE_ENTRIES,
     RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, isSitePath, safeNext, readCookie, pickLang,
