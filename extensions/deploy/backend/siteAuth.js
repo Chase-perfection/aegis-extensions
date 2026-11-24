@@ -1303,12 +1303,6 @@ function loginPage(res, status, ctx, opts) {
  */
 function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName }) {
     const projectId = project && project.id;
-    // One year, no `includeSubDomains`, no `preload`: it binds this host name
-    // and nothing under it. Only for a secure request that was routed by the
-    // project's own name; see the file header for why never `host:port`.
-    if (isSecure(req) && viaRouterHostName && typeof res.setHeader === 'function') {
-        res.setHeader('Strict-Transport-Security', 'max-age=31536000');
-    }
     const siteName = (project && (project.name || project.id)) || 'site';
     const pathOnly = String(req.url || '/').split('?')[0];
     const reserved = pathOnly === '/__aegis' || pathOnly.startsWith(PREFIX);
@@ -1321,6 +1315,14 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
     }
 
     const method = methodFor(slug, tenantPaths, projectId);
+
+    // One year, no `includeSubDomains`, no `preload`: it binds this host name
+    // and nothing under it. Only for a protected site, on a secure request that
+    // was routed by the project's own name; see the file header for why never
+    // `host:port`. An open site is the operator's to pin or not.
+    if (method !== authMethods.NONE && isSecure(req) && viaRouterHostName && typeof res.setHeader === 'function') {
+        res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+    }
 
     if (method === authMethods.NONE) {
         // The release and notices routes are the site server's, and an open
@@ -1476,7 +1478,11 @@ function gate(req, res, { slug, tenantPaths, project, root, viaRouterHostName })
     // Past the door only: which commits a protected site runs, and what it
     // says to its visitors, is not for somebody who has not signed in. Without
     // a session it is a reserved path like any other, and answers 404.
-    if (session && isSitePath(pathOnly)) return served(session, false);
+    //
+    // A read here does not slide the idle window: the notices script polls
+    // every two minutes and the release check on its own timer, so a tab left
+    // open would otherwise keep its session alive for the whole 8 h cap.
+    if (session && isSitePath(pathOnly)) return false;
 
     if (reserved) { notFound(res); return true; }
 

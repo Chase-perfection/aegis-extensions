@@ -1587,6 +1587,30 @@ test('session closes after 30 min idle, and activity slides it', async (t) => {
         'one millisecond past the idle window lands on the login form');
 });
 
+test('a tab polling the notices and the release check every 2 min still closes at 30 min idle', async (t) => {
+    const slug = 'tenant-idle-poll';
+    const tenantPaths = seed(slug, 'poll',
+        { name: 'Poll', auth: { enabled: true, allowedGroups: ['Site Viewers'] } },
+        revalConfig(0));
+    const token = await loginToken(slug, tenantPaths, 'poll', '10.0.0.92');
+    t.after(() => siteAuth.dropSessions(slug, 'poll'));
+    const advance = fakeClock(t);
+    const poll = (url) => {
+        const res = fakeRes();
+        return siteAuth.gate(
+            fakeReq('GET', url, { headers: { cookie: `${names(slug, 'poll').session}=${token}` } }), res,
+            { slug, tenantPaths, project: { id: 'poll', name: 'poll' } });
+    };
+    for (let minute = 2; minute <= 28; minute += 2) {
+        advance(2 * 60 * 1000);
+        assert.strictEqual(poll(require('../siteNotices').DATA_PATH), false, `notices at ${minute} min still answer`);
+        assert.strictEqual(poll(siteAuth.RELEASE_PATH), false, `release check at ${minute} min still answers`);
+    }
+    advance(2 * 60 * 1000 + 1000);
+    assert.ok(isLoginRedirect(visit(slug, tenantPaths, 'poll', token)),
+        'polling is not activity: 30 min after the last real request the session is closed');
+});
+
 test('absolute 8 h cap still holds despite activity', async (t) => {
     const slug = 'tenant-cap';
     const tenantPaths = seed(slug, 'cap',
@@ -2655,4 +2679,11 @@ test('tls: HSTS is sent only on a secure request under the project host name', a
         { slug, tenantPaths, project, viaRouterHostName: 'app.corp.local' });
     assert.strictEqual(clear.headers['Strict-Transport-Security'], undefined,
         'HSTS over a clear socket is ignored by browsers and misleading');
+
+    const openPaths = seed('tls-hsts-open', 'open', { name: 'Open' });
+    const open = fakeRes();
+    await siteAuth.gate(fakeReq('GET', '/', { headers: { host: 'open.corp.local' } }), open,
+        { slug: 'tls-hsts-open', tenantPaths: openPaths, project: { id: 'open', name: 'Open' }, viaRouterHostName: 'open.corp.local' });
+    assert.strictEqual(open.headers['Strict-Transport-Security'], undefined,
+        'an open site is not pinned to HTTPS by Deploy');
 });
