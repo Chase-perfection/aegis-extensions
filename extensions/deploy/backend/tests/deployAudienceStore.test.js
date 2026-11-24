@@ -120,6 +120,18 @@ test('report within 90 days is exact, beyond is an estimate', async () => {
     assert.strictEqual(far.series.length, 201);
 });
 
+test('a report whose raw files exceed the read budget falls back to the summaries', async () => {
+    const tp = tenant();
+    const vis = 'a1b2c3d4e5f60718';
+    await store.append(tp, 'stock', [view(at(2), vis, 'pv000001'), view(at(1), vis, 'pv000002'), view(at(0), vis, 'pv000003')]);
+    const r = store.report(tp, 'stock', day(29), TODAY, TODAY, { rawBudget: 10 });
+    assert.strictEqual(r.visitorsPrecision, 'estimate');
+    assert.strictEqual(r.totals.visits, 3);
+    assert.strictEqual(r.totals.visitors, 1);
+    const roomy = store.report(tp, 'stock', day(29), TODAY, TODAY, { rawBudget: 1024 * 1024 });
+    assert.strictEqual(roomy.visitorsPrecision, 'day');
+});
+
 test('report lists every day of the period, empty ones at zero', () => {
     const tp = tenant();
     const r = store.report(tp, 'stock', day(6), TODAY, TODAY);

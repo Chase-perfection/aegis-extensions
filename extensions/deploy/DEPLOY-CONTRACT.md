@@ -756,8 +756,11 @@ is never read.
 everything it takes or drops, 405 for another method, 403 when `Origin` (or
 `Sec-Fetch-Site`) is not the site, 413 over 16 KiB, 400 for JSON it cannot
 read. At most 50 events a batch, 240 views and clicks a visitor and a minute,
-200 000 a site and a day; time events count in neither limit and keep one per
-view and ten seconds. A known robot user agent is not counted. On a protected
+200 000 a site and a day. Time events count in neither of those: one is kept
+when it is larger than the last one kept for its view and no larger than the
+view's age plus five seconds, at most two plus one per five seconds of age for
+a view, and 400 000 a site and a day. A report whose raw files exceed 64 MB is
+built from the day summaries instead, as an estimate. A known robot user agent is not counted. On a protected
 site only a signed-in visitor is counted; without a session the answer is 204
 and nothing is written, and a batch never waits for the directory.
 

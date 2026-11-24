@@ -40,7 +40,12 @@ const LIMITS = Object.freeze({
     maxMs: 6 * 3600 * 1000,
     visitorPerMinute: 240,
     sitePerDay: 200000,
-    timeEveryMs: 10 * 1000
+    // Time lines of a site per day, apart from views and clicks.
+    timePerDay: 400000,
+    // A view may report one time line per this much of its age, plus two.
+    timeEveryMs: 5 * 1000,
+    // A time event may claim at most the view's age plus this much.
+    timeSlackMs: 5 * 1000
 });
 
 /** 13 months of 30.5 days, never extended: the CNIL exemption's ceiling. */
@@ -155,28 +160,56 @@ function localDay(t) {
 
 /** Entries beyond this in any map trigger a sweep of the stale ones. */
 const SWEEP_AT = 20000;
+/** And at most this often, whatever the size. */
+const SWEEP_EVERY_MS = 60 * 1000;
 /** A page view's time events are accepted this long after it was seen. */
 const PV_TTL_MS = LIMITS.maxMs;
 
 /**
- * The three limits, in memory, per process:
+ * The limits, in memory, per process:
  *   - per visitor, `visitorPerMinute` views and clicks in a fixed minute;
  *   - per site, `sitePerDay` views and clicks per local day, with one warning;
- *   - per page view, one time event per `timeEveryMs`, and only for a view
- *     this process accepted. Time events count in neither of the others, so a
- *     visitor at the cap still gets their duration right.
- * Lost on restart, which forgets a minute of counting and nothing else.
+ *   - time events, only for a view this process accepted, and only when they
+ *     grow: larger than the last one kept for the view, no larger than the
+ *     view's age plus `timeSlackMs`. A view keeps at most two time lines plus
+ *     one per `timeEveryMs` of its age, and a site `timePerDay` a day. Time
+ *     events count in neither of the first two limits, so a visitor at the cap
+ *     still gets their duration right, and the last one sent on leaving a page
+ *     is kept however soon it follows the previous one.
+ * Stale entries are swept at most once per `sweepEveryMs`, so a large map is
+ * not walked on every batch. Lost on restart, which forgets a minute of
+ * counting and the durations of the views open at that moment.
  */
 function createLimiter(opts) {
-    const now = (opts && opts.now) || Date.now;
-    const siteCap = (opts && opts.siteCap) || LIMITS.sitePerDay;
+    const o = opts || {};
+    const now = o.now || Date.now;
+    const siteCap = o.siteCap || LIMITS.sitePerDay;
+    const timeCap = o.timeCap || LIMITS.timePerDay;
+    const sweepAt = o.sweepAt || SWEEP_AT;
+    const sweepEveryMs = o.sweepEveryMs || SWEEP_EVERY_MS;
     const visitors = new Map();
     const sites = new Map();
     const views = new Map();
+    let lastSweep = -Infinity;
+    let sweeps = 0;
 
-    function sweep(map, stale) {
-        if (map.size < SWEEP_AT) return;
-        for (const [k, v] of map) if (stale(v)) map.delete(k);
+    function sweepAll(t, minute) {
+        if (visitors.size < sweepAt && views.size < sweepAt) return;
+        if (t - lastSweep < sweepEveryMs) return;
+        lastSweep = t;
+        sweeps++;
+        for (const [k, v] of visitors) if (v.minute !== minute) visitors.delete(k);
+        for (const [k, v] of views) if (t - v.seen > PV_TTL_MS) views.delete(k);
+    }
+
+    function admitTime(pv, e, t, today) {
+        if (!pv || e.ms <= pv.lastMs || e.ms > t - pv.seen + LIMITS.timeSlackMs) return false;
+        if (pv.lines >= 2 + Math.floor((t - pv.seen) / LIMITS.timeEveryMs)) return false;
+        if (today.time >= timeCap) return false;
+        pv.lastMs = e.ms;
+        pv.lines++;
+        today.time++;
+        return true;
     }
 
     function admit(slug, projectId, vis, events) {
@@ -185,8 +218,7 @@ function createLimiter(opts) {
         const day = localDay(t);
         const minute = Math.floor(t / 60000);
 
-        sweep(visitors, (v) => v.minute !== minute);
-        sweep(views, (v) => t - v.seen > PV_TTL_MS);
+        sweepAll(t, minute);
         let mine = visitors.get(`${site}/${vis}`);
         if (!mine || mine.minute !== minute) {
             mine = { minute, n: 0 };
@@ -194,7 +226,7 @@ function createLimiter(opts) {
         }
         let today = sites.get(site);
         if (!today || today.day !== day) {
-            today = { day, n: 0, warned: false };
+            today = { day, n: 0, time: 0, warned: false };
             sites.set(site, today);
         }
 
@@ -202,10 +234,7 @@ function createLimiter(opts) {
         for (const e of events) {
             const pvKey = `${site}/${vis}/${e.pv}`;
             if (e.k === 'time') {
-                const pv = views.get(pvKey);
-                if (!pv || (pv.lastTime !== null && t - pv.lastTime < LIMITS.timeEveryMs)) continue;
-                pv.lastTime = t;
-                kept.push(e);
+                if (admitTime(views.get(pvKey), e, t, today)) kept.push(e);
                 continue;
             }
             if (mine.n >= LIMITS.visitorPerMinute) continue;
@@ -218,13 +247,13 @@ function createLimiter(opts) {
             }
             mine.n++;
             today.n++;
-            if (e.k === 'view' && !views.has(pvKey)) views.set(pvKey, { seen: t, lastTime: null });
+            if (e.k === 'view' && !views.has(pvKey)) views.set(pvKey, { seen: t, lastMs: 0, lines: 0 });
             kept.push(e);
         }
         return kept;
     }
 
-    return { admit };
+    return { admit, _sweeps: () => sweeps };
 }
 
 module.exports = {

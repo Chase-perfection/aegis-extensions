@@ -213,8 +213,25 @@ function fillSeries(from, to, rows) {
  * the day summaries plus today's raw lines, and its visitors are the merged
  * sketches, an estimate.
  */
-function report_(tenantPaths, projectId, from, to, today) {
-    if (from >= addDays(today, -(EXACT_DAYS - 1))) {
+function rawBytes(tenantPaths, projectId, from, to) {
+    const dir = path.join(dirFor(tenantPaths, projectId), 'raw');
+    let total = 0;
+    for (const d of daysFrom(addDays(from, -1), addDays(to, 1))) {
+        try { total += fs.statSync(path.join(dir, d + '.jsonl')).size; } catch (_) { /* no file that day */ }
+    }
+    return total;
+}
+
+/*
+ * The raw files are read whole and synchronously. Past this many bytes for one
+ * report, the report is built from the day summaries instead, an estimate,
+ * rather than holding the request and the memory of a very busy site.
+ */
+const RAW_BUDGET = 64 * 1024 * 1024;
+
+function report_(tenantPaths, projectId, from, to, today, opts) {
+    const budget = (opts && opts.rawBudget) || RAW_BUDGET;
+    if (from >= addDays(today, -(EXACT_DAYS - 1)) && rawBytes(tenantPaths, projectId, from, to) <= budget) {
         const s = report.summarize(linesAround(tenantPaths, projectId, from, to), {
             dayOf, inRange: (d) => d >= from && d <= to
         });

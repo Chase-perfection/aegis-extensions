@@ -149,15 +149,67 @@ test('a view accepted in the same batch makes its time event known', () => {
     assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [view('cccccccc'), time('cccccccc')]).length, 2);
 });
 
-test('two time events for one pv within 10 s keep the first', () => {
+test('a final time event 3 s after the last one is kept', () => {
     const clock = { t: 0 };
     const lim = limiterAt(clock);
     lim.admit('dt-plain', 'stock', 'v1', [view('aaaaaaaa')]);
-    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 1000)]).length, 1);
-    clock.t += 5000;
-    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 6000)]).length, 0);
-    clock.t += 6000;
-    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 12000)]).length, 1);
+    clock.t += 15000;
+    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 15000)]).length, 1);
+    clock.t += 3000;
+    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 18000)]).length, 1);
+});
+
+test('a time event that does not grow is refused', () => {
+    const clock = { t: 0 };
+    const lim = limiterAt(clock);
+    lim.admit('dt-plain', 'stock', 'v1', [view('aaaaaaaa')]);
+    clock.t += 20000;
+    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 15000)]).length, 1);
+    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 15000)]).length, 0);
+    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 9000)]).length, 0);
+});
+
+test('a time event larger than the elapsed time plus 5 s is refused', () => {
+    const clock = { t: 0 };
+    const lim = limiterAt(clock);
+    lim.admit('dt-plain', 'stock', 'v1', [view('aaaaaaaa')]);
+    clock.t += 10000;
+    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 21600000)]).length, 0);
+    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 15001)]).length, 0);
+    assert.strictEqual(lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', 15000)]).length, 1);
+});
+
+test('time lines of one view are bounded by its age', () => {
+    const clock = { t: 0 };
+    const lim = limiterAt(clock);
+    lim.admit('dt-plain', 'stock', 'v1', [view('aaaaaaaa')]);
+    clock.t += 10000;
+    let kept = 0;
+    for (let ms = 1; ms <= 50; ms++) kept += lim.admit('dt-plain', 'stock', 'v1', [time('aaaaaaaa', ms)]).length;
+    // Two to start, plus one per 5 s of age.
+    assert.strictEqual(kept, 4);
+});
+
+test('time lines of a site stop at their own daily cap', () => {
+    const clock = { t: 0 };
+    const lim = audience.createLimiter({ now: () => clock.t, siteCap: 10, timeCap: 3 });
+    for (let i = 0; i < 5; i++) lim.admit('dt-plain', 'stock', 'v' + i, [view('pv00000' + i)]);
+    clock.t += 20000;
+    let kept = 0;
+    for (let i = 0; i < 5; i++) kept += lim.admit('dt-plain', 'stock', 'v' + i, [time('pv00000' + i, 1000)]).length;
+    assert.strictEqual(kept, 3);
+});
+
+test('stale limiter entries are swept at most once per sweep interval', () => {
+    const clock = { t: 0 };
+    const lim = audience.createLimiter({ now: () => clock.t, sweepAt: 5, sweepEveryMs: 60000 });
+    for (let i = 0; i < 10; i++) lim.admit('dt-plain', 'stock', 'v' + i, [view('pv00000' + i)]);
+    const before = lim._sweeps();
+    for (let i = 0; i < 100; i++) lim.admit('dt-plain', 'stock', 'w' + i, [view('pw' + String(i).padStart(6, '0'))]);
+    assert.ok(lim._sweeps() - before <= 1, `swept ${lim._sweeps() - before} times`);
+    clock.t += 61000;
+    lim.admit('dt-plain', 'stock', 'x', [view('px000001')]);
+    assert.ok(lim._sweeps() - before <= 2);
 });
 
 test('the site cap counts view and click only, and warns once a day', () => {
