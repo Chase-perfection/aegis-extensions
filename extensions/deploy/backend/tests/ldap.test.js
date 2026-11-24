@@ -171,9 +171,10 @@ function assertSearchRequest(op, seen, scopeWanted) {
     assert.strictEqual(parts.length, 8, 'SearchRequest carries eight fields');
     assert.strictEqual(parts[0].tag, 0x04, 'baseObject is an OCTET STRING');
     assert.strictEqual(parts[1].tag, 0x0a, 'scope is an ENUMERATED');
-    // wholeSubtree for every search but one: reading a templated DN is a
-    // baseObject read of that entry, and only a fake started with `scope: 0`
-    // accepts it. Pinned per fake, so a subtree path cannot drift to base.
+    // wholeSubtree by default. The base reads (a templated DN, the rootDSE and
+    // the domain object of the lockout policy) are baseObject, and only a fake
+    // started with `scope: 0` accepts them. Pinned per fake, so a subtree path
+    // cannot drift to base.
     const scope = readInt(parts[1].value);
     const wanted = scopeWanted === undefined ? 2 : scopeWanted;
     assert.strictEqual(scope, wanted, wanted === 0 ? 'scope is baseObject' : 'scope is wholeSubtree');
@@ -979,7 +980,7 @@ test('the certificate probe still reads a chain when the stored flag is false', 
     assert.deepStrictEqual(fake.seen.filter((s) => s.op === 'bind'), [], 'the probe never binds');
 });
 
-test('rejectUnauthorized is honoured and an untrusted DC is ldap_tls_untrusted', async (t) => {
+test('the certificate is always validated and an untrusted DC is ldap_tls_untrusted', async (t) => {
     const pair = selfSignedPair();
     if (!pair) return t.skip('openssl is not available to build a test certificate');
 

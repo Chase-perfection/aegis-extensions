@@ -1764,19 +1764,18 @@ function dnsNamesOf(cert) {
  * Looks at the certificate a controller presents, without validating it and
  * without binding.
  *
- * This is the route out of a TLS dead end. The old advice -- install the
- * authority in Windows and restart, or stop validating -- assumed the operator
- * could see what was being rejected. They could not: the handshake fails before
- * anything is shown, so the choice was between an administrative task on the
- * host and switching off the protection. Showing the chain turns it into a
- * decision with the evidence attached.
+ * This is the route out of a TLS dead end. Validation cannot be turned off
+ * (`ldap_requires_validation`), and the handshake fails before anything is
+ * shown, so without this the operator could not see what was being rejected.
+ * Showing the chain turns it into a decision with the evidence attached: trust
+ * that authority, or correct the host name.
  *
  * Two properties hold it together. **No password leaves this function**: the
  * probe connects, reads the peer chain and closes, and never sends a
  * BindRequest, so a hostile endpoint learns nothing it did not already have by
- * accepting a TCP connection. And validation is off *only here*, deliberately,
- * because a certificate that validated would not need looking at; every other
- * path keeps `rejectUnauthorized` exactly as configured.
+ * accepting a TCP connection. And validation is off *only here*, deliberately
+ * (`normalizeConfig(..., { probe: true })`), because a certificate that
+ * validated would not need looking at; every other path validates, always.
  *
  * `anchor` is the top of the chain -- the authority to pin. On a controller
  * with a self-signed certificate and no CA, the leaf is its own anchor, which
@@ -1841,7 +1840,7 @@ async function inspectCertificate(config) {
 
 module.exports = {
     verify, lookup, searchUsers, testConnection, inspectCertificate, refreshTrust,
-    readLockoutPolicy,
+    readLockoutPolicy, isDnTemplate,
     escapeFilter, escapeDn, encode, decode, sidToString,
     // Exercised directly by tests/ldap.test.js: the SID arithmetic has no
     // observable effect without a directory that publishes a primary group.

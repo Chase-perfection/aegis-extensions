@@ -144,7 +144,7 @@ function parseLdapBody(body) {
 
     // The service account password crosses this connection: it is encrypted
     // (ldaps, or StartTLS on ldap) and the certificate is validated, always.
-    // A self-signed controller is reached with "Trust this certificate".
+    // A self-signed controller is reached with "Trust this authority".
     if (parsed.protocol === 'ldap:' && !(body && body.startTls === true)) {
         return { error: 'ldap_requires_tls' };
     }
@@ -3380,8 +3380,12 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         for (const id of sitesOf(req.tenantPaths, project)) {
             closed += siteAuth.dropSessionsFor(req.tenant.slug, id, username);
         }
+        // The acting administrator is named here only: the journal event is
+        // `session_closed` with reason `admin`, and core keeps no other field.
+        // Both values went through a form or a session, so through safeLog.
         console.log(`[Deploy] ${req.tenant.slug}: ${project.id} ${closed} site session(s) closed`
-            + `${username === undefined ? '' : ` for ${siteAuth.normalizeUser(username)}`}, by ${req.user.email}`);
+            + `${username === undefined ? '' : ` for ${siteAuth.safeLog(siteAuth.normalizeUser(username))}`}`
+            + `, by ${siteAuth.safeLog(req.user && req.user.email)}`);
         return res.json({ success: true, closed });
     });
 }

@@ -962,6 +962,16 @@ const VISITOR_REFUSAL = {
 const DIRECTORY_REFUSAL = { status: 502, key: 'errDirectory' };
 
 /**
+ * A stored directory configuration this release refuses to use (plain ldap://,
+ * or validation turned off): it will not answer until an administrator saves
+ * it again over TLS, so "try again later" would be false. Never counted.
+ */
+const CONFIG_REFUSAL = Object.freeze({
+    ldap_requires_tls: { status: 503, key: 'errUnavailable' },
+    ldap_requires_validation: { status: 503, key: 'errUnavailable' }
+});
+
+/**
  * The refusals that are a bad password on the DC, and count against the
  * account. An expired password, or one that must be changed, was the right
  * password: AD does not raise `badPwdCount` for it, and neither does the guard.
@@ -1696,7 +1706,7 @@ async function handleLogin(req, res, ctx, config) {
 
     if (!result.ok) {
         noteFailure(ctx.slug, ctx.projectId, ip);
-        const refusal = VISITOR_REFUSAL[result.error] || DIRECTORY_REFUSAL;
+        const refusal = VISITOR_REFUSAL[result.error] || CONFIG_REFUSAL[result.error] || DIRECTORY_REFUSAL;
         console.warn(`[Deploy] ${ctx.slug}/${ctx.projectId}: login refused for ${safeLog(username)} from ${journalIp(ip)} (${safeLog(result.error || 'unknown')})`);
         audit(ctx.slug, ctx.projectId, 'login_refused', who, ip, refusalReason(result.error));
         loginPage(res, refusal.status, ctx, {
@@ -1797,9 +1807,9 @@ async function handleLogin(req, res, ctx, config) {
  *   once, and an operator who wants someone out now has the Protect switch and
  *   `dropSessions`, both of which are immediate.
  *
- * `revalidateMinutes: 0` turns this off. A `userDnTemplate`-only directory has
- * no service account to ask with, so `ldap.lookup` refuses and every attempt
- * takes the third branch; that configuration keeps the old behaviour.
+ * `revalidateMinutes: 0` turns this off. A directory with no service account
+ * is searched anonymously, as `ldap.lookup` does; where the controller refuses
+ * that search, every attempt takes the third branch and the session is kept.
  *
  * Reads only. A write does not wait for the timer: see `recheckWrite`.
  */
@@ -1865,12 +1875,20 @@ function recheckWrite(session, token, ctx, config) {
 
 /**
  * Whether `ldap.lookup` can run on this configuration at all. The same
- * preconditions it checks: a base DN, a user filter, and either a bind DN with
- * its password or no bind DN, which is an anonymous search. A bind DN with no
- * password is refused before any socket opens, so nothing can ever answer.
+ * preconditions it checks before opening a socket: a DN-shaped
+ * `userDnTemplate` naming `{username}` (read by a base search, no base DN or
+ * filter needed), or else a base DN and a user filter; and either a bind DN
+ * with its password or no bind DN, which is an anonymous search. Anything else
+ * is refused before a socket opens, so nothing can ever answer.
  */
 function writesRecheckable(config) {
-    if (!config || !String(config.baseDn || '').trim() || !String(config.userFilter || '').trim()) return false;
+    if (!config) return false;
+    const template = String(config.userDnTemplate || '').trim();
+    if (require('./ldap').isDnTemplate(template)) {
+        if (!template.includes('{username}')) return false;
+    } else if (!String(config.baseDn || '').trim() || !String(config.userFilter || '').trim()) {
+        return false;
+    }
     const bindDn = String(config.bindDn || '').trim();
     const bindPassword = config.bindPassword === undefined || config.bindPassword === null ? '' : String(config.bindPassword);
     return !(bindDn && !bindPassword);
@@ -1939,7 +1957,7 @@ function dropSessions(slug, projectId) {
 
 module.exports = {
     gate, identityFor, isProtected, invalidate, dropSessions, dropFailures,
-    listSessions, dropSessionsFor, normalizeUser, setAuditSink, writesRecheckable, IDLE_MS,
+    listSessions, dropSessionsFor, normalizeUser, setAuditSink, writesRecheckable, safeLog, IDLE_MS,
     PREFIX, LOGIN_PATH, WHOAMI_PATH, cookieNames, LOCK_THRESHOLD, LOCK_MS,
     USER_LOCK_MAX_MS, MAX_FAILURE_ENTRIES,
     RELEASE_PATH, RELEASE_SWITCH_PATH, isReleasePath, isSitePath, safeNext, readCookie, pickLang,

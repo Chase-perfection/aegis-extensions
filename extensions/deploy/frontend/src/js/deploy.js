@@ -69,7 +69,8 @@
             deploy_sessions_confirm: 'Close every session on this site? Whoever is signed in gets the login form at their next request.',
             deploy_sessions_closed: '$1 session(s) closed.',
             deploy_sessions_failed: 'Could not read or close the sessions of this site.',
-            deploy_sessions_no_recheck: 'Writes are not rechecked against the group: the service account has no saved password. Enter it, or clear the bind DN to search anonymously.',
+            deploy_sessions_no_recheck: 'Writes are not rechecked against the group: the directory settings cannot be searched. Either the service account has no saved password, or the base DN or user filter is missing and the logon template is not a DN with {username}. Fix the directory settings.',
+            deploy_auth_recheck_hint: 'A login lasts eight hours. Without this, someone removed from an allowed group keeps reading the site for the rest of it. 0 turns off this timer only: every write is still checked against the directory first. If the directory cannot be reached, reads go on and writes get 503 until it answers again.',
             deploy_auth_test_writes_refused: 'Until the directory can be searched, writes on protected sites are refused with 503.',
             deploy_auth_err_requires_tls: 'A site behind a login must be served over HTTPS. Turn HTTPS on for this site first, or give it a host name served by the HTTPS host router, then protect it.',
             deploy_tls_err_required_by_auth: 'This site is behind a login, which needs HTTPS. Switch the protection off first, then turn HTTPS off.',
@@ -122,7 +123,8 @@
             deploy_sessions_confirm: 'Fermer toutes les sessions de ce site ? Les personnes connectées retrouvent le formulaire de connexion à leur prochaine requête.',
             deploy_sessions_closed: '$1 session(s) fermée(s).',
             deploy_sessions_failed: 'Impossible de lire ou de fermer les sessions de ce site.',
-            deploy_sessions_no_recheck: 'Les écritures ne sont pas revérifiées auprès de l\'annuaire : le compte de service n\'a pas de mot de passe enregistré. Saisissez-le, ou videz le DN de liaison pour une recherche anonyme.',
+            deploy_sessions_no_recheck: 'Les écritures ne sont pas revérifiées auprès de l\'annuaire : les réglages de l\'annuaire ne permettent pas de recherche. Soit le compte de service n\'a pas de mot de passe enregistré, soit le DN de base ou le filtre utilisateur manque et le modèle de connexion n\'est pas un DN contenant {username}. Corrigez les réglages de l\'annuaire.',
+            deploy_auth_recheck_hint: 'Une connexion dure huit heures. Sans cela, une personne retirée d\'un groupe autorisé continue de lire le site jusqu\'au bout. 0 désactive seulement ce minuteur : chaque écriture reste vérifiée auprès de l\'annuaire avant de passer. Si l\'annuaire est injoignable, la lecture continue et les écritures reçoivent une erreur 503 jusqu\'à son retour.',
             deploy_auth_test_writes_refused: 'Tant que l\'annuaire ne peut pas être interrogé, les écritures sur les sites protégés sont refusées avec une erreur 503.',
             deploy_auth_err_requires_tls: 'Un site protégé par une connexion doit être servi en HTTPS. Activez d\'abord le HTTPS pour ce site, ou donnez-lui un nom d\'hôte servi par le routeur HTTPS, puis protégez-le.',
             deploy_tls_err_required_by_auth: 'Ce site est protégé par une connexion, qui exige le HTTPS. Désactivez d\'abord la protection, puis le HTTPS.',
@@ -5522,13 +5524,14 @@
         // has been applied, and only an administrator may read them.
         if (isAdmin && current !== 'none') wrap.appendChild(buildSessionsBlock(site));
 
-        // The one directory a write cannot be rechecked against: a bind DN
-        // saved without its password, which the directory client refuses
-        // before asking anything. The guard lets writes through there rather
-        // than refuse them all, and this line is where that is said.
+        // A directory a write cannot be rechecked against: settings the
+        // directory client refuses before asking anything (a bind DN without
+        // its password, or neither a DN template nor a base DN and filter).
+        // The guard lets writes through there rather than refuse them all,
+        // and this line is where that is said.
         if (current !== 'none' && writeRecheck === false) {
             var noRecheck = el('p', 'dep-auth-site-warn', tr('deploy_sessions_no_recheck',
-                'Writes are not rechecked against the group: the service account has no saved password. Enter it, or clear the bind DN to search anonymously.'));
+                'Writes are not rechecked against the group: the directory settings cannot be searched. Either the service account has no saved password, or the base DN or user filter is missing and the logon template is not a DN with {username}. Fix the directory settings.'));
             noRecheck.setAttribute('data-i18n', 'deploy_sessions_no_recheck');
             wrap.appendChild(noRecheck);
         }

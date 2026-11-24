@@ -676,11 +676,12 @@
                                             would refuse everyone. Turning this on asks the domain controller for the
                                             full list, which can only let more people in. It does nothing on a
                                             directory that is not Active Directory.</p>
-                                        <p class="dep-hint" data-i18n="deploy_auth_revalidate_hint">A login lasts eight
-                                            hours. Without this, someone removed from an allowed group keeps their
-                                            access for the rest of it. 0 turns the re-check off. If the directory
-                                            cannot be reached the session is kept, so a controller that is briefly down
-                                            does not empty every site.</p>                                    </div>
+                                        <p class="dep-hint" data-i18n="deploy_auth_recheck_hint">A login lasts eight
+                                            hours. Without this, someone removed from an allowed group keeps reading
+                                            the site for the rest of it. 0 turns off this timer only: every write is
+                                            still checked against the directory first. If the directory cannot be
+                                            reached, reads go on and writes get 503 until it answers again.</p>
+                                    </div>
                                 </details>
 
                                 <div class="dep-auth-actions">

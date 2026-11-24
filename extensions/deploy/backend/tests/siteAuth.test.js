@@ -367,6 +367,18 @@ test('per-user lockout: failures from several IPs on one user lock that user for
     assert.strictEqual(other.res.statusCode, 401, 'another user on the same site is not locked');
 });
 
+test('login: a directory config that must be re-saved over TLS shows "unavailable", not a directory fault', async (t) => {
+    for (const error of ['ldap_requires_tls', 'ldap_requires_validation']) {
+        const site = userLockSite(t, `tenant-ucfg-${error.replace(/_/g, '-')}`, 'ucfg', adPolicy(5, 30),
+            () => ({ ok: false, error }));
+        const { res } = await site.attempt('alice');
+        assert.strictEqual(res.statusCode, 503, error);
+        assert.ok(res.body.includes('Sign-in is unavailable for this site'), `${error}: the unavailable message`);
+        for (let i = 0; i < 4; i++) await site.attempt('alice');
+        assert.strictEqual(site.binds.length, 5, `${error}: a configuration fault never counts against the account`);
+    }
+});
+
 test('per-user lockout: two projects and a preview of one tenant share one account count', async (t) => {
     const advance = fakeClock(t);
     const slug = 'tenant-umulti';
@@ -1725,6 +1737,21 @@ test('a template-only directory is searched anonymously on a write', async (t) =
     const write = await send('tenant-write-anon', tenantPaths, 'wanon', token, 'POST', '/api/items');
     assert.strictEqual(calls, 1);
     assert.strictEqual(write.res.statusCode, 503, 'an anonymous search the DC refuses is no answer');
+});
+
+test('writesRecheckable mirrors the preconditions of ldap.lookup', () => {
+    const url = 'ldaps://dc01.corp.local:636';
+    const dnTemplate = 'CN={username},OU=Users,DC=corp,DC=local';
+    assert.strictEqual(siteAuth.writesRecheckable({ url, userDnTemplate: dnTemplate }), true,
+        'a DN template is read by a base search: no base DN or filter needed');
+    assert.strictEqual(siteAuth.writesRecheckable({ url, userDnTemplate: 'CN=fixed,OU=Users,DC=corp,DC=local' }), false,
+        'a DN template without {username} is refused by lookup');
+    assert.strictEqual(siteAuth.writesRecheckable({ url, userDnTemplate: '{username}@corp.local' }), false,
+        'a UPN template needs the base DN and the filter');
+    assert.strictEqual(siteAuth.writesRecheckable({ url, baseDn: 'DC=corp,DC=local', userFilter: '(sAMAccountName={username})' }), true);
+    assert.strictEqual(siteAuth.writesRecheckable({ url, userDnTemplate: dnTemplate, bindDn: 'CN=svc,DC=corp,DC=local' }), false,
+        'a bind DN without its password is refused before any socket');
+    assert.strictEqual(siteAuth.writesRecheckable(null), false);
 });
 
 test('a write is not rechecked where ldap.lookup cannot run at all', async (t) => {

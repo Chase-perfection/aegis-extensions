@@ -42,7 +42,9 @@ still only cloned and served, exactly as before.
 
 ### The secrets key
 
-`machine.key`, beside `machine.json` in the Deploy data folder, decrypts every secret this extension stores. At start it is restricted by SID to SYSTEM and the account the service runs as; if that cannot be done, secret operations fail closed and the log says why. A key created by an earlier release may have been readable by other local users before this. Rotating it (delete the key, restart) means entering again every secret it protects: the directory bind password, project environment values, the storage password and the GitHub App key.
+`machine.key`, beside `machine.json` in the Deploy data folder, decrypts every secret this extension stores. At start it is restricted by SID to SYSTEM and the account the service runs as; if that cannot be done, secret operations fail closed (the backend keeps running) and the log says why. A key created by an earlier release may have been readable by other local users before this. Rotating it (delete the key, restart) means entering again every secret it protects: the directory bind password, project environment values, the storage password, the build accounts and the GitHub App key.
+
+The installer creates the data root (`%ProgramData%\Aegis`) with the ACL it inherits from `%ProgramData%`, which lets every local user (BUILTIN\Users, `S-1-5-32-545`) create files and folders under it. Deploy does not rely on that ACL. At boot, before any key is created, the service restricts the Deploy data folder itself (`deploy\`) by SID to SYSTEM, the service account and Administrators (`S-1-5-32-544`, for the elevated build-account setup script, which writes `machine.json` there), with inheritance cut, so no other account can plant a `machine.key` for the service to adopt. It is done again at every boot. When a key is found in a folder that had never been restricted, the log carries one warning recommending rotation, because another account may have created or read it.
 
 ### Reaching a site from another machine
 
@@ -1516,15 +1518,19 @@ refused with 403 and the session dropped; the person can sign in again, and the
 next write is refused again, until the service account can read user entries.
 The log line says "account not found or not readable by the directory bind".
 
-The write check is skipped in one case: a directory the client cannot search at
-all, which is a bind DN saved without its password. A service account with its
-password and an anonymous search (no bind DN, base DN and user filter set) both
+The write check is skipped only for settings the directory client refuses
+before it opens a socket, the same preconditions `ldap.lookup` checks: a bind
+DN saved without its password; or a logon template that is not a DN naming
+`{username}` together with a missing base DN or user filter. A DN template
+(`CN={username},OU=Users,...`) is read by a base search and needs neither. A
+service account with its password and an anonymous search (no bind DN) both
 count as searchable. If the controller refuses the anonymous search, that is no
 answer, and the write gets 503; the panel's Test button says so. Where the check
 is skipped, writes are let through on the login's verdict, and the site's
 Authentication panel says so: "Writes are not rechecked against the group: the
-service account has no saved password. Enter it, or clear the bind DN to search
-anonymously."
+directory settings cannot be searched. Either the service account has no saved
+password, or the base DN or user filter is missing and the logon template is
+not a DN with {username}. Fix the directory settings."
 
 A session ends eight hours after login, or after thirty minutes with no
 request, whichever comes first. A tenant administrator can also close the
