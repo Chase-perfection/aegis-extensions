@@ -2,6 +2,12 @@
 
 The tier each Active Directory account actually reaches, and how it gets there.
 
+## 0.0.1
+
+**Layout.** In "Pourquoi Tier 0 ?", the three values line up on one row
+whatever the length of their labels. The overview cards of a row share one
+height.
+
 ## 0.0.0
 
 First release.

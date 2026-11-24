@@ -2,7 +2,7 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
-## Unreleased
+## 0.2.15
 
 **Breaking on upgrade.** Read this list before installing. Each item changes
 what an operator or a visitor sees the first time the new version runs.
@@ -31,7 +31,9 @@ what an operator or a visitor sees the first time the new version runs.
   create). Without it, a local user who created `deploy\`, a key and its
   marker before Deploy's first start would not be detected.
 - Logins, refusals and logouts are journalled only with a core that provides
-  `recordSiteEvent`. The minimum core version is set at release.
+  `recordSiteEvent`, which Aegis 1.0.12 does not have yet. Deploy still
+  installs on 1.0.5 and later; on those, sign-ins are written to the backend
+  log only.
 - An application that links to `/__aegis/logout` now leads its visitors to a
   confirmation page with a "Sign out" button: the link alone no longer signs
   anyone out.
@@ -114,6 +116,21 @@ POST, carrying the CSRF token of the form, signs out. A POST without it gets
 **A refused directory search is no answer.** A search the directory refuses is
 reported as such and is not read as "no such user". An account the service
 account cannot read is reported as looking deleted.
+
+**A push that waits for the previous version says so.** The card shows the
+queued push and a toast says when it goes live. While the Deploy page is open
+it asks the project list every 20 seconds and announces a new pending commit,
+then the commit that went live, once each. A refusal line on a card now sits
+inside the card body, under its buttons, instead of against the clipped edge.
+
+**The page is in French when Aegis is.** Internal network access,
+Reachability, the runtime-only variable hint, the migration errors and the
+queue messages were still in English: 42 strings had no French. They are in
+the page's own string table now.
+
+**Layout.** The facts of a project's overview sit next to their labels; they
+were pushed to the far right of a wide screen. The "Deploy this branch" form of
+a preview no longer stretches its button across the whole row.
 
 ## 0.2.14
 

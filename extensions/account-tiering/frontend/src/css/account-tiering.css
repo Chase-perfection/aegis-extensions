@@ -226,7 +226,9 @@
 .at-kpi { padding: var(--ag-space-4); display: flex; flex-direction: column; gap: var(--ag-space-1); background: var(--ag-surface); border: 1px solid var(--at-line); border-radius: var(--ag-r-card); }
 .at-kpi-value { font-family: var(--ag-font-display); font-size: var(--ag-fs-title); line-height: var(--ag-lh-title); font-weight: 600; color: var(--ag-ink); }
 .at-kpi-value.is-danger, .at-fact dd.is-danger { color: var(--ag-danger); }
-.at-ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: var(--ag-space-6); align-items: start; }
+/* stretch, not start: side by side, the matrix card ended 196px above
+   "Points de passage". Two cards on one row end on one line. */
+.at-ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: var(--ag-space-6); align-items: stretch; }
 .at-matrix { display: grid; grid-template-columns: 72px repeat(3, minmax(0, 1fr)); gap: var(--ag-space-2); }
 .at-mx-head { text-align: center; font-size: var(--ag-fs-caption); line-height: var(--ag-lh-caption); font-weight: 500; color: var(--ag-muted); }
 .at-mx-row { display: flex; align-items: center; font-size: var(--ag-fs-caption); font-weight: 500; color: var(--ag-muted); }
@@ -256,6 +258,10 @@
 .at-fact:first-child { border-left: none; }
 .at-fact dt { font-family: var(--ag-font-mono); font-size: var(--ag-fs-mono); line-height: var(--ag-lh-mono); color: var(--ag-meta); }
 .at-fact dd { margin: 0; font-weight: 600; color: var(--ag-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The three values share one baseline. In a 108px cell "Tier effectif" wraps
+   and pushed its value 13px under "Tier 2" and "6"; the cells are already one
+   height (grid stretch), so the value takes the bottom of each. */
+.at-fact dd:last-child { margin-top: auto; }
 .at-block { display: flex; flex-direction: column; gap: var(--ag-space-2); }
 .at-path { padding: var(--ag-space-3) 0 var(--ag-space-4); display: flex; flex-direction: column; gap: var(--ag-space-2); border-bottom: 1px solid var(--at-hair); }
 .at-path-title { margin: 0; font-family: var(--ag-font-display); font-size: var(--ag-fs-heading); line-height: var(--ag-lh-heading); font-weight: 600; color: var(--ag-ink); }
