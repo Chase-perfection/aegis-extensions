@@ -59,6 +59,7 @@ const siteAuth = require('./siteAuth');
 const firewall = require('./firewall');
 const siteConfig = require('./siteConfig');
 const siteNotices = require('./siteNotices');
+const audience = require('./audience');
 const accessPolicy = require('./accessPolicy');
 const previews = require('./previews');
 const runtime = require('./runtime');
@@ -1181,6 +1182,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // The sentence an empty field falls back to, per language, so the tab
         // can show it as the field's placeholder.
         noticeDefaults: siteNotices.DEFAULT_TEXT,
+        // Whether the site measures its audience (audience.js).
+        audience: audience.configOf(p),
         hostname: p.hostname || null,
         hostUrl: siteHostUrl(p),
         // So the page can say why a host name it saved is not a link yet.
@@ -2038,8 +2041,18 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         const wantsFallback = body.spaFallback !== undefined;
         const wantsHostname = body.hostname !== undefined;
         const wantsNotices = body.notices !== undefined;
-        if (!wantsFallback && !wantsHostname && !wantsNotices) {
+        const wantsAudience = body.audience !== undefined;
+        if (!wantsFallback && !wantsHostname && !wantsNotices && !wantsAudience) {
             return res.status(400).json({ success: false, error: 'no_settings' });
+        }
+
+        let audienceSwitch;
+        if (wantsAudience) {
+            try {
+                audienceSwitch = audience.normalizeAudience(body.audience);
+            } catch (e) {
+                return res.status(400).json({ success: false, error: 'bad_audience', detail: e.message });
+            }
         }
 
         // A strict boolean, not a truthiness test: a value this route did not
@@ -2092,6 +2105,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         if (wantsFallback) project.spaFallback = body.spaFallback;
         if (wantsHostname) project.hostname = hostname || null;
         if (wantsNotices) project.notices = notices;
+        if (wantsAudience) project.audience = audienceSwitch;
 
         let stored;
         try {
@@ -2106,11 +2120,12 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // live by the time the operator has finished reading the note.
         invalidateHostIndex();
         const savedNotices = siteNotices.configOf(stored);
-        console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} settings saved (fallback ${stored.spaFallback ? 'on' : 'off'}, host ${stored.hostname || 'none'}, notices ${savedNotices.items.filter((n) => n.enabled).length} on${savedNotices.inject ? '' : ', not added to pages'}) by ${req.user.email}`);
+        console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} settings saved (fallback ${stored.spaFallback ? 'on' : 'off'}, host ${stored.hostname || 'none'}, notices ${savedNotices.items.filter((n) => n.enabled).length} on${savedNotices.inject ? '' : ', not added to pages'}, audience ${audience.configOf(stored).enabled ? 'on' : 'off'}) by ${req.user.email}`);
         return res.json({
             success: true,
             spaFallback: !!stored.spaFallback,
             notices: savedNotices,
+            audience: audience.configOf(stored),
             hostname: stored.hostname || null,
             hostUrl: siteHostUrl(stored),
             routerPort: routerPort()

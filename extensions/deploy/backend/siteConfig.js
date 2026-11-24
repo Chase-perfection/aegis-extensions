@@ -38,6 +38,7 @@ const path = require('path');
 
 const projectStore = require('./projectStore');
 const siteNotices = require('./siteNotices');
+const audience = require('./audience');
 
 const CONFIG_FILE = 'vercel.json';
 
@@ -255,12 +256,13 @@ function settingsFor(slug, tenantPaths, projectId) {
     const hit = settingsCache.get(k);
     if (hit && (Date.now() - hit.at) < CACHE_MS) return hit.settings;
 
-    let settings = { spaFallback: false, notices: siteNotices.defaults(), lastSha: null };
+    let settings = { spaFallback: false, notices: siteNotices.defaults(), audience: { enabled: false }, lastSha: null };
     try {
         const project = projectStore.getProject(tenantPaths, projectId);
         settings = {
             spaFallback: !!(project && project.spaFallback),
             notices: siteNotices.configOf(project),
+            audience: audience.configOf(project),
             lastSha: (project && project.lastSha) || null
         };
     } catch (_) { /* unreadable record: the defaults */ }

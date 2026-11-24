@@ -30,6 +30,7 @@
 'use strict';
 
 const SCRIPT_PATH = '/__aegis/notices.js';
+const AUDIENCE_SCRIPT = require('./audience').SCRIPT_PATH;
 const DATA_PATH = '/__aegis/notices';
 
 const TRIGGERS = ['older-version', 'page-outdated', 'always'];
@@ -210,24 +211,43 @@ function scriptTag(release) {
 }
 
 /**
- * An HTML document with the script added, as bytes.
+ * An HTML document with the scripts added, as bytes.
  *
- * Worked on the bytes, through latin1, so a page in any ASCII-compatible
- * charset comes out exactly as it went in apart from the tag. Before `</head>`
- * when there is one, before `</body>` otherwise, at the end as a last resort:
- * a browser runs a script wherever it finds it, and `defer` waits for the page.
- * A page that already carries the script, because the site added it itself,
- * is left alone.
+ * Two scripts may go in: the notices one when `notices` (the default), and the
+ * audience one (audience.js) when `audience`. Worked on the bytes, through
+ * latin1, so a page in any ASCII-compatible charset comes out exactly as it
+ * went in apart from the tags. Before `</head>` when there is one, before
+ * `</body>` otherwise, at the end as a last resort: a browser runs a script
+ * wherever it finds it, and `defer` waits for the page. A script the page
+ * already carries, because the site added it itself, is not added again.
  */
-function inject(buf, release) {
+function inject(buf, release, which) {
+    const opts = Object.assign({ notices: true, audience: false }, which || {});
     const source = Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf || ''), 'utf8');
     const flat = source.toString('latin1');
-    if (flat.includes(SCRIPT_PATH)) return source;
-    const tag = Buffer.from(scriptTag(release), 'latin1');
+    let tags = '';
+    if (opts.notices && !flat.includes(SCRIPT_PATH)) tags += scriptTag(release);
+    if (opts.audience && !flat.includes(AUDIENCE_SCRIPT)) tags += `<script src="${AUDIENCE_SCRIPT}" defer></script>`;
+    if (!tags) return source;
+    const tag = Buffer.from(tags, 'latin1');
     let at = flat.search(/<\/head\s*>/i);
     if (at < 0) at = flat.search(/<\/body\s*>/i);
     if (at < 0) return Buffer.concat([source, tag]);
     return Buffer.concat([source.subarray(0, at), tag, source.subarray(at)]);
+}
+
+/** Whether a project's pages get any tag at all: the notices, the audience, or both. */
+function wantsInjection(settings) {
+    const w = injectionFor(settings);
+    return w.notices || w.audience;
+}
+
+/** The `which` argument of `inject` for a project's settings. */
+function injectionFor(settings) {
+    return {
+        notices: !!(settings && settings.notices && settings.notices.inject),
+        audience: !!(settings && settings.audience && settings.audience.enabled)
+    };
 }
 
 /** Whether a response is a page the script belongs in. */
@@ -237,5 +257,5 @@ function isHtml(contentType) {
 
 module.exports = {
     SCRIPT_PATH, DATA_PATH, TRIGGERS, BUILT_IN, TONES, LIMITS, DEFAULT_TEXT,
-    defaults, normalize, configOf, forVisitor, scriptTag, inject, isHtml
+    defaults, normalize, configOf, forVisitor, scriptTag, inject, isHtml, wantsInjection, injectionFor
 };

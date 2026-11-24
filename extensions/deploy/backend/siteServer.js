@@ -291,7 +291,9 @@ function proxyTo(req, res, target, ctx) {
     // common case needs no decoding, and without its validators: a page the
     // browser kept from before carries the version that served it then, and a
     // 304 would hand it back unchanged after a deployment.
-    const addNotices = !!(ctx.notices && ctx.notices.inject) && wantsPage(req);
+    // The audience script rides the same path when the project measures it.
+    const which = siteNotices.injectionFor({ notices: ctx.notices, audience: ctx.audience });
+    const addNotices = (which.notices || which.audience) && wantsPage(req);
     if (addNotices) {
         headers['accept-encoding'] = 'identity';
         delete headers['if-none-match'];
@@ -343,7 +345,7 @@ function proxyTo(req, res, target, ctx) {
                     : [mine];
             }
         }
-        if (addNotices && withNotices(up, res, responseHeaders, release)) return;
+        if (addNotices && withNotices(up, res, responseHeaders, release, which)) return;
         res.writeHead(up.statusCode || 502, responseHeaders);
         up.pipe(res);
     });
@@ -394,7 +396,7 @@ function decoderFor(encoding) {
  * done nothing, when the response is not one to touch; the caller then pipes
  * it as usual.
  */
-function withNotices(up, res, responseHeaders, release) {
+function withNotices(up, res, responseHeaders, release, which) {
     if (up.statusCode !== 200 || !siteNotices.isHtml(up.headers['content-type'])) return false;
     if (/attachment/i.test(String(up.headers['content-disposition'] || ''))) return false;
     const decoder = decoderFor(up.headers['content-encoding']);
@@ -427,7 +429,7 @@ function withNotices(up, res, responseHeaders, release) {
     });
     source.on('end', () => {
         if (passed) return;
-        const body = siteNotices.inject(Buffer.concat(chunks), release);
+        const body = siteNotices.inject(Buffer.concat(chunks), release, which);
         headers['Content-Length'] = body.length;
         res.writeHead(200, headers);
         res.end(body);
@@ -573,7 +575,7 @@ function serve(req, res, ctx) {
             background: req.headers['x-aegis-background'] === '1'
         });
         if (!target) return send(res, 503, 'This application is not running');
-        return proxyTo(req, res, target, Object.assign({}, ctx, { notices: settings.notices }));
+        return proxyTo(req, res, target, Object.assign({}, ctx, { notices: settings.notices, audience: settings.audience }));
     }
     // A static site has one version at a time and no other to switch to.
     if (siteAuth.isReleasePath(pathOnly)) return send(res, 404, 'Not found');
@@ -605,9 +607,9 @@ function serve(req, res, ctx) {
     // the proxy: a larger page is streamed as it is.
     let body = null;
     // HEAD too, so the length it announces is the one a GET sends.
-    if (settings.notices.inject && siteNotices.isHtml(type) && stat.size <= PAGE_LIMIT) {
+    if (siteNotices.wantsInjection(settings) && siteNotices.isHtml(type) && stat.size <= PAGE_LIMIT) {
         try {
-            body = siteNotices.inject(fs.readFileSync(answer.file), settings.lastSha);
+            body = siteNotices.inject(fs.readFileSync(answer.file), settings.lastSha, siteNotices.injectionFor(settings));
         } catch (_) { return send(res, 404, 'Not found'); }
     }
 
