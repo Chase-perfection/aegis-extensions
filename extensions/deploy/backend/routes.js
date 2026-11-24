@@ -550,6 +550,33 @@ function siteHostUrl(project) {
  * folders happened to be read. That is a name hijack between tenants, not a
  * cosmetic clash, so it is refused where it is typed.
  */
+/* Audience upkeep: the hourly close-and-purge pass, and the day check. */
+const AUDIENCE_PASS_MS = 3600 * 1000;
+let audienceDeps = null;
+let audienceTimer = null;
+
+function audiencePass(today) {
+    if (!audienceDeps) return;
+    let tenants = [];
+    try { tenants = projectStore.allTenants(audienceDeps.tenantsRoot(), audienceDeps.pathsFor); } catch (_) { return; }
+    for (const { slug, tenantPaths } of tenants) {
+        for (const id of audienceStore.projectsWithData(tenantPaths)) {
+            try {
+                audienceStore.close(tenantPaths, id, today);
+                audienceStore.purge(tenantPaths, id, today);
+            } catch (e) {
+                console.warn(`[Deploy] ${slug}/${id}: audience upkeep failed: ${e.message}`);
+            }
+        }
+    }
+}
+
+/** A `YYYY-MM-DD` that names a day that exists. */
+function isRealDay(s) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+    return audienceStore.dayOf(audienceStore.parseDay(s).getTime()) === s;
+}
+
 function hostnameOwner({ pathsFor, tenantsRoot }, hostname, exclude) {
     for (const { slug, tenantPaths } of projectStore.tenantsWithProjects(tenantsRoot(), pathsFor)) {
         for (const project of projectStore.listProjects(tenantPaths)) {
@@ -669,6 +696,14 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
     siteAuth.setAuditSink(typeof recordSiteEvent === 'function' ? recordSiteEvent : null);
     // A sign-in counts in the site's audience when the site measures it.
     siteAuth.setAudienceSink(audienceCollect.recordSignIn);
+    // Once an hour, every site's closed days are summarised and its old files
+    // purged. A batch after midnight does the same for its own site
+    // (audienceCollect); this covers the sites nobody visits.
+    audienceDeps = { pathsFor, tenantsRoot };
+    if (!audienceTimer) {
+        audienceTimer = setInterval(() => audiencePass(audienceStore.dayOf(Date.now())), AUDIENCE_PASS_MS);
+        if (typeof audienceTimer.unref === 'function') audienceTimer.unref();
+    }
     // Core's Postgres client, for a project whose data is on a database of its
     // own (`projectStorage.js`). Set before anything starts a process, and
     // outside the opt-in below because it starts nothing by itself. Undefined
@@ -1592,6 +1627,10 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             slug: req.tenant.slug, tenantPaths: req.tenantPaths, projectId: req.params.id
         });
         if (!removed) return res.status(404).json({ success: false, error: 'unknown_project' });
+        // Its audience goes with it: the id may be handed to another site.
+        try { audienceStore.removeProject(req.tenantPaths, req.params.id); } catch (e) {
+            console.warn(`[Deploy] ${req.tenant.slug}: ${req.params.id} audience not removed: ${e.message}`);
+        }
         console.log(`[Deploy] ${req.tenant.slug}: ${req.params.id} deleted by ${req.user.email}`);
         // The name, so the page can say what it removed. By the time the answer
         // arrives the record is gone and the browser's copy may be a list old.
@@ -2338,6 +2377,51 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
      * deployment, so a cached copy is a picture of a release that is no longer
      * on the port.
      */
+    /**
+     * The audience of one site over a period (audienceStore.report).
+     *
+     * Any role that opens Deploy, like the preview below (Paul's choice,
+     * 2026-11-24): the answer holds totals only, never a visitor id. `from`
+     * and `to` are local calendar days, both included; the default is the
+     * last 30 days. Longer than the summaries are kept, in the future, or a
+     * date that does not exist is `bad_period`.
+     */
+    router.get('/api/deploy/projects/:id/audience', requireOptIn, (req, res) => {
+        const project = projectOr404(req, res);
+        if (!project) return undefined;
+        const today = audienceStore.dayOf(Date.now());
+        const q = req.query || {};
+        const to = q.to === undefined ? today : String(q.to);
+        const from = q.from === undefined ? audienceStore.addDays(to, -29) : String(q.from);
+        if (!isRealDay(from) || !isRealDay(to) || from > to || to > today
+            || from < audienceStore.addDays(today, -audienceStore.SUMMARY_DAYS)) {
+            return res.status(400).json({ success: false, error: 'bad_period' });
+        }
+        let report;
+        try {
+            report = audienceStore.report(req.tenantPaths, project.id, from, to, today);
+        } catch (e) {
+            console.error(`[Deploy] ${req.tenant.slug}: ${project.id} audience report failed: ${e.message}`);
+            return res.status(500).json({ success: false, error: 'audience_unreadable' });
+        }
+        res.setHeader('Cache-Control', 'no-store');
+        return res.json(Object.assign({ success: true, enabled: audience.configOf(project).enabled }, report));
+    });
+
+    /** Erases a site's audience now, whatever its age. The switch is left as it is. */
+    router.delete('/api/deploy/projects/:id/audience', requireOptIn, requireRole('admin'), (req, res) => {
+        const project = projectOr404(req, res);
+        if (!project) return undefined;
+        try {
+            audienceStore.removeProject(req.tenantPaths, project.id);
+        } catch (e) {
+            console.error(`[Deploy] ${req.tenant.slug}: ${project.id} audience erase failed: ${e.message}`);
+            return res.status(500).json({ success: false, error: 'audience_erase_failed' });
+        }
+        console.log(`[Deploy] ${req.tenant.slug}: ${project.id} audience erased by ${req.user.email}`);
+        return res.json({ success: true });
+    });
+
     router.get('/api/deploy/projects/:id/preview.png', requireOptIn, (req, res) => {
         const project = projectOr404(req, res);
         if (!project) return undefined;
@@ -3409,4 +3493,4 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
     });
 }
 
-module.exports = { register, registerPublic };
+module.exports = { register, registerPublic, _audiencePass: audiencePass };
