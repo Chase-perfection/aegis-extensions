@@ -254,21 +254,27 @@ test('machineKey protects an existing key once, before the first read', () => {
     }
 });
 
-function withStubbedProtect(fn, impl, dirImpl = () => {}) {
+function withStubbedProtect(fn, impl, dirImpl = () => {}, ownImpl = () => {}) {
     const keyAcl = require('../keyAcl');
     const realProtect = keyAcl.protect;
     const realProtectDir = keyAcl.protectDir;
+    const realTakeOwnership = keyAcl.takeOwnership;
+    const realReset = keyAcl.resetChildren;
     const realError = console.error;
     const ctx = createTestContext();
     const logged = [];
     console.error = (...a) => logged.push(a.join(' '));
     keyAcl.protect = impl;
     keyAcl.protectDir = dirImpl;
+    keyAcl.takeOwnership = ownImpl;
+    keyAcl.resetChildren = () => {};
     try {
         return fn(require('../machineStore'), ctx, logged);
     } finally {
         keyAcl.protect = realProtect;
         keyAcl.protectDir = realProtectDir;
+        keyAcl.takeOwnership = realTakeOwnership;
+        keyAcl.resetChildren = realReset;
         console.error = realError;
         cleanupTestContext(ctx);
     }
@@ -437,6 +443,48 @@ test('a store folder that cannot be restricted stops the boot check before any k
         assert.throws(() => store.ensureKeyProtected(), (e) => e.code === 'key_acl_failed');
         assert.ok(!fs.existsSync(path.join(ctx.tempDir, 'deploy', 'machine.key')));
     }, () => {}, (d) => { if (path.basename(d) === 'deploy') throw aclFailure(); });
+});
+
+test('the service account takes ownership of the store folder before restricting it', () => {
+    const events = [];
+    withStubbedProtect((store, ctx) => {
+        store.ensureKeyProtected();
+        const dir = path.join(ctx.tempDir, 'deploy');
+        assert.deepStrictEqual(events.slice(0, 2), [['own', dir], ['dir', dir]]);
+    }, () => {}, (d) => events.push(['dir', d]), (d) => events.push(['own', d]));
+});
+
+test('a store folder whose ownership cannot be taken stops the boot check before it is restricted or a key is made', () => {
+    const events = [];
+    withStubbedProtect((store, ctx) => {
+        assert.throws(() => store.ensureKeyProtected(), (e) => e.code === 'key_acl_failed');
+        assert.deepStrictEqual(events, [], 'never restricted');
+        assert.ok(!fs.existsSync(path.join(ctx.tempDir, 'deploy', 'machine.key')));
+    }, () => {}, (d) => events.push(['dir', d]), () => { throw aclFailure(); });
+});
+
+test('after a failed boot restriction no key is read until the folder is restricted', () => {
+    let failing = true;
+    let protectedKeys = 0;
+    withStubbedProtect((store, ctx) => {
+        const dir = path.join(ctx.tempDir, 'deploy');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'machine.key'), Buffer.alloc(32, 7));
+        assert.throws(() => store.ensureKeyProtected(), (e) => e.code === 'key_acl_failed');
+        assert.throws(() => store.encrypt('x'), (e) => e.code === 'key_acl_failed');
+        assert.strictEqual(protectedKeys, 0, 'the planted key was never adopted');
+    }, () => { protectedKeys += 1; }, () => {}, () => { if (failing) throw aclFailure(); });
+});
+
+test('a store folder that is a link is refused before anything is taken', { skip: process.platform !== 'win32' }, () => {
+    const owned = [];
+    withStubbedProtect((store, ctx) => {
+        const target = path.join(ctx.tempDir, 'elsewhere');
+        fs.mkdirSync(target);
+        fs.symlinkSync(target, path.join(ctx.tempDir, 'deploy'), 'junction');
+        assert.throws(() => store.ensureKeyProtected(), (e) => e.code === 'key_acl_failed' && /link/.test(e.message));
+        assert.deepStrictEqual(owned, []);
+    }, () => {}, () => {}, (d) => owned.push(d));
 });
 
 test('ensureKeyProtected creates and protects the key', () => {

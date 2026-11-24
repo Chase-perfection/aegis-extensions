@@ -107,6 +107,9 @@ function keyFile() { return path.join(storeDir(), 'machine.key'); }
  * (see `aclFailed`); a final key of the wrong size throws `key_invalid`.
  */
 function machineKey() {
+    // A boot that could not restrict the folder leaves a key there that anyone
+    // may have planted: no key is read until the folder is restricted.
+    if (dirFailed.has(storeDir())) protectStoreDir();
     fs.mkdirSync(storeDir(), { recursive: true });
     const file = keyFile();
     if (aclApplied.has(file)) return readKey(file);
@@ -195,6 +198,8 @@ function ensureKeyProtected() {
 /** Written once the store folder has been restricted, so a later boot knows. */
 const DIR_MARK = '.store-restricted';
 const dirApplied = new Set();
+/** Store folders this process failed to restrict, retried at most once a minute. */
+const dirFailed = new Map();
 
 /**
  * Restricts the store folder to SYSTEM, the service account and
@@ -212,19 +217,53 @@ const dirApplied = new Set();
  * Boot only, from the service: another process (that script) running it would
  * re-grant the folder to its own account and could cut the service out.
  *
+ * Ownership comes first. Whoever created `deploy\` (or a file in it) owns it,
+ * and an owner can rewrite the ACL whatever it says, so restricting alone left
+ * a user who got there first in control. The service account takes ownership
+ * of the folder and everything in it, then restricts it; an entry it cannot
+ * take stops the boot with `key_acl_failed` (see `keyAcl.takeOwnership`).
+ * The folder must not be, or contain, a link: as SYSTEM, taking a junction a
+ * user planted would rewrite the ACL of whatever it points at. After the
+ * folder is restricted, every entry in it is reset to inherit that ACL, which
+ * drops explicit entries a previous owner put on them; the key gets its own ACL
+ * back on the next read. A failure is remembered and `machineKey` retries it
+ * (once a minute) before it reads any key, so secrets fail closed.
+ *
  * A key found here before the folder was ever restricted may have been planted
  * or read: one warning recommends rotating it. The mark that says "restricted
  * before" is written inside the restricted folder, so only an account that
- * could already write there can forge it.
+ * could already write there can forge it. That leaves one case open: a user
+ * who created `deploy\`, a key and the mark before the service's first boot.
+ * Windows offers no native tool, short of PowerShell, that reads a file's
+ * owner, so the store cannot tell that mark from its own. The installer closes
+ * the window instead: it takes the right to create files in the data root away
+ * from local users, so nobody but SYSTEM and Administrators can make `deploy\`.
  */
 function protectStoreDir() {
     const dir = storeDir();
     if (dirApplied.has(dir)) return;
+    const failed = dirFailed.get(dir);
+    if (failed && Date.now() - failed.at < ACL_RETRY_MS) throw failed.error;
     fs.mkdirSync(dir, { recursive: true });
     const mark = path.join(dir, DIR_MARK);
     const restrictedBefore = fs.existsSync(mark);
     const keyWasThere = fs.existsSync(keyFile());
-    keyAcl.protectDir(dir, { admins: true });
+    try {
+        keyAcl.assertNoLinks(dir);
+        keyAcl.takeOwnership(dir);
+        keyAcl.protectDir(dir, { admins: true });
+        keyAcl.resetChildren(dir);
+    } catch (e) {
+        // Callers of machineKey are told to expect key_acl_failed; an fs error
+        // from the link check gets that code too.
+        const error = e.code === 'key_acl_failed'
+            ? e
+            : Object.assign(new Error(`cannot restrict ${dir}: ${e.message}`), { code: 'key_acl_failed', cause: e });
+        dirFailed.set(dir, { at: Date.now(), error });
+        throw error;
+    }
+    dirFailed.delete(dir);
+    aclApplied.delete(keyFile());
     dirApplied.add(dir);
     if (restrictedBefore) return;
     try { fs.writeFileSync(mark, 'restricted by Deploy at boot\n', { flag: 'w' }); } catch (_) { /* warn again next boot */ }

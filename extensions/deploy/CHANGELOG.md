@@ -20,6 +20,16 @@ what an operator or a visitor sees the first time the new version runs.
 - The secrets key gets a restricted ACL at start (SYSTEM and the service
   account), and the Deploy data folder too (SYSTEM, the service account and
   Administrators). Other local accounts can no longer read that folder.
+  Before restricting it, the service account takes ownership of the folder and
+  of everything in it: a local user who had created it first kept, as owner,
+  the right to reopen its ACL. Any entry for another account, or any deny
+  entry, is removed from the folder and the key, and the files in the folder
+  are reset to inherit its ACL. A link (symbolic link or junction) in or as the
+  folder, or a file the service account cannot take, stops the key check at
+  start; no secret is encrypted or read until a later attempt succeeds.
+- Needs an installer that restricts the data root (local users read only, no
+  create). Without it, a local user who created `deploy\`, a key and its
+  marker before Deploy's first start would not be detected.
 - Logins, refusals and logouts are journalled only with a core that provides
   `recordSiteEvent`. The minimum core version is set at release.
 
