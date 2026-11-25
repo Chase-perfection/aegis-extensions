@@ -153,3 +153,22 @@ test('history survives a project that has never recorded one', () => {
         [{ sha: 'a', at: 1, status: 'ready' }]
     );
 });
+
+// A network blip wrote poll_failed, and the polls that answered afterwards never
+// took it back: the card said "Aegis could not ask GitHub" until the next deploy.
+test('a poll that answers clears the poll error it left', () => {
+    const { clearPollError } = require('../poller');
+    for (const code of ['poll_failed', 'branch_gone']) {
+        const next = clearPollError(project({ lastError: code, failureCount: 3 }));
+        assert.ok(next, code);
+        assert.strictEqual(next.lastError, null);
+        assert.strictEqual(next.failureCount, 0);
+        assert.strictEqual(next.lastSha, 'aaaa1111');
+    }
+});
+
+test('a poll that answers leaves a build error alone', () => {
+    const { clearPollError } = require('../poller');
+    assert.strictEqual(clearPollError(project({ lastError: 'build_failed', failureCount: 2 })), null);
+    assert.strictEqual(clearPollError(project({ lastError: null })), null);
+});

@@ -116,6 +116,16 @@ function decideHead(project, head) {
     return { action: 'deploy', sha: head.sha };
 }
 
+/**
+ * The project without the error a failed poll wrote, or null when it carries
+ * none. Only the two poll errors: a build refusal is about the commit, and a
+ * poll that answers says nothing about it.
+ */
+function clearPollError(project) {
+    if (!project || (project.lastError !== 'poll_failed' && project.lastError !== 'branch_gone')) return null;
+    return Object.assign({}, project, { lastError: null, failureCount: 0 });
+}
+
 async function pollProject(app, slug, tenantPaths, project) {
     let head;
     try {
@@ -131,6 +141,15 @@ async function pollProject(app, slug, tenantPaths, project) {
         }));
         console.warn(`[Deploy] ${slug}: ${project.id} poll failed (${e.status || ''} ${e.message})`);
         return;
+    }
+
+    // GitHub answered, so the poll error a previous tick left is no longer
+    // true. Left in place, one network blip kept "could not ask GitHub" on the
+    // card until the next deployment.
+    const cleared = clearPollError(project);
+    if (cleared) {
+        projectStore.saveProject(tenantPaths, cleared);
+        project = cleared;
     }
 
     const verdict = decide(project, head, {
@@ -243,4 +262,4 @@ function startPoller({ pathsFor, tenantsRoot, intervalMs }) {
     return timer;
 }
 
-module.exports = { startPoller, shouldPoll, decide, DEFAULT_INTERVAL_MS, SAME_SHA_ATTEMPTS };
+module.exports = { startPoller, shouldPoll, decide, clearPollError, DEFAULT_INTERVAL_MS, SAME_SHA_ATTEMPTS };
