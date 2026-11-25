@@ -153,6 +153,40 @@ mismatch. Deploy's `backend/build/setup/Prerequisites.ps1` is the reference.
 A package whose script predates the phase has none: core reads the refused
 parameter as "no such step", not as a failure.
 
+## Styling a page under the white skin
+
+Your page loads core's `aegis-white.css` and puts `class="aegis-white"` on
+`<body>`. The skin resets a few elements with rules that outrank a bare class,
+whatever the load order:
+
+| Skin rule | Specificity | What it silently cancels |
+|---|---|---|
+| `body.aegis-white p`, `h1` to `h5` `{ margin: 0 }` | (0,1,2) | every `.your-class { margin: ... }` on a paragraph or heading |
+| `body.aegis-white a { color }` | (0,1,1) | the text colour of a button drawn as an `<a>` |
+
+So scope those declarations to your view's id, and only those: the rest of
+the rule stays a bare class, or it starts outranking every contextual rule
+written against it.
+
+```css
+.dep-hint { color: var(--zinc-500); font-size: var(--text-xs); }
+#deploy-view .dep-hint { margin: 0 0 var(--space-md); }
+```
+
+Spacing between stacked pieces follows from that:
+
+- A heading carries the space above and below it. A hint under a heading sits
+  tight to it and leaves a full step before what follows.
+- A hint under the field it explains sits a small step below the field.
+- A button or block that follows a list or a panel gets a full step above it.
+  Two blocks never meet edge to edge, and nothing relies on a browser default
+  margin, because the skin has removed it.
+
+Deploy enforces the first rule in `frontend/tests/deploy-skin-margins.test.js`,
+which runs without a browser and fails on any margin rule that targets a class
+the page puts on a `<p>` or `<h1>` to `<h5>` without the view id. Copy it when
+your extension draws its own text.
+
 ## The dev loop
 
 Point the install folder at your working copy with a junction, once, elevated:

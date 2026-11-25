@@ -70,11 +70,12 @@
 }
 
 .dep-storage-card-title {
-    margin: 0;
     font-size: var(--text-body);
     font-weight: 600;
     color: var(--text-main);
 }
+
+#deploy-view .dep-storage-card-title { margin: 0; }
 
 .dep-storage-card-list {
     margin: 0;
