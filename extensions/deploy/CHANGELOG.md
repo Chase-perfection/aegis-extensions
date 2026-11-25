@@ -2,6 +2,27 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.17
+
+Fixes only. 0.2.16 was never published.
+
+- A site's link opened on the server itself (127.0.0.1, localhost) now names
+  the server's network address, so it can be copied to the people who use the
+  site. Opened from another machine, the address typed is kept.
+- "Aegis could not ask GitHub" no longer stays on a card after one failed
+  poll: the next poll that gets an answer clears it.
+- Project cards: the buttons sit on the bottom edge of every card in a row,
+  Protected is on the name's line, a long name ends in an ellipsis before it,
+  no button label breaks over two lines, and the grid drops from three columns
+  to two then one by the room it has.
+- Domains: Save says what it did in a notice, the name row shows the saved
+  name and why it does not answer yet, and the tab lists the two steps a name
+  needs (shared listener on, DNS record).
+- The page spacing fixed on 2026-10-20 ships: hints, headings and errors no
+  longer touch the blocks around them.
+- A select's arrow stays in place when the list opens and closes; the status
+  chip on the overview gets room under its label.
+
 ## 0.2.15
 
 **Breaking on upgrade.** Read this list before installing. Each item changes
