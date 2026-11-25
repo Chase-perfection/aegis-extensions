@@ -1958,7 +1958,10 @@
         var name = el('h3', 'dep-card-name');
         var icon = iconFor(p);
         if (icon) name.appendChild(icon);
-        name.appendChild(el('span', 'dep-card-name-text', p.name));
+        var nameText = el('span', 'dep-card-name-text', p.name);
+        // The name is cut with an ellipsis when it is long; the tooltip keeps it whole.
+        nameText.title = p.name || '';
+        name.appendChild(nameText);
         head.appendChild(name);
 
         // A site behind a directory login looks exactly like an open one from

@@ -977,12 +977,15 @@ select.dep-input option:disabled {
 
 /* --- Project cards ----------------------------------------------------- */
 
-/* Three up on the design's canvas, and still three up on a narrower screen
-   because the columns share the row rather than being floored at a width.
-   auto-fill at 17rem gave one lonely card on a wide screen with two projects. */
+/* At most three up, and a card never narrower than its row of buttons.
+   A fixed three columns left each card so narrow at tablet width that "Deploy
+   latest commit" broke over two lines. The track is the widest of 20rem (Open,
+   Deploy latest commit and Remove on one line, in French) and a third of the
+   row, so the grid drops to two columns, then one, by the space the page
+   actually has, with or without the side rail. */
 .dep-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, max(20rem, (100% - 32px) / 3)), 1fr));
     gap: 16px;
     margin-top: 22px;
 }
@@ -1024,28 +1027,35 @@ select.dep-input option:disabled {
     object-position: top center;
 }
 
+/* Grows to the card's full height, so the actions (margin-top: auto below)
+   sit on the bottom edge of every card in a row, whatever each one says. */
 .dep-card-body {
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     padding: 16px;
 }
 
-/* Name on the left, the Protected chip pinned to the right of the same line. */
+/* Name on the left, the Protected chip pinned to the right of the same line.
+   The gap is the safe zone: a long name is cut with an ellipsis before it,
+   never under the chip. */
 .dep-card-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: 12px;
 }
 
+.dep-card-head .dep-card-lock { flex: none; }
+
 .dep-card-name {
+    flex: 1 1 auto;
     min-width: 0;
     font-family: var(--ag-font-ui, inherit);
     font-size: 15px;
     font-weight: 600;
     line-height: 1.3;
     color: var(--ag-ink, var(--text-main));
-    overflow-wrap: anywhere;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1055,6 +1065,9 @@ select.dep-input option:disabled {
 
 .dep-card-name-text {
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* The site's own favicon. `contain`, never `cover`: an icon is drawn to its
@@ -1165,6 +1178,20 @@ select.dep-input option:disabled {
     gap: 8px;
     margin-top: 16px;
 }
+
+/* On a project card the row is anchored to the bottom edge: margin-top: auto
+   takes the free height of a shorter card, padding-top keeps the 16px gap on
+   the tallest one. Only the card's own row: the overview and the packages
+   question reuse the class and keep their place. */
+.dep-card-body > .dep-card-actions {
+    flex-wrap: wrap;
+    margin-top: auto;
+    padding-top: 16px;
+}
+
+/* A label on one line, always: a two-line button in a row of one-line ones
+   is the first thing the eye lands on. */
+.dep-card-actions .dep-btn { white-space: nowrap; }
 
 /* Destructive control sits apart from the two the operator uses daily, so a
    mis-aimed click lands on nothing rather than on Remove. */
@@ -2530,8 +2557,9 @@ button.dep-listrow {
 
 /* A step title after a button (GitHub: "Already connected...", with a hidden
    note between them) and the hint under the repository box in Settings had
-   no gap. */
-.dep-btn ~ .dep-steps-title,
-.dep-meta + .dep-hint {
+   no gap. Scoped to #deploy-view: both are paragraphs or headings, whose
+   margin the white skin resets at (0,1,2). */
+#deploy-view .dep-btn ~ .dep-steps-title,
+#deploy-view .dep-meta + .dep-hint {
     margin-top: var(--space-md);
 }
