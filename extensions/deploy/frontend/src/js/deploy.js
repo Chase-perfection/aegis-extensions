@@ -1987,7 +1987,7 @@
             link.rel = 'noopener noreferrer';
             body.appendChild(link);
         } else {
-            body.appendChild(el('p', 'dep-card-repo', tr('deploy_no_port', 'port to assign')));
+            body.appendChild(el('p', 'dep-card-repo dep-card-noport', tr('deploy_no_port', 'port to assign')));
         }
 
         body.appendChild(el('p', 'dep-card-repo',

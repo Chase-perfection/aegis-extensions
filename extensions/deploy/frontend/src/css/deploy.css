@@ -1039,11 +1039,15 @@ select.dep-input option:disabled {
 /* Name on the left, the Protected chip pinned to the right of the same line.
    The gap is the safe zone: a long name is cut with an ellipsis before it,
    never under the chip. */
+/* The min-height is the chip's own height: every card's head is that tall,
+   with a chip or without, so the address under it starts on the same line
+   across a row. */
 .dep-card-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    min-height: 26px;
 }
 
 .dep-card-head .dep-card-lock { flex: none; }
@@ -1106,6 +1110,9 @@ select.dep-input option:disabled {
 }
 
 #deploy-view .dep-card-repo { margin: 10px 0 0; }
+
+/* Stands where the link would be, so it takes the link's place exactly. */
+#deploy-view .dep-card-noport { margin-top: 5px; }
 
 #deploy-view .dep-card-when { margin: 6px 0 0; }
 

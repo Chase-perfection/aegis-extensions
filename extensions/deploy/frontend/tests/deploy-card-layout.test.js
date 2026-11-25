@@ -91,6 +91,8 @@ function measure(page) {
         nameEllipsis: getComputedStyle(name).textOverflow,
         nameTitle: name.title,
         lock: lock ? box(lock) : null,
+        // The line under the head: the link, or "port to assign" without one.
+        under: box(c.querySelector('.dep-card-head').nextElementSibling),
         buttons: buttons
       };
     });
@@ -119,6 +121,9 @@ for (const [width, expectCols] of [[1600, 3], [996, 2], [768, 2], [390, 1]]) {
       for (const row of Object.values(rows)) {
         const bottoms = row.map((c) => Math.round(c.actions.bottom));
         assert.ok(Math.max(...bottoms) - Math.min(...bottoms) <= 1, `action rows end together: ${bottoms}`);
+        // A Protected chip does not push its card's address lower than its neighbours'.
+        const unders = row.map((c) => Math.round(c.under.top));
+        assert.ok(Math.max(...unders) - Math.min(...unders) <= 1, `the line under the name starts together: ${unders}`);
         for (const c of row) {
           assert.ok(c.card.bottom - c.actions.bottom <= 18, `actions sit on the card's bottom edge (${c.card.bottom - c.actions.bottom}px gap)`);
         }
