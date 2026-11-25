@@ -40,6 +40,24 @@ provide:
   compares the two and refuses the install when they disagree, which is why one
   helper produces both.
 
+## 0b. No fix left on a branch
+
+A release is cut from `main`, so a fix that sits on a branch ships as the bug
+it fixes. Deploy 0.2.10 to 0.2.15 shipped that way: the card and spacing fixes
+were pushed on `fix/deploy-page-spacing` and never merged. Three checks now
+refuse it:
+
+- `sh .githooks/stranded-fixes` lists every fix commit, local or on `origin`,
+  that `main` lacks; a `fix/*` branch counts whole. A fix held back on purpose
+  goes in `.githooks/stranded-fixes.allow` with its reason.
+- `.githooks/pre-push` runs it on every push to `main`. Once per clone:
+  `git config core.hooksPath .githooks`.
+- The local release script runs it before building, and runs the page tests
+  with `AEGIS_REQUIRE_PAGE_TESTS=1`, under which a page test that cannot run
+  fails instead of skipping. A UI defect reported on screen gets a measured
+  test in `frontend/tests/` (see `deploy-card-layout.test.js`) in the commit
+  that fixes it.
+
 ## 1. Pick the version
 
 Semver, in `store.json`. An extension's first release is `0.0.0`, which says the

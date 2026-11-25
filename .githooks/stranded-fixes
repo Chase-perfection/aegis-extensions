@@ -1,0 +1,85 @@
+#!/bin/sh
+# List the fix commits that live on a branch and never reached main.
+#
+#     sh .githooks/stranded-fixes [target [label]]      target defaults to main
+#
+# Exit 1 when it finds one, 0 otherwise. pre-push calls it for a push to main,
+# and scripts/local/release.mjs calls it before building anything.
+#
+# Why it exists: Deploy UI fixes were committed on fix branches, pushed, and
+# never merged. Releases 0.2.10 to 0.2.15 were cut from main without them, and
+# the same defects "came back" in every release (fix/deploy-page-spacing,
+# 2026-10-20, merged on 2026-11-25).
+#
+# Ported from the Aegis core guard, with two differences, both from that case:
+#   - remote branches (origin/*) are read too: a fix pushed from another
+#     machine or another worktree is just as stranded;
+#   - a branch named fix/* or hotfix/* is reported whole, even when its commit
+#     conflicts with main. Core skips a conflicting fix as "repairing work main
+#     does not have yet"; dd3f7c3 conflicted only because main had moved on.
+#
+# Otherwise a commit is reported when its subject starts with fix or hotfix,
+# main has no commit with the same patch, it applies on main and changes it.
+#
+# A fix held back on purpose goes in .githooks/stranded-fixes.allow, one per
+# line: the first 8 characters of its hash, or `branch:<name>` for a whole
+# branch, then the reason.
+
+target=${1:-main}
+label=${2:-$target}
+root=$(git rev-parse --show-toplevel) || exit 2
+allow="$root/.githooks/stranded-fixes.allow"
+target_tree=$(git rev-parse "$target^{tree}") || exit 2
+
+seen=" "
+found=0
+
+allowed() {
+  [ -f "$allow" ] && grep -q "^$1" "$allow"
+}
+
+report() {
+  if [ "$found" -eq 0 ]; then
+    echo "Fix commits that never reached $label:" >&2
+    echo "" >&2
+  fi
+  found=1
+  echo "  $(printf '%s' "$1" | cut -c1-8)  $(git log -1 --format='%ad  %s' --date=short "$1")" >&2
+  echo "            on $2" >&2
+}
+
+for branch in $(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin); do
+  case "$branch" in main|origin/main|origin/HEAD|origin) continue ;; esac
+  name=${branch#origin/}
+  whole=0
+  case "$name" in fix/*|hotfix/*) whole=1 ;; esac
+  if [ "$whole" -eq 1 ] && allowed "branch:$name"; then continue; fi
+
+  if [ "$whole" -eq 1 ]; then
+    hashes=$(git log --cherry-pick --right-only --no-merges --format=%H "$target...$branch")
+  else
+    hashes=$(git log --cherry-pick --right-only --no-merges -i -E \
+      --grep='^(fix|hotfix)' --format=%H "$target...$branch")
+  fi
+
+  for hash in $hashes; do
+    case "$seen" in *" $hash "*) continue ;; esac
+    seen="$seen$hash "
+    short=$(printf '%s' "$hash" | cut -c1-8)
+    allowed "$short" && continue
+
+    if [ "$whole" -eq 0 ]; then
+      tree=$(git merge-tree --write-tree --merge-base "$hash~1" "$target" "$hash" 2>/dev/null) || continue
+      [ "$tree" = "$target_tree" ] && continue
+    fi
+    report "$hash" "$branch"
+  done
+done
+
+if [ "$found" -eq 1 ]; then
+  echo "" >&2
+  echo "Merge each one into $label, or record why it waits in" >&2
+  echo ".githooks/stranded-fixes.allow (hash or branch:<name>, then the reason)." >&2
+  exit 1
+fi
+exit 0

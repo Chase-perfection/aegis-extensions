@@ -96,4 +96,15 @@ function resolve() {
     return { available: true, why: null, serveFrontend, launchBrowser, openPage };
 }
 
-module.exports = resolve();
+/**
+ * In a release a skip is a failure. `scripts/local/release.mjs` sets
+ * AEGIS_REQUIRE_PAGE_TESTS=1: a run that skipped the page tests says nothing
+ * about whether the page still looks right, and the layout rules only these
+ * files measure had already shipped broken once that way.
+ */
+const resolved = resolve();
+if (!resolved.available && process.env.AEGIS_REQUIRE_PAGE_TESTS === '1') {
+    throw new Error(`page tests are required in a release and cannot run: ${resolved.why}`);
+}
+
+module.exports = resolved;

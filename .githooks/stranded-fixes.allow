@@ -1,0 +1,2 @@
+branch:fix/deploy-runtime-off-message superseded: main carries the "Finish setup on this host" messages (deploy.js), and the deploy_ strings stay in core translations.js by decision (2026-11-25 check)
+branch:fix/deploy-runtime-release-dirs superseded: d1ef8ff (0.3.0 side by side) landed on main by other commits, deployDrain and deployAffinity tests are on main (2026-11-25 check)

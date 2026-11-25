@@ -1,0 +1,23 @@
+#!/bin/sh
+# Refuse a push to main that leaves a fix stranded on a branch.
+#
+# Versioned here rather than in .git/hooks so it survives a reclone. Point git
+# at this directory once per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# Deliberate bypass: `git push --no-verify`.
+
+root=$(git rev-parse --show-toplevel) || exit 1
+
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    if ! sh "$root/.githooks/stranded-fixes" "$local_sha" main; then
+      echo "" >&2
+      echo "pre-push: push to main refused, see the list above." >&2
+      exit 1
+    fi
+  fi
+done
+
+exit 0
