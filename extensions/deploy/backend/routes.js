@@ -59,6 +59,7 @@ const siteAuth = require('./siteAuth');
 const firewall = require('./firewall');
 const siteConfig = require('./siteConfig');
 const siteNotices = require('./siteNotices');
+const { shareableHost } = require('./siteAddress');
 const accessPolicy = require('./accessPolicy');
 const previews = require('./previews');
 const runtime = require('./runtime');
@@ -502,7 +503,8 @@ const LDAP_STATUS = {
  * configured public URL: a LAN install has no public URL, and the operator is
  * already on the network the site will be reached from. The port belongs to the
  * project, so a site serves from its own root and a built asset at
- * `/assets/app.js` resolves.
+ * `/assets/app.js` resolves. Opened on the server itself, the host is loopback
+ * and is swapped for the machine's network address (siteAddress.js).
  */
 /**
  * Where the deployed site answers.
@@ -515,7 +517,7 @@ const LDAP_STATUS = {
 function siteUrl(req, project) {
     if (!project || !project.port) return null;
     const scheme = (project.tls && project.tls.enabled === true) ? 'https' : 'http';
-    return `${scheme}://${req.hostname}:${project.port}/`;
+    return `${scheme}://${shareableHost(req.hostname)}:${project.port}/`;
 }
 
 /**
