@@ -121,7 +121,17 @@
             deploy_net_save: 'Apply',
             deploy_net_applied: 'Saved. Every open port was rewritten to match.',
             deploy_net_bad: 'That is not a network. Use LocalSubnet, an address, a CIDR block or a range, separated by commas.',
-            deploy_net_failed: 'Aegis refused the change ($1).'
+            deploy_net_failed: 'Aegis refused the change ($1).',
+            // Host name, step by step
+            deploy_hostname_steps_title: 'For $1 to open this site, two things are needed, both outside this page:',
+            deploy_hostname_step_router_off: 'Shared listener: off. An administrator of this server adds AEGIS_SITES_ROUTER_PORT=80 to the Aegis service environment, opens that port in this server\'s firewall, then restarts the Aegis service.',
+            deploy_hostname_step_router_on: 'Shared listener: on, port $1.',
+            deploy_hostname_step_dns: 'Name resolution: a DNS record (type A) points $1 at this server, $2. On one test machine, a line in its hosts file does the same.',
+            deploy_hostname_step_result: 'Then $1 opens this site. Until then, it answers on $2.',
+            deploy_hostname_toast_off: 'Saved. $1 is kept for this site and starts answering once the shared listener is on: the steps are under Host name.',
+            deploy_hostname_toast_on: 'Saved. $1 opens this site once a DNS record points it at this server.',
+            deploy_hostname_toast_cleared: 'Name removed. The site answers on its port only.',
+            deploy_domains_name_waiting: '$1, not answering yet: shared listener off'
         },
         fr: {
             deploy_access_title: 'Accès par ressource',
@@ -220,7 +230,17 @@
             deploy_net_save: 'Appliquer',
             deploy_net_applied: 'Enregistré. Tous les ports ouverts ont été réécrits en conséquence.',
             deploy_net_bad: 'Ce n\'est pas un réseau. Utilisez LocalSubnet, une adresse, un bloc CIDR ou une plage, séparés par des virgules.',
-            deploy_net_failed: 'Aegis a refusé la modification ($1).'
+            deploy_net_failed: 'Aegis a refusé la modification ($1).',
+            // Nom d'hôte, étape par étape
+            deploy_hostname_steps_title: 'Pour que $1 ouvre ce site, il faut deux choses, toutes deux en dehors de cette page :',
+            deploy_hostname_step_router_off: 'Écouteur partagé : éteint. Un administrateur de ce serveur ajoute AEGIS_SITES_ROUTER_PORT=80 à l\'environnement du service Aegis, ouvre ce port dans le pare-feu de ce serveur, puis redémarre le service Aegis.',
+            deploy_hostname_step_router_on: 'Écouteur partagé : allumé, port $1.',
+            deploy_hostname_step_dns: 'Résolution du nom : un enregistrement DNS (type A) fait pointer $1 vers ce serveur, $2. Sur un seul poste de test, une ligne dans son fichier hosts fait la même chose.',
+            deploy_hostname_step_result: 'Ensuite, $1 ouvre ce site. D\'ici là, il répond sur $2.',
+            deploy_hostname_toast_off: 'Enregistré. $1 est réservé à ce site et répondra dès que l\'écouteur partagé sera allumé : les étapes sont sous Nom d\'hôte.',
+            deploy_hostname_toast_on: 'Enregistré. $1 ouvrira ce site dès qu\'un enregistrement DNS le fera pointer vers ce serveur.',
+            deploy_hostname_toast_cleared: 'Nom retiré. Le site répond sur son port uniquement.',
+            deploy_domains_name_waiting: '$1, ne répond pas encore : écouteur partagé éteint'
         }
     };
     (function mergeOwnStrings() {
@@ -3196,16 +3216,52 @@
         return wrap;
     }
 
+    /** The host part of a URL, or '' when it does not parse. */
+    function hostOf(url) {
+        try { return new URL(url).hostname; } catch (_) { return ''; }
+    }
+
+    /**
+     * What a saved host name still needs, as a numbered list: the shared
+     * listener (on or off, read from the project), then name resolution, which
+     * Aegis cannot see and so always lists.
+     */
+    function hostnameSteps(project) {
+        var box = el('div', 'dep-hostname-steps');
+        var nameUrl = project.hostUrl || ('http://' + project.hostname + '/');
+        box.appendChild(el('p', 'dep-hint', tr('deploy_hostname_steps_title',
+            'For $1 to open this site, two things are needed, both outside this page:').replace('$1', nameUrl)));
+        var list = el('ol', 'dep-manual-steps');
+        list.appendChild(el('li', '', project.routerPort
+            ? tr('deploy_hostname_step_router_on', 'Shared listener: on, port $1.').replace('$1', String(project.routerPort))
+            : tr('deploy_hostname_step_router_off',
+                'Shared listener: off. An administrator of this server adds AEGIS_SITES_ROUTER_PORT=80 to the Aegis service environment, opens that port in this server\'s firewall, then restarts the Aegis service.')));
+        list.appendChild(el('li', '', tr('deploy_hostname_step_dns',
+            'Name resolution: a DNS record (type A) points $1 at this server, $2. On one test machine, a line in its hosts file does the same.')
+            .replace('$1', project.hostname).replace('$2', hostOf(project.url) || '-')));
+        box.appendChild(list);
+        box.appendChild(el('p', 'dep-hint', tr('deploy_hostname_step_result', 'Then $1 opens this site. Until then, it answers on $2.')
+            .replace('$1', nameUrl).replace('$2', project.url || '-')));
+        return box;
+    }
+
     /** The name this site answers to, beside the port it always answers on. */
     function domainsTab(project) {
         var wrap = el('div', 'dep-block');
         wrap.appendChild(el('h2', 'dep-subtitle', tr('deploy_hostname_title', 'Host name')));
-        wrap.appendChild(el('p', 'dep-hint', project.routerPort
-            ? tr('deploy_hostname_body',
-                'The shared listener answers on port $1 for the name you give here. The site keeps its own port either way, and the name starts working once a DNS record or a hosts entry points at this server.')
-                .replace('$1', String(project.routerPort))
-            : tr('deploy_hostname_off',
-                'The shared listener is off on this install. Set AEGIS_SITES_ROUTER_PORT on the host to answer by name. The site keeps its own port either way.')));
+        // With a name saved, the page says what is still missing for it to
+        // work, step by step: a one-line hint naming an environment variable
+        // left the operator unsure whether Save had done anything at all.
+        if (project.hostname) {
+            wrap.appendChild(hostnameSteps(project));
+        } else {
+            wrap.appendChild(el('p', 'dep-hint', project.routerPort
+                ? tr('deploy_hostname_body',
+                    'The shared listener answers on port $1 for the name you give here. The site keeps its own port either way, and the name starts working once a DNS record or a hosts entry points at this server.')
+                    .replace('$1', String(project.routerPort))
+                : tr('deploy_hostname_off',
+                    'The shared listener is off on this install. Set AEGIS_SITES_ROUTER_PORT on the host to answer by name. The site keeps its own port either way.')));
+        }
 
         var field = el('input', 'dep-input');
         field.type = 'text';
@@ -3232,7 +3288,10 @@
 
         var rows = el('div', 'dep-rows');
         [[tr('deploy_domains_port', 'Always answers on'), project.url || '-'],
-        [tr('deploy_domains_name', 'Answers by name on'), project.hostUrl || tr('deploy_domains_none', 'no name set')]]
+        [tr('deploy_domains_name', 'Answers by name on'), project.hostUrl ||
+            (project.hostname
+                ? tr('deploy_domains_name_waiting', '$1, not answering yet: shared listener off').replace('$1', project.hostname)
+                : tr('deploy_domains_none', 'no name set'))]]
             .forEach(function (pair) {
                 var line = el('div', 'dep-listrow');
                 var main = el('div', 'dep-listrow-main');
@@ -3448,6 +3507,8 @@
                 btn.disabled = !isAdmin;
                 if (data && data.success) {
                     note.textContent = tr('deploy_release_done', '$1 is on the port.').replace('$1', short);
+                    // Said in a toast too: the redraw below replaces the note.
+                    if (typeof window.showToast === 'function') window.showToast(note.textContent, { variant: 'success' });
                     return loadProjects().then(function () { renderDetail(project.id, readHash().sub); });
                 }
                 var reason = data && data.error;
@@ -3644,9 +3705,22 @@
             .then(function (data) {
                 btn.disabled = !isAdmin;
                 if (data && data.success) {
-                    note.textContent = data.hostname
-                        ? tr('deploy_hostname_saved', 'Saved.')
-                        : tr('deploy_hostname_cleared', 'Removed. The site answers on its port only.');
+                    // A toast and not the note: the redraw below replaces the
+                    // whole tab, note included, so "Saved." used to vanish the
+                    // instant it was written and Save looked like it did nothing.
+                    note.hidden = true;
+                    var saved = data.hostname || '';
+                    if (typeof window.showToast === 'function') {
+                        if (!saved) {
+                            window.showToast(tr('deploy_hostname_toast_cleared', 'Name removed. The site answers on its port only.'), { variant: 'success' });
+                        } else if (project.routerPort) {
+                            window.showToast(tr('deploy_hostname_toast_on', 'Saved. $1 opens this site once a DNS record points it at this server.')
+                                .replace('$1', saved), { variant: 'success', duration: 8000 });
+                        } else {
+                            window.showToast(tr('deploy_hostname_toast_off', 'Saved. $1 is kept for this site and starts answering once the shared listener is on: the steps are under Host name.')
+                                .replace('$1', saved), { variant: 'warning', duration: 10000 });
+                        }
+                    }
                     return loadProjects().then(function () { renderDetail(project.id, readHash().sub); });
                 }
                 var reason = data && data.error;

@@ -138,7 +138,7 @@
     font-size: 13px;
     font-weight: 600;
     text-decoration: none;
-    transition: background var(--transition-fast) var(--ease-out);
+    transition: background var(--transition-fast);
 }
 
 .dep-side-new:hover { background: var(--ag-accent-hover, var(--accent-bright)); }
@@ -159,8 +159,8 @@
     font-size: 13px;
     font-weight: 500;
     text-decoration: none;
-    transition: color var(--transition-fast) var(--ease-out),
-                background var(--transition-fast) var(--ease-out);
+    transition: color var(--transition-fast),
+                background var(--transition-fast);
 }
 
 .dep-side-link svg {
@@ -527,7 +527,7 @@
     padding: 8px 14px;
     text-decoration: none;
     cursor: pointer;
-    transition: background var(--transition-fast) var(--ease-out);
+    transition: background var(--transition-fast);
 }
 
 .dep-btn:hover:not(:disabled) { background: var(--accent-hover, var(--accent-bright)); }
@@ -662,6 +662,10 @@ select.dep-input {
     background-position: right 9px center;
     background-size: 14px 14px;
     cursor: pointer;
+    /* Core's common.css gives every select `transition: all`. With the chevron
+       a background image, that animated the arrow's position: it slid in from
+       the left over the label each time the list closed. Only the border moves. */
+    transition: border-color var(--transition-fast);
 }
 
 .dep-select option,
@@ -734,7 +738,7 @@ select.dep-input option:disabled {
     width: 14px;
     height: 14px;
     color: var(--ag-meta, var(--zinc-400));
-    transition: transform var(--transition-fast) var(--ease-out);
+    transition: transform var(--transition-fast);
 }
 
 .dep-drop.is-open .dep-drop-btn svg { transform: rotate(180deg); }
@@ -829,17 +833,20 @@ select.dep-input option:disabled {
    the surface, and collapsing them would silently restyle two controls to fix
    a third. The focus ring from common.css is left alone; it is the part of
    that rule that was doing its job. */
+/* background-color, never the `background` shorthand: the shorthand also
+   resets background-image, which is where a select draws its chevron, so the
+   arrow vanished the moment the list opened. */
 .dep-input:focus {
     outline: none;
     border-color: var(--accent-bright);
-    background: var(--dep-sunken);
+    background-color: var(--dep-sunken);
 }
 
 .dep-select:focus,
 .dep-search:focus {
     outline: none;
     border-color: var(--accent-bright);
-    background: var(--ag-surface, var(--dep-surface));
+    background-color: var(--ag-surface, var(--dep-surface));
 }
 
 /* Monospace so the line breaks in a pasted key stay visible. A PEM that lost
@@ -997,7 +1004,7 @@ select.dep-input option:disabled {
     background: var(--ag-surface, var(--dep-surface));
     border: 1px solid var(--ag-border, var(--dep-line));
     border-radius: var(--ag-r-card, var(--radius-md));
-    transition: border-color var(--transition-fast) var(--ease-out);
+    transition: border-color var(--transition-fast);
 }
 
 .dep-card:hover { border-color: var(--glass-border-hover); }
@@ -1297,7 +1304,7 @@ select.dep-input option:disabled {
     border-radius: var(--radius-md);
     text-align: left;
     text-decoration: none;
-    transition: border-color var(--transition-fast) var(--ease-out);
+    transition: border-color var(--transition-fast);
 }
 
 .dep-listrow:hover { border-color: var(--glass-border-hover); }
@@ -1963,6 +1970,13 @@ button.dep-listrow {
 .dep-prod-fact > .dep-detail-url {
     margin-left: 0;
     align-self: flex-start;
+}
+
+/* A text value gets air above it from its line height; the status chip is a
+   bordered box and met its label edge to edge. */
+.dep-prod-fact > .ag-status {
+    align-self: flex-start;
+    margin-top: 4px;
 }
 
 @media (max-width: 60rem) {
