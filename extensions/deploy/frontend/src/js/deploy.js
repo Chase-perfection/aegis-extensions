@@ -79,7 +79,8 @@
             deploy_tls_generated_at: 'Certificate created by Aegis and renewed automatically:',
             deploy_tls_own_at: 'Your certificate:',
             deploy_tls_download: 'Download the certificate',
-            deploy_tls_trust_hint: 'Browsers warn on this certificate until it is installed on each computer. Install the downloaded file under Trusted Root Certification Authorities, by group policy for a whole domain.',
+            deploy_tls_download_ca: 'Download the Aegis authority',
+            deploy_tls_trust_hint: 'Browsers warn until the Aegis authority is trusted on each computer. Install the downloaded file once under Trusted Root Certification Authorities, by group policy for a whole domain: it covers every site this tenant serves and every renewal.',
             deploy_tls_own: 'Use my own certificate',
             deploy_tls_own_hint: 'Full paths on the Aegis host. The site restarts on Apply and keeps its port. Clear both fields and apply to go back to a certificate Aegis creates.',
             deploy_tls_working: 'Turning HTTPS on and restarting the site.',
@@ -197,7 +198,8 @@
             deploy_tls_generated_at: 'Certificat créé par Aegis et renouvelé automatiquement :',
             deploy_tls_own_at: 'Votre certificat :',
             deploy_tls_download: 'Télécharger le certificat',
-            deploy_tls_trust_hint: 'Les navigateurs avertissent sur ce certificat tant qu\'il n\'est pas installé sur chaque poste. Installez le fichier téléchargé dans Autorités de certification racines de confiance, par stratégie de groupe pour tout un domaine.',
+            deploy_tls_download_ca: 'Télécharger l\'autorité Aegis',
+            deploy_tls_trust_hint: 'Les navigateurs avertissent tant que l\'autorité Aegis n\'est pas approuvée sur chaque poste. Installez une seule fois le fichier téléchargé dans Autorités de certification racines de confiance, par stratégie de groupe pour tout un domaine : il couvre tous les sites de ce tenant et tous les renouvellements.',
             deploy_tls_own: 'Utiliser mon propre certificat',
             deploy_tls_own_hint: 'Chemins complets sur le serveur Aegis. Le site redémarre à l\'application et garde son port. Videz les deux champs et appliquez pour revenir à un certificat créé par Aegis.',
             deploy_tls_working: 'Activation du HTTPS et redémarrage du site.',
@@ -6536,8 +6538,9 @@
             where.appendChild(el('code', '', tls.certFile));
             wrap.appendChild(where);
 
-            var download = el('button', 'dep-btn dep-btn-ghost dep-btn-small',
-                tr('deploy_tls_download', 'Download the certificate'));
+            var download = el('button', 'dep-btn dep-btn-ghost dep-btn-small', tls.generated
+                ? tr('deploy_tls_download_ca', 'Download the Aegis authority')
+                : tr('deploy_tls_download', 'Download the certificate'));
             download.type = 'button';
             download.disabled = !isAdmin;
             download.addEventListener('click', function () { downloadSiteCert(site); });
@@ -6545,7 +6548,7 @@
 
             if (tls.generated) {
                 wrap.appendChild(el('p', 'dep-hint', tr('deploy_tls_trust_hint',
-                    'Browsers warn on this certificate until it is installed on each computer. Install the downloaded file under Trusted Root Certification Authorities, by group policy for a whole domain.')));
+                    'Browsers warn until the Aegis authority is trusted on each computer. Install the downloaded file once under Trusted Root Certification Authorities, by group policy for a whole domain: it covers every site this tenant serves and every renewal.')));
             }
         }
 
@@ -6619,7 +6622,7 @@
             .then(function (blob) {
                 var a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
-                a.download = site.id + '.crt';
+                a.download = (site.tls && site.tls.generated) ? 'aegis-deploy-ca.crt' : site.id + '.crt';
                 document.body.appendChild(a);
                 a.click();
                 a.remove();

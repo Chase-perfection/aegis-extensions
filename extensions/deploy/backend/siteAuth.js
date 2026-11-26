@@ -1748,7 +1748,27 @@ function identityFor(req, { slug, tenantPaths, project }) {
     const session = sessionFor(readCookie(req, cookieNames(slug, projectId).session), slug, projectId);
     if (!session) return null;
 
+    // The resources of the site's manifest this visitor holds, by the same
+    // rule the guard applies, so the application can show what is open without
+    // asking anything back. The session cookie never reaches the application
+    // (proxyTo strips it), so these headers are the only way it can know.
+    const admin = session.admin === true;
+    const declared = policyFor(slug, tenantPaths, projectId).resources || [];
+    let resources = declared.slice();
+    if (!admin) {
+        const grants = (authRecordFor(slug, tenantPaths, projectId) || {}).grants || {};
+        resources = declared.filter((r) => {
+            const grant = grants[r];
+            if (!grant) return false;
+            const bySid = Boolean(session.sid) && (grant.users || []).some(
+                (u) => u && u.sid && String(u.sid).toUpperCase() === String(session.sid).toUpperCase());
+            return bySid || groupAllowed(grant.groups || [], session.groups || []);
+        });
+    }
+
     return {
+        admin,
+        resources,
         username: session.login || session.username || '',
         // The directory does not always answer with a display name. Falling back
         // to the account name keeps the header meaning "a person", never empty.

@@ -1483,6 +1483,14 @@ own does not have to put a second login in front of one that has already run.
 | `X-Aegis-User` | the account name that was typed at the form, and that the directory answered for |
 | `X-Aegis-Name` | the display name the directory returned, or the account name when it returned none |
 | `X-Aegis-Groups` | the groups of that account, comma separated, in the order the directory answered |
+| `X-Aegis-Admin` | `1` when the person is ticked Administrator of the site, else `0` (0.2.19) |
+| `X-Aegis-Resources` | the `aegis.access.json` resources the person holds, comma separated and encoded like the groups; every declared resource for the site administrator (0.2.19) |
+
+The last two exist because the proxy does not forward Aegis's own cookies to
+the application (0.2.15), so an application cannot ask `/__aegis/whoami` or
+probe a path with the visitor's session from its server side. They are worked
+out by the guard's own rule at each request, so they agree with what the guard
+lets through.
 
 Four properties, each of which an application is entitled to rely on.
 
@@ -1565,7 +1573,7 @@ request, whichever comes first. A tenant administrator can also close the
 sessions of a site, or of one person on it, from the Authentication tab
 (`GET` and `DELETE /api/deploy/projects/:id/sessions`).
 
-These three names are the proxy's public interface. Changing one breaks every
+These five names are the proxy's public interface. Changing one breaks every
 deployed application reading it, so they are fixed here rather than in the code
 that writes them.
 
@@ -1603,8 +1611,9 @@ Six rules the guard holds.
 in the Authentication tab passes every rule without being named under it. The
 tick is carried by a named person and never by a group, so this is a decision
 taken about one person. A demotion lands with the revalidation that clears it.
-An application that reads `/__aegis/whoami` and sees `admin` should open its
-own resources to that person too, or the two guards disagree.
+An application that sees `X-Aegis-Admin: 1` (or `admin` from a browser call to
+`/__aegis/whoami`) should open its own resources to that person too, or the two
+guards disagree.
 
 **Aegis refuses, and the application is never asked.** A request matching a rule
 whose resource the visitor does not hold gets 403 from the guard. The

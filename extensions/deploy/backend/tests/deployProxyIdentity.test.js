@@ -202,6 +202,33 @@ test('protected site: the three identity headers arrive', async (t) => {
     assert.strictEqual(seen['x-aegis-groups'], encodeURIComponent('CN=Viewers,DC=corp,DC=local'));
 });
 
+test('protected site: the resources the visitor holds and the admin flag arrive', async (t) => {
+    const slug = 'tenant-res';
+    const tenantPaths = seed(slug, 'res', {
+        name: 'Res',
+        auth: {
+            method: 'ldap', enabled: true, audience: 'directory', allowedGroups: [], allowedUsers: [],
+            grants: { finance: { groups: ['Finance'], users: [] }, ops: { groups: ['Ops'], users: [] } }
+        }
+    }, GOOD_CONFIG);
+    const dir = projectStore.currentDir(tenantPaths, 'res');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aegis.access.json'), JSON.stringify({
+        version: 1, rules: [{ path: '/finance/*', require: 'finance' }, { path: '/ops/*', require: 'ops' }]
+    }));
+    siteAuth.invalidate(slug, 'res');
+    const token = await loginToken(slug, tenantPaths, 'res', { ok: true, groups: ['CN=Finance,DC=corp,DC=local'] });
+    const app = await upstream();
+    t.after(async () => { await app.close(); siteAuth.dropSessions(slug, 'res'); });
+
+    await proxied(fakeReq('GET', '/', {
+        headers: { cookie: `${siteAuth.cookieNames(slug, 'res').session}=${token}`, 'x-aegis-admin': '1', 'x-aegis-resources': 'ops' }
+    }), app.port, ctxFor(slug, tenantPaths, 'res'));
+
+    assert.strictEqual(app.seen()['x-aegis-admin'], '0', 'what the client sent is replaced');
+    assert.strictEqual(app.seen()['x-aegis-resources'], 'finance');
+});
+
 test('protected site: a plain account name is not mangled by the encoding', async (t) => {
     const slug = 'tenant-plain';
     const tenantPaths = seed(slug, 'plain',
@@ -370,7 +397,7 @@ test('a newline in a directory value cannot inject a header', async (t) => {
     const tenantPaths = seed(slug, 'inject',
         { name: 'Inject', auth: { enabled: true, allowedGroups: [] } }, GOOD_CONFIG);
     const token = await loginToken(slug, tenantPaths, 'inject',
-        { ok: true, displayName: 'Alice\r\nX-Aegis-Admin: yes', groups: [] });
+        { ok: true, displayName: 'Alice\r\nX-Injected: yes\r\nX-Aegis-Admin: 1', groups: [] });
     const app = await upstream();
     t.after(async () => { await app.close(); siteAuth.dropSessions(slug, 'inject'); });
 
@@ -378,9 +405,10 @@ test('a newline in a directory value cannot inject a header', async (t) => {
         app.port, ctxFor(slug, tenantPaths, 'inject'));
 
     const seen = app.seen();
-    assert.strictEqual(seen['x-aegis-admin'], undefined, 'no header should have been injected');
+    assert.strictEqual(seen['x-injected'], undefined, 'no header should have been injected');
+    assert.strictEqual(seen['x-aegis-admin'], '0', 'the admin flag is the proxy\'s, not the directory value');
     assert.ok(!String(seen['x-aegis-name']).includes('\n'));
-    assert.strictEqual(decodeURIComponent(seen['x-aegis-name']), 'Alice\r\nX-Aegis-Admin: yes');
+    assert.strictEqual(decodeURIComponent(seen['x-aegis-name']), 'Alice\r\nX-Injected: yes\r\nX-Aegis-Admin: 1');
 });
 
 /* ------------------------------------------------------------------ */

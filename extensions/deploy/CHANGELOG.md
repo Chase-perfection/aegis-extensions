@@ -2,6 +2,22 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.19
+
+- Generated certificates are now signed by one local authority per tenant
+  (`deploy/certs/ca/`, ten years). Client machines trust that authority once,
+  by group policy under Trusted Root Certification Authorities, and every site
+  of the tenant and every renewal is trusted with nothing more to distribute.
+  The HTTPS block offers "Download the Aegis authority". The self-signed
+  certificates 0.2.18 made are replaced at the next start.
+- The proxy now tells the application what the guard knows:
+  `X-Aegis-Admin` (`1` for the site administrator) and `X-Aegis-Resources`
+  (the `aegis.access.json` resources the person holds, all of them for the
+  administrator). Since 0.2.15 Aegis's cookies are not forwarded to the
+  application, so an application that asked `/__aegis/whoami` or probed a path
+  from its server side with the visitor's session saw nobody as admin and no
+  resource granted. Read the two headers instead.
+
 ## 0.2.18
 
 - HTTPS needs no certificate by hand. Protecting a site, or ticking "Serve

@@ -154,7 +154,7 @@ function withoutHopByHop(headers) {
  * of aegis-extensions: the day a deployed project reads one of them, the name
  * stops being ours to change.
  */
-const IDENTITY_HEADERS = ['X-Aegis-User', 'X-Aegis-Name', 'X-Aegis-Groups'];
+const IDENTITY_HEADERS = ['X-Aegis-User', 'X-Aegis-Name', 'X-Aegis-Groups', 'X-Aegis-Admin', 'X-Aegis-Resources'];
 const IDENTITY_LOWER = IDENTITY_HEADERS.map((n) => n.toLowerCase());
 const PROXY_KEY_HEADER = 'X-Aegis-Proxy-Key';
 
@@ -315,6 +315,11 @@ function proxyTo(req, res, target, ctx) {
         // directory answered. A project matching on the first group would
         // otherwise depend on a Map iteration nobody promised.
         headers['X-Aegis-Groups'] = identity.groups.map(encodeIdentity).join(',');
+        // Whether the visitor is the site administrator, and the manifest
+        // resources they hold (all of them for the administrator), by the
+        // guard's own rule.
+        headers['X-Aegis-Admin'] = identity.admin ? '1' : '0';
+        headers['X-Aegis-Resources'] = (identity.resources || []).map(encodeIdentity).join(',');
     }
 
     const upstream = http.request({

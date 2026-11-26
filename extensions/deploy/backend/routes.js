@@ -2821,25 +2821,31 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
     });
 
     /**
-     * The site's certificate, to install on client machines so browsers trust
-     * it. Re-encoded from the parsed certificate, so whatever else the file
-     * holds (a key, in a combined PEM) is never sent.
+     * What client machines install so browsers trust the site: for a
+     * certificate Aegis made, the tenant's local authority (one file for every
+     * site and every renewal); for the operator's own, the site certificate.
+     * Re-encoded from the parsed certificate, so whatever else the file holds
+     * (a key, in a combined PEM) is never sent.
      */
     router.get('/api/deploy/projects/:id/tls/certificate', requireOptIn, requireRole('admin'), (req, res) => {
         if (!projectStore.PROJECT_ID_RE.test(req.params.id || '')) {
             return res.status(404).json({ success: false, error: 'unknown_project' });
         }
         const project = projectStore.getProject(req.tenantPaths, req.params.id);
-        const certFile = project && project.tls && project.tls.certFile;
-        if (!certFile) return res.status(404).json({ success: false, error: 'no_certificate' });
-        let pem;
-        try {
-            pem = new crypto.X509Certificate(fs.readFileSync(certFile)).toString();
-        } catch (_) {
-            return res.status(404).json({ success: false, error: 'no_certificate' });
+        const tls = (project && project.tls) || {};
+        let pem = null;
+        let filename = `${req.params.id}.crt`;
+        if (tls.generated === true) {
+            pem = selfSignedCert.caCertificate(req.tenantPaths);
+            filename = 'aegis-deploy-ca.crt';
+        } else if (tls.certFile) {
+            try {
+                pem = new crypto.X509Certificate(fs.readFileSync(tls.certFile)).toString();
+            } catch (_) { /* reported below */ }
         }
+        if (!pem) return res.status(404).json({ success: false, error: 'no_certificate' });
         res.set('Content-Type', 'application/x-x509-ca-cert');
-        res.set('Content-Disposition', `attachment; filename="${project.id}.crt"`);
+        res.set('Content-Disposition', `attachment; filename="${filename}"`);
         return res.send(pem);
     });
 
