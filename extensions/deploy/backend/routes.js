@@ -64,6 +64,8 @@ const { shareableHost } = require('./siteAddress');
 const accessPolicy = require('./accessPolicy');
 const previews = require('./previews');
 const selfSignedCert = require('./selfSignedCert');
+const caDistribution = require('./caDistribution');
+const certMaintenance = require('./certMaintenance');
 const runtime = require('./runtime');
 const shots = require('./shots');
 const siteIcon = require('./siteIcon');
@@ -663,7 +665,7 @@ function registerPublic(router, { resolver, moduleGate }) {
 }
 
 /** Routes below the session wall. The module gate is already mounted. */
-function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writableDb, resolveChrome, puppeteer, postgres, reauthenticate, recordSiteEvent }) {
+function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writableDb, resolveChrome, puppeteer, postgres, reauthenticate, recordSiteEvent, trustedRoot }) {
     // The tenant journal and the Windows log, for what a protected site's
     // visitors do. Core's `recordSiteEvent(slug, event)` is fire and forget.
     // Absent on an Aegis that predates it: the guard then keeps its console
@@ -720,6 +722,10 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // asked for is a listener on an audit server.
         startRouter({ pathsFor, tenantsRoot });
         startPoller({ pathsFor, tenantsRoot });
+        // Generated certificates and their authority: renewal, rotation, and the
+        // trust GPO when a tenant turned it on. `trustedRoot` is core's, absent
+        // on an Aegis that predates it: rotation then still runs, unpublished.
+        certMaintenance.startCertMaintenance({ pathsFor, tenantsRoot, trustedRoot, restartSite: restartSiteFor });
         // Injecte une fois au montage : `deployNow` lit `writableDb` en variable
         // de module, pas en argument, pour que ses cinq appelants (quatre routes
         // et le sweep du poller) ne puissent pas l'oublier. Voir deployService.js.
@@ -2847,6 +2853,65 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         res.set('Content-Type', 'application/x-x509-ca-cert');
         res.set('Content-Disposition', `attachment; filename="${filename}"`);
         return res.send(pem);
+    });
+
+    // --- The tenant's authority: rotation and distribution by GPO ----------
+
+    /**
+     * The authorities client machines must trust now (current, successor,
+     * retired) and where their group policy stands. Reading it also records
+     * the outcome of a publish the agent has answered since.
+     */
+    router.get('/api/deploy/ca', requireOptIn, requireRole('admin'), (req, res) => {
+        caDistribution.refresh(req.tenant.slug, req.tenantPaths, trustedRoot);
+        res.json({ success: true, ca: caDistribution.view(req.tenantPaths, trustedRoot) });
+    });
+
+    /**
+     * Turns distribution by GPO on or off, with the administrator's password:
+     * every domain machine will trust what this authority signs. On publishes
+     * at once; off leaves the GPO as it is, for the administrator to unlink.
+     */
+    router.post('/api/deploy/ca/distribution', requireOptIn, requireRole('admin'), async (req, res) => {
+        const enabled = req.body && req.body.enabled;
+        if (typeof enabled !== 'boolean') return res.status(400).json({ success: false, error: 'invalid_enabled' });
+        if (enabled && !trustedRoot) return res.status(409).json({ success: false, error: 'gpo_unavailable' });
+        const user = await reauthenticate(req);
+        if (req.body) delete req.body.password;
+        if (!user) return res.status(403).json({ success: false, error: 'password_refused' });
+        caDistribution.setEnabled(req.tenantPaths, enabled, user.email || null);
+        let view = caDistribution.view(req.tenantPaths, trustedRoot);
+        if (enabled) {
+            selfSignedCert.loadOrCreateCa(req.tenantPaths);
+            view = await caDistribution.publish(req.tenant.slug, req.tenantPaths, trustedRoot, { force: true });
+        }
+        console.log(`[Deploy] ${req.tenant.slug}: trust distribution by GPO ${enabled ? 'on' : 'off'} (${user.email || 'admin'})`);
+        res.json({ success: true, ca: view });
+    });
+
+    /**
+     * Moves the rotation on now instead of on its schedule: `prepare` makes
+     * the successor and publishes it, `switch` makes it sign. Switch only once
+     * client machines hold the successor, or their sites turn untrusted.
+     */
+    router.post('/api/deploy/ca/rotate', requireOptIn, requireRole('admin'), async (req, res) => {
+        const action = req.body && req.body.action;
+        if (action !== 'prepare' && action !== 'switch') return res.status(400).json({ success: false, error: 'invalid_action' });
+        const user = await reauthenticate(req);
+        if (req.body) delete req.body.password;
+        if (!user) return res.status(403).json({ success: false, error: 'password_refused' });
+        try {
+            const entry = await certMaintenance.maintainTenant({
+                slug: req.tenant.slug, tenantPaths: req.tenantPaths, trustedRoot, action,
+                restartSite: restartSiteFor
+            });
+            if (entry.ca.error) return res.status(409).json({ success: false, error: entry.ca.error });
+            console.log(`[Deploy] ${req.tenant.slug}: authority ${action} by ${user.email || 'admin'}, ${entry.restarted.length} site(s) renewed`);
+            res.json({ success: true, restarted: entry.restarted, errors: entry.errors, ca: caDistribution.view(req.tenantPaths, trustedRoot) });
+        } catch (e) {
+            console.error(`[Deploy] ${req.tenant.slug}: authority ${action} failed: ${e.message}`);
+            res.status(500).json({ success: false, error: 'rotate_failed' });
+        }
     });
 
     // --- Directory authentication in front of served sites ----------------

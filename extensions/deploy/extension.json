@@ -2,7 +2,7 @@
   "id": "deploy",
   "name": "Deploy",
   "version": 1,
-  "release": "0.2.19",
+  "release": "0.2.20",
   "page": "deploy.html",
   "icon": "network",
   "labelKey": "nav_deploy",

@@ -2,6 +2,25 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.20
+
+- The tenant's authority rotates by itself. Two years before its end a
+  successor is made (`certs/ca/next.crt`) and published beside it; a year
+  before the end, once domain computers have held the successor for 30 days,
+  it signs the sites and every generated certificate is made again. The old
+  authority stays trusted 30 more days. An authority that is gone or expired is
+  replaced at once. A sweep at boot and twice a day also renews site
+  certificates that near their end without waiting for a restart.
+- Distribution by group policy, on request. In the HTTPS block, "Trust on
+  domain computers" turns on, with the administrator's password, a GPO
+  `SEC-TrustedRoot-DeployCA` that Aegis keeps holding exactly the authorities
+  computers must trust, through the agent of a domain controller. Needs the
+  Aegis release that brings `trustedRoot`; on an older one the panel says so
+  and rotation still runs, unpublished. "Prepare a successor" and "Switch to
+  the successor" move a rotation forward by hand.
+- New authorities carry the year in their name, so the current one and its
+  successor are told apart in the certificate store.
+
 ## 0.2.19
 
 - Generated certificates are now signed by one local authority per tenant

@@ -84,6 +84,33 @@
             deploy_tls_own: 'Use my own certificate',
             deploy_tls_own_hint: 'Full paths on the Aegis host. The site restarts on Apply and keeps its port. Clear both fields and apply to go back to a certificate Aegis creates.',
             deploy_tls_working: 'Turning HTTPS on and restarting the site.',
+            deploy_ca_title: 'Trust on domain computers',
+            deploy_ca_intro: 'Aegis can put its authority on every computer of the domain by group policy, through the Aegis agent of a domain controller, and keep it current when the authority is replaced. Whoever holds the authority key on this server can then vouch for any site on those computers: turn it on only if this server is protected like a domain controller.',
+            deploy_ca_on: 'On: the GPO {gpo} is kept in step automatically.',
+            deploy_ca_off: 'Off. The GPO {gpo} is not managed by Aegis.',
+            deploy_ca_unavailable: 'This version of Aegis cannot write group policy for an extension. Update Aegis, or trust the downloaded authority by hand.',
+            deploy_ca_status_queued: 'Update queued on {host}. Its agent applies it at its next check-in.',
+            deploy_ca_status_done: 'The GPO holds these authorities since {at}. Computers receive them at their next group policy refresh.',
+            deploy_ca_status_failed: 'The last update failed: {message}',
+            deploy_ca_status_lost: 'The last update got no answer. It is sent again at the next pass.',
+            deploy_ca_status_no_dc: 'No domain controller has a live Aegis agent. Install or start the agent on a domain controller.',
+            deploy_ca_role_current: 'Signs the sites',
+            deploy_ca_role_next: 'Successor, published ahead',
+            deploy_ca_role_previous: 'Retired, still trusted for 30 days',
+            deploy_ca_until: 'until {date}',
+            deploy_ca_password: 'Your Aegis password',
+            deploy_ca_enable: 'Distribute by group policy',
+            deploy_ca_disable: 'Stop distributing',
+            deploy_ca_disable_hint: 'Stopping leaves the GPO as it is: unlink or delete it in the GPO console if computers must stop trusting the authority.',
+            deploy_ca_rotation: 'Replace the authority',
+            deploy_ca_rotation_hint: 'Aegis does this alone: a successor is published two years before the end and signs the sites one year before, once the GPO has held it for 30 days. To do it now, prepare a successor, wait until computers have it (gpupdate), then switch.',
+            deploy_ca_prepare: 'Prepare a successor',
+            deploy_ca_switch: 'Switch to the successor',
+            deploy_ca_switch_confirm: 'Switch now? Computers that do not hold the successor yet will warn on every site of this tenant.',
+            deploy_ca_err_password_refused: 'Password refused.',
+            deploy_ca_err_no_next: 'There is no successor to switch to. Prepare one first.',
+            deploy_ca_err_gpo_unavailable: 'This version of Aegis cannot write group policy for an extension.',
+            deploy_ca_err_generic: 'That did not work. The backend log has the reason.',
             deploy_settings_tls_required: 'This site is behind a login served over its host name, so the name cannot be removed. Switch the protection off first, or turn HTTPS on for the site itself.',
             deploy_auth_err_requires_tls_ldap: 'The directory password is never sent in clear. Use an ldaps:// address, or keep ldap:// and tick StartTLS.',
             deploy_auth_err_requires_validation: 'The directory certificate is always checked. If the controller uses a certificate Aegis does not know, use "Trust this authority" on the certificate shown after the test, then save again.',
@@ -203,6 +230,33 @@
             deploy_tls_own: 'Utiliser mon propre certificat',
             deploy_tls_own_hint: 'Chemins complets sur le serveur Aegis. Le site redémarre à l\'application et garde son port. Videz les deux champs et appliquez pour revenir à un certificat créé par Aegis.',
             deploy_tls_working: 'Activation du HTTPS et redémarrage du site.',
+            deploy_ca_title: 'Approbation sur les postes du domaine',
+            deploy_ca_intro: 'Aegis peut installer son autorité sur tous les postes du domaine par stratégie de groupe, via l\'agent Aegis d\'un contrôleur de domaine, et la tenir à jour quand l\'autorité est remplacée. Qui détient la clé de l\'autorité sur ce serveur peut alors se porter garant de n\'importe quel site sur ces postes : activez-le seulement si ce serveur est protégé comme un contrôleur de domaine.',
+            deploy_ca_on: 'Activé : la GPO {gpo} est tenue à jour automatiquement.',
+            deploy_ca_off: 'Désactivé. La GPO {gpo} n\'est pas gérée par Aegis.',
+            deploy_ca_unavailable: 'Cette version d\'Aegis ne permet pas à une extension d\'écrire une stratégie de groupe. Mettez Aegis à jour, ou approuvez l\'autorité téléchargée à la main.',
+            deploy_ca_status_queued: 'Mise à jour en file sur {host}. Son agent l\'applique à son prochain contact.',
+            deploy_ca_status_done: 'La GPO contient ces autorités depuis le {at}. Les postes les reçoivent à leur prochaine actualisation des stratégies.',
+            deploy_ca_status_failed: 'La dernière mise à jour a échoué : {message}',
+            deploy_ca_status_lost: 'La dernière mise à jour est restée sans réponse. Elle est renvoyée au prochain passage.',
+            deploy_ca_status_no_dc: 'Aucun contrôleur de domaine n\'a d\'agent Aegis actif. Installez ou démarrez l\'agent sur un contrôleur de domaine.',
+            deploy_ca_role_current: 'Signe les sites',
+            deploy_ca_role_next: 'Successeur, publié à l\'avance',
+            deploy_ca_role_previous: 'Retirée, encore approuvée 30 jours',
+            deploy_ca_until: 'jusqu\'au {date}',
+            deploy_ca_password: 'Votre mot de passe Aegis',
+            deploy_ca_enable: 'Distribuer par stratégie de groupe',
+            deploy_ca_disable: 'Arrêter la distribution',
+            deploy_ca_disable_hint: 'Arrêter laisse la GPO telle quelle : déliez-la ou supprimez-la dans la console GPO si les postes doivent cesser d\'approuver l\'autorité.',
+            deploy_ca_rotation: 'Remplacer l\'autorité',
+            deploy_ca_rotation_hint: 'Aegis le fait seul : un successeur est publié deux ans avant la fin et signe les sites un an avant, une fois que la GPO le contient depuis 30 jours. Pour le faire maintenant, préparez un successeur, attendez que les postes l\'aient reçu (gpupdate), puis basculez.',
+            deploy_ca_prepare: 'Préparer un successeur',
+            deploy_ca_switch: 'Basculer sur le successeur',
+            deploy_ca_switch_confirm: 'Basculer maintenant ? Les postes qui n\'ont pas encore reçu le successeur afficheront un avertissement sur tous les sites de ce tenant.',
+            deploy_ca_err_password_refused: 'Mot de passe refusé.',
+            deploy_ca_err_no_next: 'Aucun successeur vers lequel basculer. Préparez-en un d\'abord.',
+            deploy_ca_err_gpo_unavailable: 'Cette version d\'Aegis ne permet pas à une extension d\'écrire une stratégie de groupe.',
+            deploy_ca_err_generic: 'Cela n\'a pas marché. Le journal du backend donne la raison.',
             deploy_settings_tls_required: 'Ce site est protégé par une connexion servie via son nom d\'hôte : le nom ne peut pas être retiré. Désactivez d\'abord la protection, ou activez le HTTPS sur le site lui-même.',
             deploy_auth_err_requires_tls_ldap: 'Le mot de passe de l\'annuaire n\'est jamais envoyé en clair. Utilisez une adresse ldaps://, ou gardez ldap:// et cochez StartTLS.',
             deploy_auth_err_requires_validation: 'Le certificat de l\'annuaire est toujours vérifié. Si le contrôleur utilise un certificat qu\'Aegis ne connaît pas, utilisez « Faire confiance à cette autorité » sur le certificat affiché après le test, puis enregistrez de nouveau.',
@@ -6549,6 +6603,7 @@
             if (tls.generated) {
                 wrap.appendChild(el('p', 'dep-hint', tr('deploy_tls_trust_hint',
                     'Browsers warn until the Aegis authority is trusted on each computer. Install the downloaded file once under Trusted Root Certification Authorities, by group policy for a whole domain: it covers every site this tenant serves and every renewal.')));
+                if (isAdmin) appendTrustBlock(wrap);
             }
         }
 
@@ -6610,6 +6665,132 @@
             tlsBox.checked = true;
             saveSiteTls(site, tlsBox, cert, key, apply, note);
         });
+    }
+
+    /**
+     * The tenant's authority on domain computers: distribution by group policy
+     * and the rotation. One authority per tenant, so every site's block shows
+     * the same panel; it loads when opened.
+     */
+    function appendTrustBlock(wrap) {
+        var box = document.createElement('details');
+        box.className = 'dep-tls-own';
+        box.appendChild(el('summary', '', tr('deploy_ca_title', 'Trust on domain computers')));
+        var body = el('div', '');
+        box.appendChild(body);
+        wrap.appendChild(box);
+        var loaded = false;
+        box.addEventListener('toggle', function () {
+            if (box.open && !loaded) { loaded = true; load(); }
+        });
+
+        function fill(text, vars) {
+            return String(text).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] != null ? vars[k] : m; });
+        }
+        function day(iso) {
+            try { return new Date(iso).toLocaleDateString(); } catch (_) { return iso; }
+        }
+        function refusal(data) {
+            var code = data && data.error;
+            var known = { password_refused: 1, no_next: 1, gpo_unavailable: 1 };
+            return known[code] ? tr('deploy_ca_err_' + code, code) : tr('deploy_ca_err_generic', 'That did not work. The backend log has the reason.');
+        }
+        function post(path, payload, note) {
+            note.hidden = false;
+            note.textContent = tr('deploy_auth_working', 'Saving.');
+            return window.api(path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+                .then(function (r) { return readJson(r, 'deploy ca'); })
+                .then(function (data) {
+                    if (data && data.success) { render(data.ca); return; }
+                    note.textContent = refusal(data);
+                })
+                .catch(function () { note.textContent = tr('deploy_ca_err_generic', 'That did not work. The backend log has the reason.'); });
+        }
+        function load() {
+            body.textContent = '';
+            window.api('/api/deploy/ca')
+                .then(function (r) { return readJson(r, 'deploy ca'); })
+                .then(function (data) {
+                    if (data && data.success) render(data.ca);
+                    else body.textContent = tr('deploy_ca_err_generic', 'That did not work. The backend log has the reason.');
+                })
+                .catch(function () { body.textContent = tr('deploy_ca_err_generic', 'That did not work. The backend log has the reason.'); });
+        }
+
+        function render(ca) {
+            body.textContent = '';
+            body.appendChild(el('p', 'dep-hint', tr('deploy_ca_intro',
+                'Aegis can put its authority on every computer of the domain by group policy.')));
+            var vars = { gpo: ca.gpoName, host: ca.host || '', at: ca.publishedAt ? day(ca.publishedAt) : '', message: ca.message || '' };
+            if (!ca.available) {
+                body.appendChild(el('p', 'dep-hint', tr('deploy_ca_unavailable', 'This version of Aegis cannot write group policy for an extension.')));
+            } else {
+                body.appendChild(el('p', '', fill(ca.enabled ? tr('deploy_ca_on', 'On: {gpo}') : tr('deploy_ca_off', 'Off. {gpo}'), vars)));
+                if (ca.enabled && ca.status) {
+                    body.appendChild(el('p', 'dep-hint', fill(tr('deploy_ca_status_' + ca.status, ca.status), vars)));
+                }
+            }
+
+            var list = el('ul', 'dep-hint');
+            (ca.authorities || []).forEach(function (a) {
+                var li = el('li', '', tr('deploy_ca_role_' + a.role, a.role) + ' · ' + fill(tr('deploy_ca_until', 'until {date}'), { date: day(a.notAfter) }) + ' · ');
+                li.appendChild(el('code', '', a.thumbprint));
+                list.appendChild(li);
+            });
+            body.appendChild(list);
+
+            var note = el('p', 'dep-auth-site-note', '');
+            note.hidden = true;
+
+            if (ca.available) {
+                var pwLabel = el('label', 'dep-label', tr('deploy_ca_password', 'Your Aegis password'));
+                var pw = document.createElement('input');
+                pw.type = 'password';
+                pw.className = 'dep-input';
+                pw.autocomplete = 'current-password';
+                pw.id = 'deploy-ca-password-' + Math.random().toString(36).slice(2);
+                pwLabel.htmlFor = pw.id;
+                body.appendChild(pwLabel);
+                body.appendChild(pw);
+
+                var toggle = el('button', 'dep-btn dep-btn-ghost dep-btn-small', ca.enabled
+                    ? tr('deploy_ca_disable', 'Stop distributing')
+                    : tr('deploy_ca_enable', 'Distribute by group policy'));
+                toggle.type = 'button';
+                toggle.addEventListener('click', function () {
+                    post('/api/deploy/ca/distribution', { enabled: !ca.enabled, password: pw.value }, note);
+                    pw.value = '';
+                });
+                body.appendChild(toggle);
+                if (ca.enabled) body.appendChild(el('p', 'dep-hint', tr('deploy_ca_disable_hint', 'Stopping leaves the GPO as it is.')));
+
+                body.appendChild(el('h6', 'dep-auth-site-sub', tr('deploy_ca_rotation', 'Replace the authority')));
+                body.appendChild(el('p', 'dep-hint', tr('deploy_ca_rotation_hint', 'Aegis does this alone.')));
+                var hasNext = (ca.authorities || []).some(function (a) { return a.role === 'next'; });
+                var prepare = el('button', 'dep-btn dep-btn-ghost dep-btn-small', tr('deploy_ca_prepare', 'Prepare a successor'));
+                prepare.type = 'button';
+                prepare.disabled = hasNext;
+                prepare.addEventListener('click', function () {
+                    post('/api/deploy/ca/rotate', { action: 'prepare', password: pw.value }, note);
+                    pw.value = '';
+                });
+                var sw = el('button', 'dep-btn dep-btn-ghost dep-btn-small', tr('deploy_ca_switch', 'Switch to the successor'));
+                sw.type = 'button';
+                sw.disabled = !hasNext;
+                sw.addEventListener('click', function () {
+                    if (!window.confirm(tr('deploy_ca_switch_confirm', 'Switch now?'))) return;
+                    post('/api/deploy/ca/rotate', { action: 'switch', password: pw.value }, note);
+                    pw.value = '';
+                });
+                body.appendChild(prepare);
+                body.appendChild(sw);
+            }
+            body.appendChild(note);
+        }
     }
 
     /** Fetches the site's certificate through the session and saves it as a file. */

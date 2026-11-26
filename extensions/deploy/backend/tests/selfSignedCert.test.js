@@ -78,12 +78,80 @@ test('the authority is made once per tenant and reused', () => {
     assert.strictEqual(ssc.caCertificate(tp).trim(), new crypto.X509Certificate(a.cert).toString().trim());
 });
 
-test('an authority near its end is replaced', () => {
+const YEAR = 365 * 86400000;
+const DAY = 86400000;
+const roles = (tp, now) => ssc.trustBundle(tp, now).map((c) => c.role).join(',');
+const thumb = (pem) => new crypto.X509Certificate(pem).fingerprint.replace(/:/g, '');
+
+test('rotation: successor published two years ahead, switch one year ahead, old one kept 30 days', () => {
     const tp = tmpTenant();
-    const a = ssc.loadOrCreateCa(tp, opts());
-    const later = Date.now() + 9.5 * 365 * 86400000;
-    const b = ssc.loadOrCreateCa(tp, opts({ now: later }));
-    assert.notStrictEqual(a.cert, b.cert);
+    const t0 = Date.now();
+    const a = ssc.maintainCa(tp, opts({ now: t0 }));
+    assert.strictEqual(a.created, true);
+    assert.strictEqual(roles(tp, t0), 'current');
+
+    const tPrep = t0 + 8.1 * YEAR;
+    const p = ssc.maintainCa(tp, opts({ now: tPrep }));
+    assert.deepStrictEqual([p.created, p.prepared, p.switched], [false, true, false]);
+    assert.strictEqual(p.current.cert, a.current.cert, 'the current one still signs');
+    const bundle = ssc.trustBundle(tp, tPrep);
+    assert.strictEqual(bundle.map((c) => c.role).join(','), 'current,next');
+    assert.notStrictEqual(bundle[0].thumbprint, bundle[1].thumbprint);
+    assert.match(bundle[1].thumbprint, /^[0-9A-F]{40}$/);
+    const nextThumb = bundle[1].thumbprint;
+
+    // Nothing more until a year before the end.
+    assert.strictEqual(ssc.maintainCa(tp, opts({ now: tPrep + 100 * DAY })).switched, false);
+
+    const tSwitch = t0 + 9.05 * YEAR;
+    const s = ssc.maintainCa(tp, opts({ now: tSwitch }));
+    assert.strictEqual(s.switched, true);
+    assert.strictEqual(thumb(s.current.cert), nextThumb, 'the published successor signs now');
+    assert.strictEqual(roles(tp, tSwitch), 'current,previous');
+
+    // A site signed by the old authority is signed again.
+    const leaf = ssc.generate({ dns: ['localhost'], ips: ['127.0.0.1'] }, a.current, new Date(tSwitch - 10 * DAY));
+    const leafFile = path.join(tp.root, 'site.crt');
+    fs.writeFileSync(leafFile, leaf.cert);
+    assert.strictEqual(ssc.needsRenewal(leafFile, s.current.cert, tSwitch), true);
+
+    ssc.maintainCa(tp, opts({ now: tSwitch + 31 * DAY }));
+    assert.strictEqual(roles(tp, tSwitch + 31 * DAY), 'current');
+});
+
+test('rotation: a successor made late waits for its overlap before it signs', () => {
+    const tp = tmpTenant();
+    const t0 = Date.now();
+    const a = ssc.maintainCa(tp, opts({ now: t0 })).current;
+    const late = t0 + 9.5 * YEAR;
+    assert.strictEqual(ssc.maintainCa(tp, opts({ now: late })).prepared, true);
+    const mid = ssc.maintainCa(tp, opts({ now: late + 10 * DAY }));
+    assert.strictEqual(mid.switched, false);
+    assert.strictEqual(mid.current.cert, a.cert);
+    assert.strictEqual(ssc.maintainCa(tp, opts({ now: late + 31 * DAY })).switched, true);
+});
+
+test('rotation: prepare and switch on demand; switch with nothing prepared refuses', () => {
+    const tp = tmpTenant();
+    const a = ssc.maintainCa(tp, opts()).current;
+    assert.strictEqual(ssc.maintainCa(tp, opts({ action: 'switch' })).error, 'no_next');
+    assert.strictEqual(ssc.maintainCa(tp, opts({ action: 'prepare' })).prepared, true);
+    assert.strictEqual(ssc.maintainCa(tp, opts({ action: 'prepare' })).prepared, false, 'one successor at a time');
+    const s = ssc.maintainCa(tp, opts({ action: 'switch' }));
+    assert.strictEqual(s.switched, true);
+    assert.notStrictEqual(s.current.cert, a.cert);
+    assert.strictEqual(roles(tp, Date.now()), 'current,previous');
+});
+
+test('rotation: an expired authority gives way to its successor at once', () => {
+    const tp = tmpTenant();
+    const t0 = Date.now();
+    ssc.maintainCa(tp, opts({ now: t0 }));
+    assert.strictEqual(ssc.maintainCa(tp, opts({ now: t0 + 8.5 * YEAR })).prepared, true);
+    // The host was off from then until after the end.
+    const r = ssc.maintainCa(tp, opts({ now: t0 + 10.1 * YEAR }));
+    assert.strictEqual(r.switched, true);
+    assert.strictEqual(r.created, false);
 });
 
 test('a protected site with no TLS gets a certificate signed by the tenant authority', () => {
