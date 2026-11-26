@@ -55,6 +55,7 @@ const siteConfig = require('./siteConfig');
 const siteNotices = require('./siteNotices');
 const runtime = require('./runtime');
 const firewall = require('./firewall');
+const selfSignedCert = require('./selfSignedCert');
 
 /** First port handed out. Each project takes the next free one above it. */
 const DEFAULT_PORT_BASE = 3081;
@@ -804,6 +805,23 @@ function startSiteFor({ slug, tenantPaths, project }) {
     // up in clear would look like it worked -- the page loads -- while sending
     // the login form's password across the network unprotected. Refusing to
     // start is visible; a silent downgrade is not.
+    // A site that asks for a password gets a certificate of its own when it has
+    // none, and a generated one is renewed before it lapses: nobody has to
+    // make one by hand for the login to be served. The operator's own
+    // certificate is never replaced.
+    try {
+        const gated = authMethods.isGated(project.auth) && !servesSecurely(project);
+        if (selfSignedCert.ensureFor(tenantPaths, project, {
+            gated,
+            extraNames: [normaliseHostname(project.hostname)],
+            save: (p) => projectStore.saveProject(tenantPaths, p)
+        })) {
+            console.log(`[Deploy] ${k}: HTTPS certificate generated at ${project.tls.certFile}`);
+        }
+    } catch (e) {
+        console.error(`[Deploy] ${k}: could not generate an HTTPS certificate: ${e.message}`);
+    }
+
     let tlsOptions;
     try {
         tlsOptions = tlsOptionsFor(project);

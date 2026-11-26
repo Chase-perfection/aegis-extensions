@@ -2,6 +2,22 @@
 
 Clones a git branch and serves it as a site, with an optional sandboxed build.
 
+## 0.2.18
+
+- HTTPS needs no certificate by hand. Protecting a site, or ticking "Serve
+  this site over HTTPS" with no file named, makes Aegis create a certificate
+  for the host's names and addresses, store it under the tenant's
+  `deploy/certs/`, and restart the site on HTTPS. The key is readable only by
+  SYSTEM and the service account.
+- A protected site that was answering 503 "requires an encrypted connection"
+  gets its certificate the next time the dashboard starts, and comes back on
+  `https://` at the same port.
+- A generated certificate is renewed 30 days before it expires. A certificate
+  the operator names under "Use my own certificate" is never replaced.
+- The HTTPS block shows where the certificate is and offers it for download,
+  to install on client machines (Trusted Root Certification Authorities, by
+  group policy for a domain) so browsers stop warning.
+
 ## 0.2.17
 
 Fixes only. 0.2.16 was never published.

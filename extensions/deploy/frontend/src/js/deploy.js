@@ -74,6 +74,15 @@
             deploy_auth_test_writes_refused: 'Until the directory can be searched, writes on protected sites are refused with 503.',
             deploy_auth_err_requires_tls: 'A site behind a login must be served over HTTPS. Turn HTTPS on for this site first, or give it a host name served by the HTTPS host router, then protect it.',
             deploy_tls_err_required_by_auth: 'This site is behind a login, which needs HTTPS. Switch the protection off first, then turn HTTPS off.',
+            deploy_tls_err_generate_failed: 'Aegis could not create a certificate for this site. The backend log has the reason.',
+            deploy_tls_auto_note: 'A login turns HTTPS on by itself, with a certificate Aegis creates.',
+            deploy_tls_generated_at: 'Certificate created by Aegis and renewed automatically:',
+            deploy_tls_own_at: 'Your certificate:',
+            deploy_tls_download: 'Download the certificate',
+            deploy_tls_trust_hint: 'Browsers warn on this certificate until it is installed on each computer. Install the downloaded file under Trusted Root Certification Authorities, by group policy for a whole domain.',
+            deploy_tls_own: 'Use my own certificate',
+            deploy_tls_own_hint: 'Full paths on the Aegis host. The site restarts on Apply and keeps its port. Clear both fields and apply to go back to a certificate Aegis creates.',
+            deploy_tls_working: 'Turning HTTPS on and restarting the site.',
             deploy_settings_tls_required: 'This site is behind a login served over its host name, so the name cannot be removed. Switch the protection off first, or turn HTTPS on for the site itself.',
             deploy_auth_err_requires_tls_ldap: 'The directory password is never sent in clear. Use an ldaps:// address, or keep ldap:// and tick StartTLS.',
             deploy_auth_err_requires_validation: 'The directory certificate is always checked. If the controller uses a certificate Aegis does not know, use "Trust this authority" on the certificate shown after the test, then save again.',
@@ -183,6 +192,15 @@
             deploy_auth_test_writes_refused: 'Tant que l\'annuaire ne peut pas être interrogé, les écritures sur les sites protégés sont refusées avec une erreur 503.',
             deploy_auth_err_requires_tls: 'Un site protégé par une connexion doit être servi en HTTPS. Activez d\'abord le HTTPS pour ce site, ou donnez-lui un nom d\'hôte servi par le routeur HTTPS, puis protégez-le.',
             deploy_tls_err_required_by_auth: 'Ce site est protégé par une connexion, qui exige le HTTPS. Désactivez d\'abord la protection, puis le HTTPS.',
+            deploy_tls_err_generate_failed: 'Aegis n\'a pas pu créer de certificat pour ce site. Le journal du backend donne la raison.',
+            deploy_tls_auto_note: 'Une connexion active le HTTPS d\'elle-même, avec un certificat créé par Aegis.',
+            deploy_tls_generated_at: 'Certificat créé par Aegis et renouvelé automatiquement :',
+            deploy_tls_own_at: 'Votre certificat :',
+            deploy_tls_download: 'Télécharger le certificat',
+            deploy_tls_trust_hint: 'Les navigateurs avertissent sur ce certificat tant qu\'il n\'est pas installé sur chaque poste. Installez le fichier téléchargé dans Autorités de certification racines de confiance, par stratégie de groupe pour tout un domaine.',
+            deploy_tls_own: 'Utiliser mon propre certificat',
+            deploy_tls_own_hint: 'Chemins complets sur le serveur Aegis. Le site redémarre à l\'application et garde son port. Videz les deux champs et appliquez pour revenir à un certificat créé par Aegis.',
+            deploy_tls_working: 'Activation du HTTPS et redémarrage du site.',
             deploy_settings_tls_required: 'Ce site est protégé par une connexion servie via son nom d\'hôte : le nom ne peut pas être retiré. Désactivez d\'abord la protection, ou activez le HTTPS sur le site lui-même.',
             deploy_auth_err_requires_tls_ldap: 'Le mot de passe de l\'annuaire n\'est jamais envoyé en clair. Utilisez une adresse ldaps://, ou gardez ldap:// et cochez StartTLS.',
             deploy_auth_err_requires_validation: 'Le certificat de l\'annuaire est toujours vérifié. Si le contrôleur utilise un certificat qu\'Aegis ne connaît pas, utilisez « Faire confiance à cette autorité » sur le certificat affiché après le test, puis enregistrez de nouveau.',
@@ -5359,6 +5377,7 @@
     var AUTH_ERRORS = {
         auth_requires_tls: ['deploy_auth_err_requires_tls', 'A site behind a login must be served over HTTPS. Turn HTTPS on for this site first, or give it a host name served by the HTTPS host router, then protect it.'],
         tls_required_by_auth: ['deploy_tls_err_required_by_auth', 'This site is behind a login, which needs HTTPS. Switch the protection off first, then turn HTTPS off.'],
+        tls_generate_failed: ['deploy_tls_err_generate_failed', 'Aegis could not create a certificate for this site. The backend log has the reason.'],
         bad_auth_method: ['deploy_auth_err_bad_method', 'Aegis does not know that authentication method. Reload the page and pick one from the list.'],
         ldap_not_configured: ['deploy_auth_err_not_configured', 'No directory is configured yet. Fill in the address and the search base, then save.'],
         bad_ldap_url: ['deploy_auth_err_bad_url', 'The directory address must start with ldap:// or ldaps://, for example ldaps://dc01.corp.local:636.'],
@@ -6476,11 +6495,11 @@
     /**
      * The HTTPS half of a site's row.
      *
-     * In the same row as the method because the two are one decision: a login
-     * form on a plain HTTP port sends the password across the network in
-     * clear, so protecting a site without encrypting it is a half measure the
-     * operator should see named. The warning is painted from both controls
-     * rather than only on load, so picking a method makes it appear at once.
+     * One box. Ticking it turns HTTPS on at once: Aegis creates a certificate,
+     * stores it, restarts the site and the block then says where the files are
+     * and offers the certificate for client machines. A login turns HTTPS on by
+     * itself (backend), so the box is mostly a read-out. An operator who has a
+     * certificate of their own opens "Use my own certificate" and names it.
      */
     function appendTlsBlock(wrap, site, methodSelect) {
         var tls = site.tls || {};
@@ -6500,21 +6519,40 @@
         check.appendChild(tlsText);
         wrap.appendChild(check);
 
-        var warn = el('p', 'dep-auth-site-warn', tr('deploy_tls_warn',
-            'This site asks for a password on a plain HTTP port. The password and the session cookie cross the network in clear.'));
-        warn.setAttribute('data-i18n', 'deploy_tls_warn');
-        wrap.appendChild(warn);
-
-        function paintWarn() {
-            // Any method other than none asks for a credential, so any of them
-            // is worth the warning. Written against the value rather than
-            // against 'ldap' so a method added later is covered without an edit
-            // here, which is the kind of omission nobody notices.
-            warn.hidden = !(methodSelect.value !== 'none' && !tlsBox.checked);
+        var auto = el('p', 'dep-hint', tr('deploy_tls_auto_note',
+            'A login turns HTTPS on by itself, with a certificate Aegis creates.'));
+        wrap.appendChild(auto);
+        function paintAuto() {
+            auto.hidden = !(methodSelect.value !== 'none' && !tlsBox.checked);
         }
-        paintWarn();
-        methodSelect.addEventListener('change', paintWarn);
-        tlsBox.addEventListener('change', paintWarn);
+        paintAuto();
+        methodSelect.addEventListener('change', paintAuto);
+
+        if (tls.enabled && tls.certFile) {
+            var where = el('p', 'dep-hint', tls.generated
+                ? tr('deploy_tls_generated_at', 'Certificate created by Aegis and renewed automatically:')
+                : tr('deploy_tls_own_at', 'Your certificate:'));
+            where.appendChild(document.createTextNode(' '));
+            where.appendChild(el('code', '', tls.certFile));
+            wrap.appendChild(where);
+
+            var download = el('button', 'dep-btn dep-btn-ghost dep-btn-small',
+                tr('deploy_tls_download', 'Download the certificate'));
+            download.type = 'button';
+            download.disabled = !isAdmin;
+            download.addEventListener('click', function () { downloadSiteCert(site); });
+            wrap.appendChild(download);
+
+            if (tls.generated) {
+                wrap.appendChild(el('p', 'dep-hint', tr('deploy_tls_trust_hint',
+                    'Browsers warn on this certificate until it is installed on each computer. Install the downloaded file under Trusted Root Certification Authorities, by group policy for a whole domain.')));
+            }
+        }
+
+        var own = document.createElement('details');
+        own.className = 'dep-tls-own';
+        own.open = !!(tls.certFile && !tls.generated);
+        own.appendChild(el('summary', '', tr('deploy_tls_own', 'Use my own certificate')));
 
         var certLabel = el('label', 'dep-label', tr('deploy_tls_cert', 'Certificate file'));
         certLabel.setAttribute('data-i18n', 'deploy_tls_cert');
@@ -6525,11 +6563,11 @@
         cert.autocomplete = 'off';
         cert.spellcheck = false;
         cert.id = certLabel.htmlFor;
-        cert.value = tls.certFile || '';
+        cert.value = tls.generated ? '' : (tls.certFile || '');
         cert.placeholder = CERT_PLACEHOLDER;
         cert.disabled = !isAdmin;
-        wrap.appendChild(certLabel);
-        wrap.appendChild(cert);
+        own.appendChild(certLabel);
+        own.appendChild(cert);
 
         var keyLabel = el('label', 'dep-label', tr('deploy_tls_key', 'Private key file'));
         keyLabel.setAttribute('data-i18n', 'deploy_tls_key');
@@ -6540,41 +6578,69 @@
         key.autocomplete = 'off';
         key.spellcheck = false;
         key.id = keyLabel.htmlFor;
-        key.value = tls.keyFile || '';
+        key.value = tls.generated ? '' : (tls.keyFile || '');
         key.placeholder = KEY_PLACEHOLDER;
         key.disabled = !isAdmin;
-        wrap.appendChild(keyLabel);
-        wrap.appendChild(key);
+        own.appendChild(keyLabel);
+        own.appendChild(key);
 
-        var hint = el('p', 'dep-hint', tr('deploy_tls_hint',
-            'Full paths on the Aegis host, readable by the Aegis service. Aegis reads them when the site starts, so a renewed certificate is picked up by saving this again. The site restarts on save and keeps its port.'));
-        hint.setAttribute('data-i18n', 'deploy_tls_hint');
-        wrap.appendChild(hint);
+        own.appendChild(el('p', 'dep-hint', tr('deploy_tls_own_hint',
+            'Full paths on the Aegis host. The site restarts on Apply and keeps its port. Clear both fields and apply to go back to a certificate Aegis creates.')));
 
         var apply = el('button', 'dep-btn dep-btn-ghost dep-btn-small', tr('deploy_auth_apply', 'Apply'));
         apply.setAttribute('data-i18n', 'deploy_auth_apply');
         apply.type = 'button';
         apply.disabled = !isAdmin;
+        own.appendChild(apply);
+        wrap.appendChild(own);
+
         var note = el('p', 'dep-auth-site-note', '');
         note.hidden = true;
         showFlash(note, site.id + '/tls');
+        wrap.appendChild(note);
+
+        // Ticking or unticking saves at once: there is nothing else to fill in.
+        tlsBox.addEventListener('change', function () {
+            saveSiteTls(site, tlsBox, cert, key, tlsBox, note);
+        });
         apply.addEventListener('click', function () {
+            tlsBox.checked = true;
             saveSiteTls(site, tlsBox, cert, key, apply, note);
         });
-        wrap.appendChild(apply);
-        wrap.appendChild(note);
+    }
+
+    /** Fetches the site's certificate through the session and saves it as a file. */
+    function downloadSiteCert(site) {
+        window.api('/api/deploy/projects/' + encodeURIComponent(site.id) + '/tls/certificate')
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.blob();
+            })
+            .then(function (blob) {
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = site.id + '.crt';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+            })
+            .catch(function (e) { console.error('[Deploy] certificate download failed:', e); });
     }
 
     function saveSiteTls(site, checkbox, certInput, keyInput, btn, note) {
+        var wanted = !!checkbox.checked;
         btn.disabled = true;
         note.hidden = false;
-        note.textContent = tr('deploy_auth_working', 'Saving.');
+        note.textContent = wanted
+            ? tr('deploy_tls_working', 'Turning HTTPS on and restarting the site.')
+            : tr('deploy_auth_working', 'Saving.');
         var status = 0;
         window.api('/api/deploy/projects/' + encodeURIComponent(site.id) + '/tls', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                enabled: !!checkbox.checked,
+                enabled: wanted,
                 certFile: certInput.value.trim(),
                 keyFile: keyInput.value.trim()
             })
@@ -6591,6 +6657,8 @@
                     // changed.
                     return loadProjects();
                 }
+                // Nothing changed: the box goes back to what is really served.
+                checkbox.checked = !!(site.tls && site.tls.enabled);
                 // The site is stopped in this one case, which is worth saying
                 // rather than the generic refusal: nothing serves until it is
                 // fixed.
@@ -6606,6 +6674,7 @@
             })
             .catch(function (e) {
                 btn.disabled = !isAdmin;
+                checkbox.checked = !!(site.tls && site.tls.enabled);
                 note.textContent = tr('deploy_auth_unreachable',
                     'Aegis did not answer. Check the backend is running, then reload this page.');
                 console.error('[Deploy] project tls failed:', e);
@@ -6666,6 +6735,8 @@
                     site.allowedUsers = (data.project && data.project.allowedUsers) || people;
                     site.audience = (data.project && data.project.audience) || audience;
                     site.grants = (data.project && data.project.grants) || grants;
+                    // A login may just have turned HTTPS on by itself.
+                    if (data.project && data.project.tls) site.tls = data.project.tls;
                     note.textContent = tr('deploy_auth_applied', 'Saved.');
                     siteAuthFlash[site.id + '/auth'] = note.textContent;
                     // The card in the project list carries the badge, so it has

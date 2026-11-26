@@ -403,24 +403,59 @@ const TLS_ROUTE = 'POST /api/deploy/projects/:id/tls';
 const AUTH_ROUTE = 'POST /api/deploy/projects/:id/auth';
 const SETTINGS_ROUTE = 'POST /api/deploy/projects/:id/settings';
 
-test('tls: the auth route refuses a directory login on a project without TLS', async () => {
-    for (const [id, tls] of [
-        ['tls-absent', null],
-        ['tls-off', { enabled: false, certFile: 'C:\\c.pem', keyFile: 'C:\\k.pem' }]
-    ]) {
-        makeProject(id, null, tls);
-        const answer = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));
-        assert.equal(answer.status, 400, id);
-        assert.equal(answer.body.error, 'auth_requires_tls', id);
-        assert.equal(storedAuth(id), undefined, `${id}: the project is unchanged on disk`);
-    }
+/** A project with no port: nothing is listened on, the record is what is tested. */
+function makeIdleProject(id, tls) {
+    makeProject(id, null, tls);
+    const p = projectStore.getProject(pathsFor('acme'), id);
+    delete p.port;
+    projectStore.saveProject(pathsFor('acme'), p);
+    return id;
+}
+
+test('tls: a directory login on a project without TLS turns HTTPS on with a generated certificate', async () => {
+    const id = makeIdleProject('tls-absent', null);
+    const answer = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));
+    assert.equal(answer.status, 200);
+    assert.equal(storedAuth(id).method, 'ldap');
+    const tls = projectStore.getProject(pathsFor('acme'), id).tls;
+    assert.equal(tls.enabled, true);
+    assert.equal(tls.generated, true);
+    assert.ok(tls.certFile.startsWith(path.join(pathsFor('acme').root, 'deploy', 'certs')), tls.certFile);
+    assert.ok(fs.existsSync(tls.certFile) && fs.existsSync(tls.keyFile));
+    assert.deepEqual(answer.body.project.tls, { enabled: true, certFile: tls.certFile, keyFile: tls.keyFile, generated: true });
 });
 
-test('tls: the legacy enabled body is held to the same rule', async () => {
-    const id = makeProject('tls-legacy', null, null);
+test('tls: a login on a project whose own certificate is switched off switches it back on, untouched', async () => {
+    const id = makeIdleProject('tls-off', { enabled: false, certFile: 'C:\\c.pem', keyFile: 'C:\\k.pem' });
+    const answer = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));
+    assert.equal(answer.status, 200);
+    assert.deepEqual(projectStore.getProject(pathsFor('acme'), id).tls,
+        { enabled: true, certFile: 'C:\\c.pem', keyFile: 'C:\\k.pem' });
+});
+
+test('tls: the legacy enabled body gets HTTPS the same way', async () => {
+    const id = makeIdleProject('tls-legacy', null);
     const answer = await call(AUTH_ROUTE, request(id, { enabled: true }));
-    assert.equal(answer.status, 400);
-    assert.equal(answer.body.error, 'auth_requires_tls');
+    assert.equal(answer.status, 200);
+    assert.equal(projectStore.getProject(pathsFor('acme'), id).tls.generated, true);
+});
+
+test('tls: turning HTTPS on with no file named generates a certificate', async () => {
+    const id = makeIdleProject('tls-route-gen', null);
+    const answer = await call(TLS_ROUTE, request(id, { enabled: true, certFile: '', keyFile: '' }));
+    assert.equal(answer.status, 200);
+    const tls = projectStore.getProject(pathsFor('acme'), id).tls;
+    assert.equal(tls.generated, true);
+    assert.ok(fs.existsSync(tls.certFile));
+
+    // Off then on again keeps the same pair.
+    await call(TLS_ROUTE, request(id, { enabled: false, certFile: '', keyFile: '' }));
+    const off = projectStore.getProject(pathsFor('acme'), id).tls;
+    assert.equal(off.enabled, false);
+    assert.equal(off.certFile, tls.certFile);
+    const pem = fs.readFileSync(tls.certFile, 'utf8');
+    await call(TLS_ROUTE, request(id, { enabled: true, certFile: '', keyFile: '' }));
+    assert.equal(fs.readFileSync(projectStore.getProject(pathsFor('acme'), id).tls.certFile, 'utf8'), pem);
 });
 
 test('tls: the auth route accepts none without TLS', async () => {
@@ -438,9 +473,6 @@ test('tls: a project reached under a host name through the TLS router may be pro
 
     const saved = { cert: process.env.AEGIS_SITES_ROUTER_CERT, key: process.env.AEGIS_SITES_ROUTER_KEY };
     try {
-        const without = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));
-        assert.equal(without.body.error, 'auth_requires_tls', 'a host name alone is not TLS');
-
         process.env.AEGIS_SITES_ROUTER_CERT = 'C:\\certs\\router.pem';
         process.env.AEGIS_SITES_ROUTER_KEY = 'C:\\certs\\router.key';
         const withRouter = await call(AUTH_ROUTE, request(id, { method: 'ldap', allowedGroups: ['Ops'] }));

@@ -26,6 +26,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 const machineStore = require('./machineStore');
 const os = require('os');
@@ -62,6 +63,7 @@ const siteNotices = require('./siteNotices');
 const { shareableHost } = require('./siteAddress');
 const accessPolicy = require('./accessPolicy');
 const previews = require('./previews');
+const selfSignedCert = require('./selfSignedCert');
 const runtime = require('./runtime');
 const shots = require('./shots');
 const siteIcon = require('./siteIcon');
@@ -294,7 +296,8 @@ function tlsView(project) {
     return {
         enabled: t.enabled === true,
         certFile: t.certFile || '',
-        keyFile: t.keyFile || ''
+        keyFile: t.keyFile || '',
+        generated: t.generated === true
     };
 }
 
@@ -1488,9 +1491,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         if (body.auth && !draft.auth) {
             // Not refused for lack of TLS, although a new project has none: the
             // method usually comes from the repository's manifest, and refusing
-            // would make that repository impossible to import. The record is
-            // stored, and `siteAuth.gate` answers 503 `site_not_tls` until the
-            // operator turns TLS on, so the site is closed in the meantime.
+            // would make that repository impossible to import. `startSiteFor`
+            // generates a certificate for it when the site first starts.
             draft.auth = authMethods.record(body.auth, [], {});
         }
 
@@ -2744,20 +2746,44 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         }
 
         let tls;
-        if (body.enabled) {
+        const blank = (v) => v === undefined || v === null || String(v).trim() === '';
+        if (body.enabled && blank(body.certFile) && blank(body.keyFile)) {
+            // No file named: Aegis makes one, or keeps the one it made, and
+            // says where it is. The operator can still name their own later.
+            const prior = project.tls || {};
+            project.tls = prior.generated === true ? prior : null;
+            try {
+                selfSignedCert.ensureFor(req.tenantPaths, project, {
+                    want: true, extraNames: [normaliseHostname(project.hostname)]
+                });
+            } catch (e) {
+                project.tls = prior;
+                console.error(`[Deploy] ${req.tenant.slug}: ${req.params.id} certificate generation failed: ${e.message}`);
+                return res.status(500).json({ success: false, error: 'tls_generate_failed' });
+            }
+            tls = project.tls;
+        } else if (body.enabled) {
             const certFile = parseCertPath(body.certFile);
             if (!certFile) return res.status(400).json({ success: false, error: 'bad_cert_path' });
             const keyFile = parseCertPath(body.keyFile);
             if (!keyFile) return res.status(400).json({ success: false, error: 'bad_key_path' });
-            tls = { enabled: true, certFile, keyFile };
+            // Naming the files Aegis generated keeps them its own, so they are
+            // still renewed; any other pair is the operator's and never touched.
+            const prior = project.tls || {};
+            const same = prior.generated === true && prior.certFile === certFile && prior.keyFile === keyFile;
+            tls = same ? { enabled: true, certFile, keyFile, generated: true } : { enabled: true, certFile, keyFile };
         } else {
             // Switching off keeps the paths, so turning it back on does not mean
             // typing them again. Only `enabled` decides whether they are used.
+            const prior = project.tls || {};
             tls = {
                 enabled: false,
-                certFile: parseCertPath(body.certFile) || (project.tls && project.tls.certFile) || '',
-                keyFile: parseCertPath(body.keyFile) || (project.tls && project.tls.keyFile) || ''
+                certFile: parseCertPath(body.certFile) || prior.certFile || '',
+                keyFile: parseCertPath(body.keyFile) || prior.keyFile || ''
             };
+            if (prior.generated === true && tls.certFile === prior.certFile && tls.keyFile === prior.keyFile) {
+                tls.generated = true;
+            }
         }
 
         // Mutated on the record that was read, for the same reason as `auth`
@@ -2781,7 +2807,8 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         // port go, so answering before that would report a state that is not
         // reached yet, including the failure below.
         const server = await restartSiteFor({ slug: req.tenant.slug, tenantPaths: req.tenantPaths, project: stored });
-        if (tls.enabled && !server) {
+        // No port: not served yet, so nothing to have failed.
+        if (tls.enabled && stored.port && !server) {
             // The record is saved and the site is down: that is the fail-closed
             // choice in `siteServer.startSiteFor`, and the operator has to know
             // it rather than discover it from a card that still says "live".
@@ -2791,6 +2818,29 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
 
         console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} HTTPS ${tls.enabled ? 'on' : 'off'}, by ${req.user.email}`);
         return res.json({ success: true, project: { id: stored.id, tls: tlsView(stored), url: siteUrl(req, stored) } });
+    });
+
+    /**
+     * The site's certificate, to install on client machines so browsers trust
+     * it. Re-encoded from the parsed certificate, so whatever else the file
+     * holds (a key, in a combined PEM) is never sent.
+     */
+    router.get('/api/deploy/projects/:id/tls/certificate', requireOptIn, requireRole('admin'), (req, res) => {
+        if (!projectStore.PROJECT_ID_RE.test(req.params.id || '')) {
+            return res.status(404).json({ success: false, error: 'unknown_project' });
+        }
+        const project = projectStore.getProject(req.tenantPaths, req.params.id);
+        const certFile = project && project.tls && project.tls.certFile;
+        if (!certFile) return res.status(404).json({ success: false, error: 'no_certificate' });
+        let pem;
+        try {
+            pem = new crypto.X509Certificate(fs.readFileSync(certFile)).toString();
+        } catch (_) {
+            return res.status(404).json({ success: false, error: 'no_certificate' });
+        }
+        res.set('Content-Type', 'application/x-x509-ca-cert');
+        res.set('Content-Disposition', `attachment; filename="${project.id}.crt"`);
+        return res.send(pem);
     });
 
     // --- Directory authentication in front of served sites ----------------
@@ -3215,7 +3265,7 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
      * A body carrying both is read by `method`: it is the more specific of the
      * two, and refusing the pair would only send the caller round again.
      */
-    router.post('/api/deploy/projects/:id/auth', requireOptIn, requireRole('admin'), (req, res) => {
+    router.post('/api/deploy/projects/:id/auth', requireOptIn, requireRole('admin'), async (req, res) => {
         if (!projectStore.PROJECT_ID_RE.test(req.params.id || '')) {
             return res.status(404).json({ success: false, error: 'unknown_project' });
         }
@@ -3243,11 +3293,21 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
         }
 
         // A login is only worth having over TLS: the password and the session
-        // cookie would otherwise cross the network in clear. `none` is always
-        // allowed, so a site can still be opened up. The gate holds the same
+        // cookie would otherwise cross the network in clear. A site that is not
+        // served securely yet gets HTTPS here, with a generated certificate
+        // unless the operator named one, and restarts once the record is
+        // saved, so protecting a site is one click. The gate still holds the
         // line on every request (`site_not_tls`).
-        if (method !== authMethods.NONE && !servesSecurely(project)) {
-            return res.status(400).json({ success: false, error: 'auth_requires_tls' });
+        const needsTls = method !== authMethods.NONE && !servesSecurely(project);
+        if (needsTls) {
+            try {
+                selfSignedCert.ensureFor(req.tenantPaths, project, {
+                    gated: true, extraNames: [normaliseHostname(project.hostname)]
+                });
+            } catch (e) {
+                console.error(`[Deploy] ${req.tenant.slug}: ${req.params.id} certificate generation failed: ${e.message}`);
+                return res.status(500).json({ success: false, error: 'tls_generate_failed' });
+            }
         }
 
         const allowedGroups = parseAllowedGroups(body.allowedGroups);
@@ -3306,6 +3366,15 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
             siteAuth.invalidate(req.tenant.slug, preview.id);
             siteAuth.dropSessions(req.tenant.slug, preview.id);
         }
+        // TLS is decided when the listener is made, so the site and its plain
+        // previews restart; `startSiteFor` gives a preview its own certificate.
+        if (needsTls) {
+            await restartSiteFor({ slug: req.tenant.slug, tenantPaths: req.tenantPaths, project: stored });
+            for (const preview of previews.listFor(req.tenantPaths, stored.id)) {
+                if (servesSecurely(preview)) continue;
+                await restartSiteFor({ slug: req.tenant.slug, tenantPaths: req.tenantPaths, project: preview });
+            }
+        }
         const admins = usersOfProject(stored).filter((u) => u.admin).length;
         console.log(`[Deploy] ${req.tenant.slug}: ${stored.id} authentication ${method}, audience ${audienceOfProject(stored)}, ${allowedGroups.length} group(s) and ${allowedUsers.length} person(s) allowed, ${admins} administrator(s), by ${req.user.email}`);
         return res.json({
@@ -3317,7 +3386,9 @@ function register(router, { requireRole, pathsFor, tenantsRoot, readOnlyDb, writ
                 allowedGroups: groupsOf(stored),
                 allowedUsers: usersOfProject(stored),
                 grants: grantsOfProject(stored),
-                audience: audienceOfProject(stored)
+                audience: audienceOfProject(stored),
+                tls: tlsView(stored),
+                url: siteUrl(req, stored)
             }
         });
     });
